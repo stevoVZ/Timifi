@@ -25,6 +25,9 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  ChevronsUpDown,
   DollarSign,
   Download,
   FileText,
@@ -70,6 +73,10 @@ export default function PayrollPage() {
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [hasInitialized, setHasInitialized] = useState(false);
+  const [lineSortField, setLineSortField] = useState<string>("contractor");
+  const [lineSortDir, setLineSortDir] = useState<"asc" | "desc">("asc");
+  const [historySortField, setHistorySortField] = useState<string>("period");
+  const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
   const { toast } = useToast();
 
   const { data: payRunsList, isLoading: loadingPayRuns } = useQuery<PayRun[]>({
@@ -276,6 +283,66 @@ export default function PayrollPage() {
   for (let y = now.getFullYear() - 2; y <= now.getFullYear() + 1; y++) {
     years.push(y);
   }
+
+  function toggleLineSort(field: string) {
+    if (lineSortField === field) {
+      setLineSortDir(lineSortDir === "asc" ? "desc" : "asc");
+    } else {
+      setLineSortField(field);
+      setLineSortDir("asc");
+    }
+  }
+
+  function toggleHistorySort(field: string) {
+    if (historySortField === field) {
+      setHistorySortDir(historySortDir === "asc" ? "desc" : "asc");
+    } else {
+      setHistorySortField(field);
+      setHistorySortDir("asc");
+    }
+  }
+
+  const sortedLines = [...(payRunLines || [])].sort((a, b) => {
+    const dir = lineSortDir === "asc" ? 1 : -1;
+    switch (lineSortField) {
+      case "contractor": {
+        const nameA = a.contractor ? `${a.contractor.firstName} ${a.contractor.lastName}` : "";
+        const nameB = b.contractor ? `${b.contractor.firstName} ${b.contractor.lastName}` : "";
+        return nameA.localeCompare(nameB) * dir;
+      }
+      case "hours": return (Number(a.hoursWorked) - Number(b.hoursWorked)) * dir;
+      case "rate": return (Number(a.ratePerHour) - Number(b.ratePerHour)) * dir;
+      case "gross": return (Number(a.grossEarnings) - Number(b.grossEarnings)) * dir;
+      case "payg": return (Number(a.paygWithheld) - Number(b.paygWithheld)) * dir;
+      case "super": return (Number(a.superAmount) - Number(b.superAmount)) * dir;
+      case "net": return (Number(a.netPay) - Number(b.netPay)) * dir;
+      default: return 0;
+    }
+  });
+
+  const sortedHistory = [...(payRunsList?.filter(
+    (r) => r.status === "FILED" && r.id !== currentPayRun?.id
+  ) || [])].sort((a, b) => {
+    const dir = historySortDir === "asc" ? 1 : -1;
+    switch (historySortField) {
+      case "period": {
+        const dateA = a.year * 100 + a.month;
+        const dateB = b.year * 100 + b.month;
+        return (dateA - dateB) * dir;
+      }
+      case "paymentDate": {
+        const dA = a.paymentDate || a.payDate || "";
+        const dB = b.paymentDate || b.payDate || "";
+        return dA.localeCompare(dB) * dir;
+      }
+      case "wages": return (Number(a.totalGross) - Number(b.totalGross)) * dir;
+      case "tax": return (Number(a.totalPayg) - Number(b.totalPayg)) * dir;
+      case "super": return (Number(a.totalSuper) - Number(b.totalSuper)) * dir;
+      case "net": return (Number(a.totalNet) - Number(b.totalNet)) * dir;
+      case "employees": return (a.employeeCount - b.employeeCount) * dir;
+      default: return 0;
+    }
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -612,20 +679,20 @@ export default function PayrollPage() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Contractor</TableHead>
-                            <TableHead className="text-right">Hours</TableHead>
-                            <TableHead className="text-right">Rate</TableHead>
-                            <TableHead className="text-right">Gross</TableHead>
-                            <TableHead className="text-right">PAYG</TableHead>
-                            <TableHead className="text-right">Super</TableHead>
-                            <TableHead className="text-right">Net</TableHead>
+                            <SortableHeader field="contractor" label="Contractor" sortField={lineSortField} sortDir={lineSortDir} onSort={toggleLineSort} />
+                            <SortableHeader field="hours" label="Hours" sortField={lineSortField} sortDir={lineSortDir} onSort={toggleLineSort} align="right" />
+                            <SortableHeader field="rate" label="Rate" sortField={lineSortField} sortDir={lineSortDir} onSort={toggleLineSort} align="right" />
+                            <SortableHeader field="gross" label="Gross" sortField={lineSortField} sortDir={lineSortDir} onSort={toggleLineSort} align="right" />
+                            <SortableHeader field="payg" label="PAYG" sortField={lineSortField} sortDir={lineSortDir} onSort={toggleLineSort} align="right" />
+                            <SortableHeader field="super" label="Super" sortField={lineSortField} sortDir={lineSortDir} onSort={toggleLineSort} align="right" />
+                            <SortableHeader field="net" label="Net" sortField={lineSortField} sortDir={lineSortDir} onSort={toggleLineSort} align="right" />
                             <TableHead className="text-center">
                               Status
                             </TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {payRunLines.map((line) => (
+                          {sortedLines.map((line) => (
                             <TableRow
                               key={line.id}
                               data-testid={`row-pay-line-${line.id}`}
@@ -712,74 +779,61 @@ export default function PayrollPage() {
                   <CardTitle className="text-base">Pay Run History</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {(() => {
-                    const otherRuns =
-                      payRunsList?.filter(
-                        (r) =>
-                          r.status === "FILED" && r.id !== currentPayRun?.id
-                      ) || [];
-                    if (otherRuns.length === 0) {
-                      return (
-                        <div className="text-center py-8 text-muted-foreground text-sm">
-                          No other completed pay runs yet.
-                        </div>
-                      );
-                    }
-                    return (
-                      <div className="space-y-2">
-                        {otherRuns.map((run) => (
-                          <div
-                            key={run.id}
-                            className="flex items-center justify-between gap-4 py-3 px-4 rounded-md bg-muted/50 flex-wrap hover-elevate cursor-pointer"
-                            onClick={() => {
-                              setSelectedMonth(run.month);
-                              setSelectedYear(run.year);
-                            }}
-                            data-testid={`row-pay-run-${run.id}`}
-                          >
-                            <div className="flex items-center gap-3 flex-wrap">
-                              <div
-                                className="text-sm font-semibold text-foreground"
-                                data-testid={`text-pay-run-ref-${run.id}`}
-                              >
-                                {run.payRunRef}
-                              </div>
-                              <StatusBadge status={run.status} />
-                              <span className="text-xs text-muted-foreground">
-                                {MONTHS[run.month]} {run.year}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-6 text-sm flex-wrap">
-                              <div className="text-right">
-                                <div className="text-xs text-muted-foreground">
-                                  Gross
+                  {sortedHistory.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      No other completed pay runs yet.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <SortableHeader field="period" label="Period" sortField={historySortField} sortDir={historySortDir} onSort={toggleHistorySort} />
+                            <SortableHeader field="paymentDate" label="Payment Date" sortField={historySortField} sortDir={historySortDir} onSort={toggleHistorySort} />
+                            <SortableHeader field="wages" label="Wages" sortField={historySortField} sortDir={historySortDir} onSort={toggleHistorySort} align="right" />
+                            <SortableHeader field="tax" label="Tax" sortField={historySortField} sortDir={historySortDir} onSort={toggleHistorySort} align="right" />
+                            <SortableHeader field="super" label="Super" sortField={historySortField} sortDir={historySortDir} onSort={toggleHistorySort} align="right" />
+                            <SortableHeader field="net" label="Net Pay" sortField={historySortField} sortDir={historySortDir} onSort={toggleHistorySort} align="right" />
+                            <SortableHeader field="employees" label="Employees" sortField={historySortField} sortDir={historySortDir} onSort={toggleHistorySort} align="center" />
+                            <TableHead className="text-center">Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {sortedHistory.map((run) => (
+                            <TableRow
+                              key={run.id}
+                              className="cursor-pointer hover:bg-muted/50"
+                              onClick={() => {
+                                setSelectedMonth(run.month);
+                                setSelectedYear(run.year);
+                              }}
+                              data-testid={`row-pay-run-${run.id}`}
+                            >
+                              <TableCell>
+                                <div className="font-medium text-foreground" data-testid={`text-pay-run-ref-${run.id}`}>
+                                  {MONTHS[run.month]} {run.year}
                                 </div>
-                                <div className="font-mono font-medium text-foreground">
-                                  {formatCurrency(run.totalGross)}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-xs text-muted-foreground">
-                                  Net
-                                </div>
-                                <div className="font-mono font-medium text-green-600 dark:text-green-400">
-                                  {formatCurrency(run.totalNet)}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-xs text-muted-foreground">
-                                  Employees
-                                </div>
-                                <div className="font-mono text-foreground">
-                                  {run.employeeCount}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
+                                <div className="text-xs text-muted-foreground">{run.payRunRef}</div>
+                              </TableCell>
+                              <TableCell className="text-sm">
+                                {run.paymentDate || run.payDate
+                                  ? new Date(run.paymentDate || run.payDate!).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })
+                                  : "—"}
+                              </TableCell>
+                              <TableCell className="text-right font-mono">{formatCurrency(run.totalGross)}</TableCell>
+                              <TableCell className="text-right font-mono text-red-600 dark:text-red-400">{formatCurrency(run.totalPayg)}</TableCell>
+                              <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400">{formatCurrency(run.totalSuper)}</TableCell>
+                              <TableCell className="text-right font-mono text-green-600 dark:text-green-400">{formatCurrency(run.totalNet)}</TableCell>
+                              <TableCell className="text-center font-mono">{run.employeeCount}</TableCell>
+                              <TableCell className="text-center">
+                                <StatusBadge status={run.status} />
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </>
@@ -817,5 +871,40 @@ function PayRunStat({
         {value}
       </div>
     </div>
+  );
+}
+
+function SortableHeader({
+  field,
+  label,
+  sortField,
+  sortDir,
+  onSort,
+  align = "left",
+}: {
+  field: string;
+  label: string;
+  sortField: string;
+  sortDir: "asc" | "desc";
+  onSort: (field: string) => void;
+  align?: "left" | "right" | "center";
+}) {
+  const isActive = sortField === field;
+  const alignClass = align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start";
+  return (
+    <TableHead
+      className={`cursor-pointer select-none hover:bg-muted/50 ${align === "right" ? "text-right" : align === "center" ? "text-center" : ""}`}
+      onClick={() => onSort(field)}
+      data-testid={`sort-${field}`}
+    >
+      <div className={`flex items-center gap-1 ${alignClass}`}>
+        <span>{label}</span>
+        {isActive ? (
+          sortDir === "asc" ? <ChevronUp className="w-3.5 h-3.5 text-primary" /> : <ChevronDown className="w-3.5 h-3.5 text-primary" />
+        ) : (
+          <ChevronsUpDown className="w-3 h-3 text-muted-foreground/40" />
+        )}
+      </div>
+    </TableHead>
   );
 }

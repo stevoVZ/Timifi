@@ -25,6 +25,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Plus,
   Search,
   FileText,
@@ -35,6 +43,9 @@ import {
   Clock,
   Ban,
   ListFilter,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
 } from "lucide-react";
 import type { Invoice, Contractor, Timesheet } from "@shared/schema";
 
@@ -49,6 +60,8 @@ export default function InvoicesPage() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("all");
+  const [sortField, setSortField] = useState<string>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const { toast } = useToast();
 
   const { data: invoicesList, isLoading } = useQuery<Invoice[]>({
@@ -134,6 +147,36 @@ export default function InvoicesPage() {
       default: return filtered;
     }
   })();
+
+  function toggleSort(field: string) {
+    if (sortField === field) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  }
+
+  const sortedInvoices = [...tabInvoices].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    switch (sortField) {
+      case "number": return (a.invoiceNumber || "").localeCompare(b.invoiceNumber || "") * dir;
+      case "to": {
+        const cA = a.contractorId ? contractorMap.get(a.contractorId) : undefined;
+        const cB = b.contractorId ? contractorMap.get(b.contractorId) : undefined;
+        const nameA = a.contactName || (cA ? `${cA.firstName} ${cA.lastName}` : "");
+        const nameB = b.contactName || (cB ? `${cB.firstName} ${cB.lastName}` : "");
+        return nameA.localeCompare(nameB) * dir;
+      }
+      case "date": return (a.issueDate || "").localeCompare(b.issueDate || "") * dir;
+      case "dueDate": return (a.dueDate || "").localeCompare(b.dueDate || "") * dir;
+      case "paid": return (parseFloat(a.status === "PAID" ? a.amountInclGst || "0" : "0") - parseFloat(b.status === "PAID" ? b.amountInclGst || "0" : "0")) * dir;
+      case "due": return (parseFloat(["AUTHORISED", "SENT", "OVERDUE"].includes(a.status) ? a.amountInclGst || "0" : "0") - parseFloat(["AUTHORISED", "SENT", "OVERDUE"].includes(b.status) ? b.amountInclGst || "0" : "0")) * dir;
+      case "status": return a.status.localeCompare(b.status) * dir;
+      case "amount": return (parseFloat(a.amountInclGst || "0") - parseFloat(b.amountInclGst || "0")) * dir;
+      default: return 0;
+    }
+  });
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -389,7 +432,7 @@ export default function InvoicesPage() {
               </TabsList>
 
               <TabsContent value={activeTab} className="mt-3">
-                {tabInvoices.length === 0 ? (
+                {sortedInvoices.length === 0 ? (
                   <Card>
                     <CardContent className="py-12 text-center">
                       <Ban className="w-8 h-8 mx-auto text-muted-foreground mb-3" />
@@ -397,84 +440,84 @@ export default function InvoicesPage() {
                     </CardContent>
                   </Card>
                 ) : (
-                  <div className="space-y-2">
-                    {tabInvoices.map((inv) => {
-                      const c = inv.contractorId ? contractorMap.get(inv.contractorId) : undefined;
-                      const displayName = inv.contactName || (c ? `${c.firstName} ${c.lastName}` : "Unknown");
-                      const contractorName = c ? `${c.firstName} ${c.lastName}` : null;
-                      return (
-                        <Card key={inv.id} className="hover-elevate" data-testid={`card-invoice-${inv.id}`}>
-                          <CardContent className="p-4">
-                            <div className="flex items-center justify-between gap-4 flex-wrap">
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className="w-9 h-9 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
-                                  <FileText className="w-4 h-4 text-primary" />
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-sm font-semibold text-foreground font-mono" data-testid={`text-invoice-number-${inv.id}`}>
-                                      {inv.invoiceNumber || "\u2014"}
+                  <Card>
+                    <CardContent className="p-0">
+                      <div className="flex items-center justify-end px-4 py-2 border-b text-xs text-muted-foreground">
+                        {sortedInvoices.length} item{sortedInvoices.length !== 1 ? "s" : ""}
+                      </div>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <InvSortHeader field="number" label="Number" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                              <InvSortHeader field="to" label="To" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                              <InvSortHeader field="date" label="Date" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                              <InvSortHeader field="dueDate" label="Due Date" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                              <InvSortHeader field="paid" label="Paid" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="right" />
+                              <InvSortHeader field="due" label="Due" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="right" />
+                              <InvSortHeader field="status" label="Status" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="center" />
+                              <TableHead className="text-right">Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {sortedInvoices.map((inv) => {
+                              const c = inv.contractorId ? contractorMap.get(inv.contractorId) : undefined;
+                              const displayName = inv.contactName || (c ? `${c.firstName} ${c.lastName}` : "Unknown");
+                              const isPaid = inv.status === "PAID";
+                              const isOutstanding = ["AUTHORISED", "SENT", "OVERDUE"].includes(inv.status);
+                              return (
+                                <TableRow key={inv.id} data-testid={`row-invoice-${inv.id}`}>
+                                  <TableCell>
+                                    <span className="font-mono font-medium text-foreground" data-testid={`text-invoice-number-${inv.id}`}>
+                                      {inv.invoiceNumber || "—"}
                                     </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <span className="text-sm text-foreground">{displayName}</span>
+                                  </TableCell>
+                                  <TableCell className="text-sm whitespace-nowrap">
+                                    {inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : `${MONTHS[inv.month]} ${inv.year}`}
+                                  </TableCell>
+                                  <TableCell className="text-sm whitespace-nowrap">
+                                    {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : "—"}
+                                  </TableCell>
+                                  <TableCell className="text-right font-mono">
+                                    {isPaid ? formatCurrency(inv.amountInclGst) : formatCurrency(0)}
+                                  </TableCell>
+                                  <TableCell className="text-right font-mono" data-testid={`text-invoice-amount-${inv.id}`}>
+                                    {isOutstanding ? formatCurrency(inv.amountInclGst) : formatCurrency(0)}
+                                  </TableCell>
+                                  <TableCell className="text-center">
                                     <StatusBadge status={inv.status} />
-                                  </div>
-                                  <div className="text-xs text-muted-foreground mt-0.5">
-                                    {displayName} · {MONTHS[inv.month]} {inv.year}
-                                  </div>
-                                  {contractorName && inv.contactName && contractorName !== inv.contactName && (
-                                    <div className="text-[11px] text-muted-foreground/70 mt-0.5">
-                                      Contractor: {contractorName}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-4 flex-wrap">
-                                <div className="text-right">
-                                  <div className="text-sm font-mono font-bold text-foreground" data-testid={`text-invoice-amount-${inv.id}`}>
-                                    {formatCurrency(inv.amountInclGst)}
-                                  </div>
-                                  <div className="text-[11px] text-muted-foreground">
-                                    {formatCurrency(inv.amountExclGst)} + GST
-                                  </div>
-                                </div>
-                                {inv.status === "DRAFT" && (
-                                  <Button
-                                    size="sm"
-                                    variant="secondary"
-                                    onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "AUTHORISED" } })}
-                                    data-testid={`button-authorise-${inv.id}`}
-                                  >
-                                    <CheckCircle className="w-3.5 h-3.5" />
-                                    Authorise
-                                  </Button>
-                                )}
-                                {inv.status === "AUTHORISED" && (
-                                  <Button
-                                    size="sm"
-                                    onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "SENT" } })}
-                                    data-testid={`button-send-${inv.id}`}
-                                  >
-                                    <Send className="w-3.5 h-3.5" />
-                                    Send
-                                  </Button>
-                                )}
-                                {(inv.status === "SENT" || inv.status === "OVERDUE") && (
-                                  <Button
-                                    size="sm"
-                                    variant="secondary"
-                                    onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "PAID", paidDate: new Date().toISOString().split("T")[0] } })}
-                                    data-testid={`button-mark-paid-${inv.id}`}
-                                  >
-                                    <DollarSign className="w-3.5 h-3.5" />
-                                    Mark Paid
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    {inv.status === "DRAFT" && (
+                                      <Button size="sm" variant="secondary" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "AUTHORISED" } })} data-testid={`button-authorise-${inv.id}`}>
+                                        <CheckCircle className="w-3.5 h-3.5" />
+                                        Authorise
+                                      </Button>
+                                    )}
+                                    {inv.status === "AUTHORISED" && (
+                                      <Button size="sm" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "SENT" } })} data-testid={`button-send-${inv.id}`}>
+                                        <Send className="w-3.5 h-3.5" />
+                                        Send
+                                      </Button>
+                                    )}
+                                    {(inv.status === "SENT" || inv.status === "OVERDUE") && (
+                                      <Button size="sm" variant="secondary" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "PAID", paidDate: new Date().toISOString().split("T")[0] } })} data-testid={`button-mark-paid-${inv.id}`}>
+                                        <DollarSign className="w-3.5 h-3.5" />
+                                        Mark Paid
+                                      </Button>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
               </TabsContent>
             </Tabs>
@@ -482,5 +525,40 @@ export default function InvoicesPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+function InvSortHeader({
+  field,
+  label,
+  sortField,
+  sortDir,
+  onSort,
+  align = "left",
+}: {
+  field: string;
+  label: string;
+  sortField: string;
+  sortDir: "asc" | "desc";
+  onSort: (field: string) => void;
+  align?: "left" | "right" | "center";
+}) {
+  const isActive = sortField === field;
+  const alignClass = align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start";
+  return (
+    <TableHead
+      className={`cursor-pointer select-none hover:bg-muted/50 ${align === "right" ? "text-right" : align === "center" ? "text-center" : ""}`}
+      onClick={() => onSort(field)}
+      data-testid={`sort-${field}`}
+    >
+      <div className={`flex items-center gap-1 ${alignClass}`}>
+        <span>{label}</span>
+        {isActive ? (
+          sortDir === "asc" ? <ChevronUp className="w-3.5 h-3.5 text-primary" /> : <ChevronDown className="w-3.5 h-3.5 text-primary" />
+        ) : (
+          <ChevronsUpDown className="w-3 h-3 text-muted-foreground/40" />
+        )}
+      </div>
+    </TableHead>
   );
 }
