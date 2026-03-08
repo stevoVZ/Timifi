@@ -14,7 +14,7 @@ Labour hire agency management portal for contractors, timesheets, invoicing, and
 ### Admin Panel
 - **Dashboard**: Enhanced KPI overview (active contractors, pending timesheets, outstanding invoices, next pay run, YTD billings), recent activity feed from notifications, contractors mini-table, quick action grid
 - **Contractors**: KPI strip (Active/Pending/YTD Billings/Avg Rate), sortable table (name/rate/YTD hours/start date), search, filter by status, add new (full form + quick add), detail view with timesheet history
-- **Timesheets**: Create with intake source tracking (Email/Portal Upload/Walk-in/Admin Entry), status tabs, approve/reject workflow, intake source badges
+- **Timesheets**: Two-tab layout (Upload/Submissions). Upload tab: drag-and-drop PDF zone, contractor + period pickers, intake source form, file queue with scanning simulation + extracted data (hours/confidence/weekly breakdown), batch summary sidebar, duplicate detection. Submissions tab: existing timesheet list with status tabs, manual entry dialog, approve/reject workflow, intake source badges
 - **Payroll**: Enhanced pay run management with contractor-level pay lines (hours, rate, gross, PAYG, super, net), file workflow (Draft → Review → Filed), ABA direct entry file download, payslip generation, month navigation
 - **Invoices**: KPI strip (Outstanding, Overdue, Paid totals), filter tabs, pending invoices from approved timesheets, create/send workflow
 - **Leave Management**: 2-column layout with request tabs (Pending/Approved/Rejected) on left and per-contractor balance sidebar cards on right with progress bars, approve/reject with review notes
