@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
-import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees } from "./xero";
+import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri } from "./xero";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -903,7 +903,8 @@ export async function registerRoutes(
   app.get("/api/xero/status", async (_req, res) => {
     try {
       const status = await isConnected();
-      res.json(status);
+      const callbackUri = getCallbackUri();
+      res.json({ ...status, callbackUri });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to check Xero status" });
     }

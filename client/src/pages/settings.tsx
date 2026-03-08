@@ -277,7 +277,7 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
   const [autoSyncEmployees, setAutoSyncEmployees] = useState(false);
   const [syncResult, setSyncResult] = useState<{ total: number; created: number; updated: number; errors: string[] } | null>(null);
 
-  const statusQuery = useQuery<{ connected: boolean; tenantName: string; lastSyncAt: string }>({
+  const statusQuery = useQuery<{ connected: boolean; tenantName: string; lastSyncAt: string; callbackUri: string }>({
     queryKey: ["/api/xero/status"],
     queryFn: async () => {
       const res = await fetch("/api/xero/status");
@@ -428,9 +428,14 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
             data-testid="input-xero-client-secret"
           />
         </div>
-        <p className="text-xs text-muted-foreground">
-          Create an app at developer.xero.com/myapps. Set the redirect URI to your app URL + /api/xero/callback
-        </p>
+        <div className="text-xs text-muted-foreground space-y-1">
+          <p>Create an app at developer.xero.com/myapps and set the redirect URI to:</p>
+          {statusQuery.data?.callbackUri && (
+            <code className="block bg-muted px-2 py-1 rounded text-[11px] font-mono select-all break-all" data-testid="text-callback-uri">
+              {statusQuery.data.callbackUri}
+            </code>
+          )}
+        </div>
       </div>
 
       {!isConnected ? (

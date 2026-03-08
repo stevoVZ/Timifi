@@ -44,15 +44,9 @@ export async function getXeroClient(): Promise<XeroClient> {
       "openid",
       "profile",
       "email",
-      "payroll.employees",
       "payroll.employees.read",
-      "payroll.payruns",
       "payroll.payruns.read",
-      "payroll.payslip",
       "payroll.payslip.read",
-      "payroll.timesheets",
-      "payroll.timesheets.read",
-      "payroll.settings",
       "payroll.settings.read",
       "offline_access",
     ],
@@ -62,7 +56,13 @@ export async function getXeroClient(): Promise<XeroClient> {
   return xeroClient;
 }
 
+export function getCallbackUri(): string {
+  return getRedirectUri();
+}
+
 export async function getConsentUrl(): Promise<string> {
+  xeroClient = null;
+  cachedClientId = null;
   const client = await getXeroClient();
   const url = await client.buildConsentUrl();
   return url;
