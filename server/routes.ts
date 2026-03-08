@@ -1651,5 +1651,196 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/client-ledger", async (req, res) => {
+    try {
+      const now = new Date();
+      const defaultFrom = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+      const from = req.query.from ? new Date(req.query.from as string) : defaultFrom;
+      const to = req.query.to ? new Date(req.query.to as string) : now;
+
+      if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+        return res.status(400).json({ message: "Invalid date range. Use YYYY-MM-DD format." });
+      }
+
+      const [allPlacements, allEmployees, allBankTxns, allPayRuns, allClients] = await Promise.all([
+        storage.getAllPlacements(),
+        storage.getEmployees(),
+        storage.getBankTransactions(),
+        storage.getPayRuns(),
+        storage.getClients(),
+      ]);
+
+      const receiptTxns = allBankTxns.filter(t => {
+        if (t.type !== "RECEIVE") return false;
+        const d = new Date(t.date);
+        return d >= from && d <= to;
+      });
+
+      const rangePayRuns = allPayRuns.filter(pr => {
+        if (!pr.periodStart || !pr.periodEnd) return false;
+        const pStart = new Date(pr.periodStart);
+        const pEnd = new Date(pr.periodEnd);
+        return pEnd >= from && pStart <= to;
+      });
+      const allPayRunLines: { line: any; payRun: typeof rangePayRuns[0] }[] = [];
+      for (const pr of rangePayRuns) {
+        const lines = await storage.getPayRunLines(pr.id);
+        for (const line of lines) {
+          allPayRunLines.push({ line, payRun: pr });
+        }
+      }
+
+      const activePlacements = allPlacements.filter(p => {
+        if (p.status !== "ACTIVE" && p.status !== "ENDED") return false;
+        const pStart = p.startDate ? new Date(p.startDate) : new Date("2000-01-01");
+        const pEnd = p.endDate ? new Date(p.endDate) : new Date("2099-12-31");
+        return pEnd >= from && pStart <= to;
+      });
+
+      const employeeToClient = new Map<string, string>();
+      for (const p of activePlacements) {
+        employeeToClient.set(p.employeeId, p.clientId);
+      }
+
+      const clientMap = new Map<string, {
+        clientId: string;
+        clientName: string;
+        hasPlacement: boolean;
+        employees: { id: string; firstName: string; lastName: string; chargeOutRate: string | null }[];
+        payments: { date: string; amount: number; reference: string | null; bankAccount: string | null }[];
+        payrollEntries: { employeeName: string; periodStart: string; periodEnd: string; gross: number; super_: number; net: number }[];
+        totalPaid: number;
+        totalCost: number;
+      }>();
+
+      for (const placement of activePlacements) {
+        const client = allClients.find(c => c.id === placement.clientId);
+        if (!client) continue;
+        const employee = allEmployees.find(e => e.id === placement.employeeId);
+        if (!employee) continue;
+
+        const key = client.id;
+        if (!clientMap.has(key)) {
+          clientMap.set(key, {
+            clientId: client.id,
+            clientName: client.name,
+            hasPlacement: true,
+            employees: [],
+            payments: [],
+            payrollEntries: [],
+            totalPaid: 0,
+            totalCost: 0,
+          });
+        }
+        const entry = clientMap.get(key)!;
+        if (!entry.employees.find(e => e.id === employee.id)) {
+          entry.employees.push({
+            id: employee.id,
+            firstName: employee.firstName,
+            lastName: employee.lastName,
+            chargeOutRate: employee.chargeOutRate,
+          });
+        }
+      }
+
+      const usedTxnIds = new Set<string>();
+      for (const entry of clientMap.values()) {
+        const client = allClients.find(c => c.id === entry.clientId);
+        const clientTxns = receiptTxns.filter(t =>
+          t.contactName === entry.clientName ||
+          (client?.xeroContactId && t.xeroContactId === client.xeroContactId)
+        );
+        entry.payments = clientTxns.map(t => ({
+          date: t.date,
+          amount: parseFloat(t.amount),
+          reference: t.reference,
+          bankAccount: t.bankAccountName,
+        }));
+        entry.totalPaid = entry.payments.reduce((s, p) => s + p.amount, 0);
+        clientTxns.forEach(t => usedTxnIds.add(t.id));
+
+        const assignedLineIds = new Set<string>();
+        for (const emp of entry.employees) {
+          const empClientId = employeeToClient.get(emp.id);
+          if (empClientId !== entry.clientId) continue;
+          const empLines = allPayRunLines.filter(pl =>
+            pl.line.employeeId === emp.id && !assignedLineIds.has(`${pl.payRun.id}-${pl.line.employeeId}`)
+          );
+          for (const { line, payRun } of empLines) {
+            const lineKey = `${payRun.id}-${line.employeeId}`;
+            assignedLineIds.add(lineKey);
+            const gross = parseFloat(line.grossEarnings || "0");
+            const super_ = parseFloat(line.superAmount || "0");
+            const net = parseFloat(line.netPay || "0");
+            entry.payrollEntries.push({
+              employeeName: `${emp.firstName} ${emp.lastName}`,
+              periodStart: payRun.periodStart || "",
+              periodEnd: payRun.periodEnd || "",
+              gross,
+              super_,
+              net,
+            });
+            entry.totalCost += gross + super_;
+          }
+        }
+      }
+
+      const unmatchedTxns = receiptTxns.filter(t => !usedTxnIds.has(t.id));
+      const unmatchedByContact = new Map<string, typeof unmatchedTxns>();
+      for (const t of unmatchedTxns) {
+        const key = t.contactName || "Unknown";
+        if (!unmatchedByContact.has(key)) unmatchedByContact.set(key, []);
+        unmatchedByContact.get(key)!.push(t);
+      }
+
+      const unmatchedClients = Array.from(unmatchedByContact.entries())
+        .map(([name, txns]) => ({
+          clientName: name,
+          hasPlacement: false,
+          payments: txns.map(t => ({
+            date: t.date,
+            amount: parseFloat(t.amount),
+            reference: t.reference,
+            bankAccount: t.bankAccountName,
+          })),
+          totalPaid: txns.reduce((s, t) => s + parseFloat(t.amount), 0),
+        }))
+        .filter(c => c.totalPaid > 0)
+        .sort((a, b) => b.totalPaid - a.totalPaid);
+
+      const matchedClients = Array.from(clientMap.values())
+        .map(entry => ({
+          clientId: entry.clientId,
+          clientName: entry.clientName,
+          hasPlacement: true,
+          employeeCount: entry.employees.length,
+          employees: entry.employees.map(e => ({ name: `${e.firstName} ${e.lastName}`, chargeOutRate: e.chargeOutRate })),
+          paymentCount: entry.payments.length,
+          totalPaid: Math.round(entry.totalPaid * 100) / 100,
+          totalCost: Math.round(entry.totalCost * 100) / 100,
+          net: Math.round((entry.totalPaid - entry.totalCost) * 100) / 100,
+          payments: entry.payments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+          payrollEntries: entry.payrollEntries.sort((a, b) => new Date(b.periodEnd).getTime() - new Date(a.periodEnd).getTime()),
+        }))
+        .sort((a, b) => b.totalPaid - a.totalPaid);
+
+      const totalClientPaid = matchedClients.reduce((s, c) => s + c.totalPaid, 0) + unmatchedClients.reduce((s, c) => s + c.totalPaid, 0);
+      const totalEmployeeCost = matchedClients.reduce((s, c) => s + c.totalCost, 0);
+
+      res.json({
+        matched: matchedClients,
+        unmatched: unmatchedClients,
+        totals: {
+          totalClientPaid: Math.round(totalClientPaid * 100) / 100,
+          totalEmployeeCost: Math.round(totalEmployeeCost * 100) / 100,
+          netPosition: Math.round((totalClientPaid - totalEmployeeCost) * 100) / 100,
+        },
+        dateRange: { from: from.toISOString().split("T")[0], to: to.toISOString().split("T")[0] },
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch client ledger" });
+    }
+  });
+
   return httpServer;
 }
