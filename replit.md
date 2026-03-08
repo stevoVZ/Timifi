@@ -24,6 +24,7 @@ Labour hire agency management portal for employees, timesheets, invoicing, and p
 - **Notifications**: Priority-based notification center with filtering by type/priority, mark read/unread
 - **Settings**: Tabbed settings page (Branding, Company, Payroll, Xero, Portal, Users)
 - **Reconciliation** (`/reconciliation`): Monthly bird's-eye view of all active employees. Month/year selector, KPI strip (employees, timesheets received, invoices raised/paid, payroll complete), per-employee table with status icons (green check, amber warning, red X) for timesheet/invoice/payroll, progress bars. Links to employee detail pages.
+- **Bank Statements** (`/bank-statements`): Monthly bank transaction viewer synced from Xero. KPI cards (Total Income, Total Expenses, Net Cash Flow). Three tabs: Expenses (grouped by payee with collapsible sections and subtotals), All Transactions (sortable table), Income. Search/filter by contact, description, or reference. Color-coded amounts (green=income, red=expense). Reconciled status indicators.
 - **Pay Items**: Pay codes/items management
 - **Xero Integration**: OAuth2 connection to Xero Payroll AU + Accounting API. Organisation (tenant) picker for multi-org support. Individual sync for: Employees, Pay Runs, Timesheets, Invoices, Contacts, Bank Transactions, Payroll Settings. Sync All button. Xero-synced employees show badge and locked fields.
 - **Clients**: Synced from Xero Contacts. Client dropdown on employee detail page. Used in placements.
@@ -54,6 +55,7 @@ client/src/
     payroll-detail.tsx        - Pay run detail with employee pay lines
     invoices.tsx              - Invoice management
     reconciliation.tsx        - Monthly reconciliation dashboard
+    bank-statements.tsx       - Bank transactions / expenses viewer
     leave.tsx                 - Leave request management (admin)
     pay-items.tsx             - Pay items/pay codes management
     notifications.tsx         - Notification center with filters
@@ -137,7 +139,7 @@ shared/
 ## Xero Integration
 
 - OAuth2 with Xero Payroll AU API + Accounting API
-- Scopes: openid, profile, email, payroll.*, accounting.invoices, accounting.invoices.read, accounting.contacts.read, accounting.transactions.read, accounting.reports.read, offline_access
+- Scopes: openid, profile, email, payroll.*, accounting.invoices, accounting.invoices.read, accounting.contacts.read, accounting.banktransactions.read, offline_access
 - Multi-organisation support via tenant picker in settings
 - Sync functions: syncEmployees, syncPayRuns, syncTimesheets, syncInvoices, syncContacts, syncBankTransactions, syncPayrollSettings
 - Token refresh handled automatically

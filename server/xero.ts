@@ -49,6 +49,7 @@ export async function getConsentUrl(): Promise<string> {
     "accounting.invoices",
     "accounting.invoices.read",
     "accounting.contacts.read",
+    "accounting.banktransactions.read",
     "offline_access",
   ];
 
@@ -1061,6 +1062,10 @@ export async function syncBankTransactions(): Promise<{
         "Accept": "application/json",
       },
     });
+
+    if (response.status === 403) {
+      throw new Error("Bank Transactions scope not authorized. Please disconnect Xero in Settings and reconnect — the new authorization will include the required 'accounting.banktransactions.read' scope. You may also need to enable this scope in your Xero Developer Portal app configuration.");
+    }
 
     if (!response.ok) {
       const errorBody = await response.text();
