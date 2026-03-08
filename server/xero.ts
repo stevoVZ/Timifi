@@ -46,9 +46,6 @@ export async function getConsentUrl(): Promise<string> {
     "payroll.settings.read",
     "payroll.timesheets",
     "payroll.timesheets.read",
-    "accounting.transactions",
-    "accounting.transactions.read",
-    "accounting.contacts.read",
     "offline_access",
   ];
 
@@ -745,6 +742,14 @@ export async function syncInvoices(): Promise<{
   updated: number;
   errors: string[];
 }> {
+  return {
+    total: 0,
+    created: 0,
+    updated: 0,
+    errors: ["Invoice sync requires accounting scopes (accounting.transactions, accounting.contacts.read) to be enabled on your Xero app at developer.xero.com. Add these scopes to your app, then disconnect and reconnect Xero."],
+  };
+
+  /* Accounting scope sync — re-enable once scopes are authorized:
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
 
   const response = await fetch("https://api.xero.com/api.xro/2.0/Invoices?Statuses=AUTHORISED,PAID,SUBMITTED,DRAFT,VOIDED&page=1", {
@@ -863,4 +868,5 @@ export async function syncInvoices(): Promise<{
   await saveSetting("xero.lastInvoiceSyncAt", new Date().toISOString());
 
   return { total: xeroInvoices.length, created, updated, errors };
+  */
 }
