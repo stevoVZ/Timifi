@@ -449,6 +449,82 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/employees/:id/reconciliation", async (req, res) => {
+    try {
+      const employeeId = req.params.id;
+      const [tsList, invList] = await Promise.all([
+        storage.getTimesheetsByEmployee(employeeId),
+        storage.getInvoicesByEmployee(employeeId),
+      ]);
+
+      const periodMap: Record<string, {
+        month: number;
+        year: number;
+        timesheetHours: number;
+        timesheetStatus: string | null;
+        timesheetGross: number;
+        invoicedHours: number;
+        invoicedAmount: number;
+        invoicedAmountExGst: number;
+        paymentStatus: string | null;
+        paidAmount: number;
+        paidDate: string | null;
+        invoiceNumber: string | null;
+        invoiceStatus: string | null;
+      }> = {};
+
+      for (const ts of tsList) {
+        const key = `${ts.year}-${String(ts.month).padStart(2, "0")}`;
+        if (!periodMap[key]) {
+          periodMap[key] = {
+            month: ts.month, year: ts.year,
+            timesheetHours: 0, timesheetStatus: null, timesheetGross: 0,
+            invoicedHours: 0, invoicedAmount: 0, invoicedAmountExGst: 0,
+            paymentStatus: null, paidAmount: 0, paidDate: null,
+            invoiceNumber: null, invoiceStatus: null,
+          };
+        }
+        periodMap[key].timesheetHours += parseFloat(ts.totalHours || "0");
+        periodMap[key].timesheetGross += parseFloat(ts.grossValue || "0");
+        periodMap[key].timesheetStatus = ts.status;
+      }
+
+      for (const inv of invList) {
+        const key = `${inv.year}-${String(inv.month).padStart(2, "0")}`;
+        if (!periodMap[key]) {
+          periodMap[key] = {
+            month: inv.month, year: inv.year,
+            timesheetHours: 0, timesheetStatus: null, timesheetGross: 0,
+            invoicedHours: 0, invoicedAmount: 0, invoicedAmountExGst: 0,
+            paymentStatus: null, paidAmount: 0, paidDate: null,
+            invoiceNumber: null, invoiceStatus: null,
+          };
+        }
+        periodMap[key].invoicedHours += parseFloat(inv.hours || "0");
+        periodMap[key].invoicedAmount += parseFloat(inv.amountInclGst || "0");
+        periodMap[key].invoicedAmountExGst += parseFloat(inv.amountExclGst || "0");
+        periodMap[key].invoiceNumber = inv.invoiceNumber;
+        periodMap[key].invoiceStatus = inv.status;
+        if (inv.status === "PAID") {
+          periodMap[key].paymentStatus = "PAID";
+          periodMap[key].paidAmount += parseFloat(inv.amountInclGst || "0");
+          periodMap[key].paidDate = inv.paidDate ? new Date(inv.paidDate).toISOString() : null;
+        } else if (!periodMap[key].paymentStatus) {
+          periodMap[key].paymentStatus = inv.status;
+        }
+      }
+
+      const periods = Object.values(periodMap).sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return b.month - a.month;
+      });
+
+      res.json(periods);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to build reconciliation data" });
+    }
+  });
+
   app.post("/api/portal/login", async (req, res) => {
     try {
       const { email } = req.body;

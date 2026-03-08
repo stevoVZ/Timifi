@@ -17,9 +17,26 @@ import {
   ArrowLeft, Shield, MapPin, Briefcase, Mail, Phone, Calendar,
   DollarSign, Clock, Pencil, Check, X, AlertTriangle, FileText,
   Receipt, User, Upload, CloudUpload, Trash2, Eye, FileBadge,
-  Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File, Lock, RefreshCw
+  Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File, Lock, RefreshCw,
+  TrendingUp, CheckCircle, AlertCircle, CircleDollarSign,
 } from "lucide-react";
 import type { Employee, Timesheet, Invoice, Document } from "@shared/schema";
+
+interface ReconciliationPeriod {
+  month: number;
+  year: number;
+  timesheetHours: number;
+  timesheetStatus: string | null;
+  timesheetGross: number;
+  invoicedHours: number;
+  invoicedAmount: number;
+  invoicedAmountExGst: number;
+  paymentStatus: string | null;
+  paidAmount: number;
+  paidDate: string | null;
+  invoiceNumber: string | null;
+  invoiceStatus: string | null;
+}
 
 function getInitials(first: string, last: string) {
   return `${first[0]}${last[0]}`.toUpperCase();
@@ -77,6 +94,11 @@ export default function EmployeeDetailPage() {
 
   const { data: documentsList } = useQuery<Document[]>({
     queryKey: ["/api/documents", id],
+    enabled: !!id,
+  });
+
+  const { data: reconciliation } = useQuery<ReconciliationPeriod[]>({
+    queryKey: ["/api/employees", id, "reconciliation"],
     enabled: !!id,
   });
 
@@ -218,13 +240,9 @@ export default function EmployeeDetailPage() {
                 <User className="w-4 h-4 mr-1.5" />
                 Profile
               </TabsTrigger>
-              <TabsTrigger value="timesheets" data-testid="tab-timesheets">
-                <Clock className="w-4 h-4 mr-1.5" />
-                Timesheets
-              </TabsTrigger>
-              <TabsTrigger value="invoices" data-testid="tab-invoices">
-                <Receipt className="w-4 h-4 mr-1.5" />
-                Invoices
+              <TabsTrigger value="financials" data-testid="tab-financials">
+                <TrendingUp className="w-4 h-4 mr-1.5" />
+                Financials
               </TabsTrigger>
               <TabsTrigger value="documents" data-testid="tab-documents">
                 <FileText className="w-4 h-4 mr-1.5" />
@@ -416,92 +434,8 @@ export default function EmployeeDetailPage() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="timesheets" className="mt-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Timesheets</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {!timesheetsList || timesheetsList.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground text-sm" data-testid="text-no-timesheets">
-                      No timesheets submitted yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {timesheetsList.map((ts) => (
-                        <div
-                          key={ts.id}
-                          className="flex items-center justify-between gap-4 py-3 px-3 rounded-md bg-muted/50"
-                          data-testid={`timesheet-row-${ts.id}`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="text-sm font-medium text-foreground">
-                              {MONTHS[ts.month]} {ts.year}
-                            </div>
-                            <StatusBadge status={ts.status} />
-                          </div>
-                          <div className="flex items-center gap-4 text-sm flex-wrap">
-                            <span className="font-mono text-muted-foreground">{ts.totalHours}h</span>
-                            {ts.regularHours && parseFloat(ts.overtimeHours || "0") > 0 && (
-                              <span className="text-xs text-amber-600 dark:text-amber-400">
-                                +{ts.overtimeHours}h OT
-                              </span>
-                            )}
-                            <span className="font-mono text-foreground font-medium">
-                              ${parseFloat(ts.grossValue || "0").toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="invoices" className="mt-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Invoices</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {!invoicesList || invoicesList.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground text-sm" data-testid="text-no-invoices">
-                      No invoices found.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {invoicesList.map((inv) => (
-                        <div
-                          key={inv.id}
-                          className="flex items-center justify-between gap-4 py-3 px-3 rounded-md bg-muted/50"
-                          data-testid={`invoice-row-${inv.id}`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="text-sm font-medium text-foreground">
-                              {inv.invoiceNumber || `${MONTHS[inv.month]} ${inv.year}`}
-                            </div>
-                            <StatusBadge status={inv.status} />
-                          </div>
-                          <div className="flex items-center gap-4 text-sm flex-wrap">
-                            {inv.hours && (
-                              <span className="font-mono text-muted-foreground">{inv.hours}h</span>
-                            )}
-                            <span className="font-mono text-foreground font-medium">
-                              ${parseFloat(inv.amountInclGst).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </span>
-                            {inv.dueDate && (
-                              <span className="text-xs text-muted-foreground">
-                                Due {new Date(inv.dueDate).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+            <TabsContent value="financials" className="mt-4">
+              <FinancialsTab reconciliation={reconciliation || []} />
             </TabsContent>
 
             <TabsContent value="documents" className="mt-4">
@@ -510,6 +444,132 @@ export default function EmployeeDetailPage() {
           </Tabs>
         </div>
       </main>
+    </div>
+  );
+}
+
+const FULL_MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function FinancialsTab({ reconciliation }: { reconciliation: ReconciliationPeriod[] }) {
+  const totalTimesheetHours = reconciliation.reduce((s, p) => s + p.timesheetHours, 0);
+  const totalInvoiced = reconciliation.reduce((s, p) => s + p.invoicedAmount, 0);
+  const totalPaid = reconciliation.reduce((s, p) => s + p.paidAmount, 0);
+  const totalOutstanding = totalInvoiced - totalPaid;
+
+  const kpis = [
+    { label: "Timesheet Hours", value: `${totalTimesheetHours.toFixed(1)}h`, icon: Clock, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800" },
+    { label: "Total Invoiced", value: `$${totalInvoiced.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: Receipt, color: "text-violet-600 dark:text-violet-400", bg: "bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-800" },
+    { label: "Total Paid", value: `$${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: CheckCircle, color: "text-green-600 dark:text-green-400", bg: "bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800" },
+    { label: "Outstanding", value: `$${totalOutstanding.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, icon: AlertCircle, color: totalOutstanding > 0 ? "text-amber-600 dark:text-amber-400" : "text-green-600 dark:text-green-400", bg: totalOutstanding > 0 ? "bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-800" : "bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800" },
+  ];
+
+  function paymentBadge(status: string | null) {
+    if (!status) return <span className="text-xs text-muted-foreground">—</span>;
+    const styles: Record<string, string> = {
+      PAID: "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800",
+      SENT: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800",
+      AUTHORISED: "bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-800",
+      DRAFT: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700",
+      OVERDUE: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800",
+      VOIDED: "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700",
+    };
+    return (
+      <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${styles[status] || styles.DRAFT}`} data-testid={`badge-payment-${status}`}>
+        {status}
+      </Badge>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {kpis.map((k) => (
+          <div key={k.label} className={`p-3.5 rounded-lg border ${k.bg}`} data-testid={`kpi-${k.label.toLowerCase().replace(/\s/g, "-")}`}>
+            <div className="flex items-center gap-2 mb-1.5">
+              <k.icon className={`w-4 h-4 ${k.color}`} />
+              <span className="text-[11px] font-medium text-muted-foreground">{k.label}</span>
+            </div>
+            <div className={`text-lg font-bold ${k.color}`}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Period Reconciliation</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {reconciliation.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground text-sm" data-testid="text-no-financials">
+              No timesheet or invoice data yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="table-reconciliation">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Period</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">TS Hours</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Inv Hours</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden sm:table-cell">Variance</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Invoiced</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Paid</th>
+                    <th className="text-center py-2.5 px-2 text-xs font-semibold text-muted-foreground">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reconciliation.map((p) => {
+                    const variance = p.timesheetHours - p.invoicedHours;
+                    const hasVariance = Math.abs(variance) > 0.01 && p.invoicedHours > 0 && p.timesheetHours > 0;
+                    return (
+                      <tr
+                        key={`${p.year}-${p.month}`}
+                        className={`border-b border-border last:border-0 ${hasVariance ? "bg-amber-50/50 dark:bg-amber-950/20" : ""}`}
+                        data-testid={`row-period-${p.year}-${p.month}`}
+                      >
+                        <td className="py-2.5 px-2">
+                          <div className="font-medium text-foreground">{FULL_MONTHS[p.month]?.slice(0, 3)} {p.year}</div>
+                          {p.invoiceNumber && <div className="text-[10px] text-muted-foreground">{p.invoiceNumber}</div>}
+                        </td>
+                        <td className="py-2.5 px-2 text-right">
+                          <span className="font-mono text-foreground">{p.timesheetHours > 0 ? `${p.timesheetHours}` : "—"}</span>
+                        </td>
+                        <td className="py-2.5 px-2 text-right">
+                          <span className="font-mono text-foreground">{p.invoicedHours > 0 ? `${p.invoicedHours}` : "—"}</span>
+                        </td>
+                        <td className="py-2.5 px-2 text-right hidden sm:table-cell">
+                          {hasVariance ? (
+                            <span className={`font-mono text-xs font-semibold ${variance > 0 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+                              {variance > 0 ? "+" : ""}{variance.toFixed(1)}h
+                            </span>
+                          ) : (
+                            <span className="text-xs text-green-600 dark:text-green-400">
+                              {p.timesheetHours > 0 && p.invoicedHours > 0 ? <Check className="w-3.5 h-3.5 inline" /> : "—"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-2 text-right">
+                          <span className="font-mono text-foreground">
+                            {p.invoicedAmount > 0 ? `$${p.invoicedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2 text-right">
+                          <span className={`font-mono ${p.paidAmount > 0 ? "text-green-600 dark:text-green-400 font-medium" : "text-muted-foreground"}`}>
+                            {p.paidAmount > 0 ? `$${p.paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2 text-center">
+                          {paymentBadge(p.paymentStatus || p.invoiceStatus || p.timesheetStatus)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -30,6 +30,7 @@ import {
   Plus, Search, Clock, FileText, CheckCircle, AlertTriangle, XCircle,
   Mail, Upload, UserCheck, Monitor, Paperclip, ChevronDown, ChevronUp,
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus, Users,
+  ChevronLeft, ChevronRight,
 } from "lucide-react";
 import type { Timesheet, Employee, Document as DocType } from "@shared/schema";
 
@@ -144,6 +145,8 @@ function UploadView() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [showIntake, setShowIntake] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [reviewIdx, setReviewIdx] = useState(0);
 
   const [intakeSource, setIntakeSource] = useState("ADMIN_ENTRY");
   const [senderEmail, setSenderEmail] = useState("");
@@ -346,6 +349,8 @@ function UploadView() {
     setSubmitted(false);
     setExpandedId(null);
     setShowIntake(false);
+    setReviewMode(false);
+    setReviewIdx(0);
   };
 
   if (submitted) {
@@ -404,6 +409,248 @@ function UploadView() {
         <p className="text-center text-xs text-muted-foreground">
           Drop one or many PDFs — different employees and months are handled automatically
         </p>
+      </div>
+    );
+  }
+
+  const reviewItems = doneActive.filter((i) => i.result);
+  const currentReview = reviewItems[reviewIdx];
+
+  if (reviewMode && currentReview) {
+    const r = currentReview.result!;
+    const assignedEmp = activeEmployees.find((e) => e.id === currentReview.assignedEmployeeId);
+    const confColor = r.confidence >= 90 ? "text-green-600" : r.confidence >= 70 ? "text-amber-600" : "text-red-600";
+    const pdfSrc = currentReview.fileBase64
+      ? currentReview.fileBase64.startsWith("data:") ? currentReview.fileBase64 : `data:application/pdf;base64,${currentReview.fileBase64}`
+      : null;
+
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" onClick={() => { setReviewMode(false); setReviewIdx(0); }} data-testid="button-back-to-queue">
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+              Back to files
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Reviewing {reviewIdx + 1} of {reviewItems.length}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline" size="sm"
+              disabled={reviewIdx === 0}
+              onClick={() => setReviewIdx(reviewIdx - 1)}
+              data-testid="button-review-prev"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="outline" size="sm"
+              disabled={reviewIdx >= reviewItems.length - 1}
+              onClick={() => setReviewIdx(reviewIdx + 1)}
+              data-testid="button-review-next"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ minHeight: "65vh" }}>
+          <Card className="flex flex-col overflow-hidden">
+            <div className="p-3 border-b border-border bg-muted/50 flex items-center justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                <span className="text-sm font-semibold text-foreground truncate" data-testid="text-review-filename">{currentReview.file.name}</span>
+              </div>
+              <span className="text-xs text-muted-foreground flex-shrink-0">{(currentReview.file.size / 1024).toFixed(0)} KB</span>
+            </div>
+            <div className="flex-1 min-h-0 bg-muted">
+              {pdfSrc ? (
+                <iframe
+                  src={pdfSrc}
+                  className="w-full h-full"
+                  title={currentReview.file.name}
+                  data-testid="iframe-review-pdf"
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                  PDF preview not available
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <div className="flex flex-col gap-3">
+            <Card>
+              <CardContent className="p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-foreground">Detected Data</h3>
+                  <span className={`text-xs font-semibold ${confColor}`} data-testid="text-review-confidence">{r.confidence}% confidence</span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    ["Total", `${r.totalHours}h`, "text-primary"],
+                    ["Regular", `${r.regularHours}h`, "text-green-600"],
+                    ["Overtime", `${r.overtimeHours}h`, r.overtimeHours > 8 ? "text-red-600" : "text-amber-600"],
+                  ].map(([label, val, color]) => (
+                    <div key={label} className="p-2.5 rounded-lg bg-muted border border-border text-center">
+                      <div className={`font-mono text-lg font-semibold ${color}`} data-testid={`text-review-${(label as string).toLowerCase()}`}>{val}</div>
+                      <div className="text-[11px] text-muted-foreground">{label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-0">
+                  {[
+                    ["Period", r.period],
+                    ["Format", r.format],
+                    ...(r.employeeName ? [["Employee Detected", r.employeeName]] : []),
+                    ...(r.clientName ? [["Client", r.clientName]] : []),
+                    ["Signature", r.signatureDetected ? "Detected" : "Not detected"],
+                    ...(r.notes ? [["Notes", r.notes]] : []),
+                  ].map(([k, v]) => (
+                    <div key={k} className="flex justify-between py-1.5 border-b border-border last:border-0">
+                      <span className="text-xs text-muted-foreground">{k}</span>
+                      <span className={`text-xs font-medium text-foreground text-right max-w-[220px] ${k === "Signature" && r.signatureDetected ? "text-green-600" : ""}`}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {r.weeks.length > 0 && (
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Weekly breakdown</div>
+                    {r.weeks.map((w, i) => {
+                      const maxH = Math.max(...r.weeks.map((x) => x.h));
+                      const pct = (w.h / maxH) * 100;
+                      return (
+                        <div key={i} className="mb-2">
+                          <div className="flex justify-between mb-0.5">
+                            <span className="text-xs text-muted-foreground">{w.wk}</span>
+                            <span className={`font-mono text-xs ${w.h > 44 ? "text-red-600" : w.h > 40 ? "text-amber-600" : "text-green-600"}`}>{w.h}h</span>
+                          </div>
+                          <Progress value={pct} className="h-1.5" />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {r.warnings.length > 0 && (
+                  <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                    {r.warnings.map((w, i) => (
+                      <div key={i} className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+                        <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                        <span>{w}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4 space-y-3">
+                <h3 className="text-sm font-bold text-foreground">Assignment</h3>
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Employee</Label>
+                    <Select
+                      value={currentReview.assignedEmployeeId || ""}
+                      onValueChange={(v) => updItem(currentReview.id, { assignedEmployeeId: v })}
+                    >
+                      <SelectTrigger className={`h-8 text-sm ${!currentReview.assignedEmployeeId ? "border-amber-300 dark:border-amber-700" : ""}`} data-testid="select-review-employee">
+                        <SelectValue placeholder="Select employee" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeEmployees.map((e) => (
+                          <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Month</Label>
+                      <Select
+                        value={String(currentReview.assignedMonth)}
+                        onValueChange={(v) => updItem(currentReview.id, { assignedMonth: parseInt(v) })}
+                      >
+                        <SelectTrigger className="h-8 text-sm" data-testid="select-review-month">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MONTHS.slice(1).map((m, i) => (
+                            <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Year</Label>
+                      <Select
+                        value={String(currentReview.assignedYear)}
+                        onValueChange={(v) => updItem(currentReview.id, { assignedYear: parseInt(v) })}
+                      >
+                        <SelectTrigger className="h-8 text-sm" data-testid="select-review-year">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => (
+                            <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {reviewIdx === reviewItems.length - 1 && (
+              <Card>
+                <CardContent className="p-4 space-y-3">
+                  <div className="text-sm font-bold text-foreground">Ready to submit</div>
+                  <div className="text-xs text-muted-foreground">
+                    {groupSummaries.length} timesheet{groupSummaries.length !== 1 ? "s" : ""} · {batchTotalHours}h total
+                  </div>
+
+                  {!allAssigned && (
+                    <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
+                      <Users className="w-3.5 h-3.5 flex-shrink-0" />
+                      Assign an employee to each file first
+                    </div>
+                  )}
+
+                  <Button
+                    className="w-full"
+                    disabled={!canSubmit || submitting}
+                    onClick={handleSubmit}
+                    data-testid="button-submit-batch"
+                  >
+                    {submitting ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Submitting...</>
+                    ) : (
+                      <>Submit {groupSummaries.length} timesheet{groupSummaries.length !== 1 ? "s" : ""}</>
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-1.5 justify-center">
+          {reviewItems.map((item, idx) => (
+            <button
+              key={item.id}
+              onClick={() => setReviewIdx(idx)}
+              className={`w-2 h-2 rounded-full transition-all ${idx === reviewIdx ? "bg-primary scale-125" : "bg-border hover:bg-muted-foreground/50"}`}
+              data-testid={`button-review-dot-${idx}`}
+            />
+          ))}
+        </div>
       </div>
     );
   }
@@ -490,6 +737,18 @@ function UploadView() {
                     <Users className="w-3.5 h-3.5 flex-shrink-0" />
                     Assign an employee to each file before submitting
                   </div>
+                )}
+
+                {doneActive.length > 0 && (
+                  <Button
+                    className="w-full"
+                    variant="outline"
+                    onClick={() => { setReviewMode(true); setReviewIdx(0); }}
+                    data-testid="button-review-confirm"
+                  >
+                    <Eye className="w-4 h-4 mr-1.5" />
+                    Review & Confirm
+                  </Button>
                 )}
 
                 <div>
