@@ -1,7 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema } from "@shared/schema";
+import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema } from "@shared/schema";
+import { generatePayslipHTML, buildPayslipData } from "./payslip";
+import { buildABAFromPayRun, type ABAHeader } from "./aba";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -457,6 +459,297 @@ export async function registerRoutes(
       res.json(mem || null);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch super membership" });
+    }
+  });
+
+  app.get("/api/pay-runs/:id/lines", async (req, res) => {
+    try {
+      const lines = await storage.getPayRunLines(req.params.id);
+      const contractorIds = [...new Set(lines.map((l) => l.contractorId))];
+      const allContractors = await storage.getContractors();
+      const contractorMap = new Map(allContractors.map((c) => [c.id, c]));
+      const enriched = lines.map((l) => ({
+        ...l,
+        contractor: contractorMap.get(l.contractorId) || null,
+      }));
+      res.json(enriched);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch pay run lines" });
+    }
+  });
+
+  app.patch("/api/pay-runs/:id", async (req, res) => {
+    try {
+      const allowedFields = ["status", "payDate", "periodStart", "periodEnd", "paymentDate", "superRate", "totalGross", "totalPayg", "totalSuper", "totalNet", "employeeCount"];
+      const updates: Record<string, any> = {};
+      for (const key of allowedFields) {
+        if (req.body[key] !== undefined) {
+          updates[key] = req.body[key];
+        }
+      }
+      if (updates.status && !["DRAFT", "REVIEW", "FILED"].includes(updates.status)) {
+        return res.status(400).json({ message: "Invalid status. Must be DRAFT, REVIEW, or FILED." });
+      }
+      const payRun = await storage.updatePayRun(req.params.id, updates);
+      if (!payRun) return res.status(404).json({ message: "Pay run not found" });
+      res.json(payRun);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to update pay run" });
+    }
+  });
+
+  app.post("/api/pay-runs/:id/file", async (req, res) => {
+    try {
+      const payRun = await storage.getPayRun(req.params.id);
+      if (!payRun) return res.status(404).json({ message: "Pay run not found" });
+
+      const allTimesheets = await storage.getTimesheets();
+      const approved = allTimesheets.filter(
+        (t) => t.status === "APPROVED" && t.year === payRun.year && t.month === payRun.month
+      );
+
+      const superRate = Number(payRun.superRate || "0.115");
+
+      function estimatePayg(annualGross: number): number {
+        if (annualGross <= 18200) return 0;
+        if (annualGross <= 45000) return (annualGross - 18200) * 0.19;
+        if (annualGross <= 120000) return 5092 + (annualGross - 45000) * 0.325;
+        if (annualGross <= 180000) return 29467 + (annualGross - 120000) * 0.37;
+        return 51667 + (annualGross - 180000) * 0.45;
+      }
+
+      const lineData = [];
+      for (const ts of approved) {
+        const contractor = await storage.getContractor(ts.contractorId);
+        if (!contractor) continue;
+        const hours = parseFloat(ts.totalHours);
+        const rate = parseFloat(contractor.hourlyRate || "0");
+        const gross = hours * rate;
+        const annualised = gross * 12;
+        const paygAnnual = estimatePayg(annualised);
+        const payg = Math.round(paygAnnual / 12);
+        const superAmt = Math.round(gross * superRate);
+        const net = gross - payg;
+
+        lineData.push({
+          payRunId: payRun.id,
+          contractorId: ts.contractorId,
+          timesheetId: ts.id,
+          hoursWorked: String(hours.toFixed(2)),
+          ratePerHour: String(rate.toFixed(2)),
+          grossEarnings: String(gross.toFixed(2)),
+          paygWithheld: String(payg.toFixed(2)),
+          superAmount: String(superAmt.toFixed(2)),
+          netPay: String(net.toFixed(2)),
+          status: "INCLUDED" as const,
+        });
+      }
+
+      const lines = await storage.createPayRunLines(lineData);
+
+      const totalGross = lineData.reduce((s, l) => s + parseFloat(l.grossEarnings), 0);
+      const totalPayg = lineData.reduce((s, l) => s + parseFloat(l.paygWithheld), 0);
+      const totalSuper = lineData.reduce((s, l) => s + parseFloat(l.superAmount), 0);
+      const totalNet = lineData.reduce((s, l) => s + parseFloat(l.netPay), 0);
+
+      const updated = await storage.updatePayRun(payRun.id, {
+        status: "FILED",
+        totalGross: String(totalGross.toFixed(2)),
+        totalPayg: String(totalPayg.toFixed(2)),
+        totalSuper: String(totalSuper.toFixed(2)),
+        totalNet: String(totalNet.toFixed(2)),
+        employeeCount: lines.length,
+      });
+
+      res.json({ payRun: updated, lines, linesCreated: lines.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to file pay run" });
+    }
+  });
+
+  app.get("/api/payslips", async (req, res) => {
+    try {
+      const contractorId = req.query.contractorId as string | undefined;
+      let lines;
+      if (contractorId) {
+        lines = await storage.getPayRunLinesByContractor(contractorId);
+      } else {
+        const allPayRuns = await storage.getPayRuns();
+        const filedRuns = allPayRuns.filter((r) => r.status === "FILED");
+        const allLines = [];
+        for (const run of filedRuns) {
+          const runLines = await storage.getPayRunLines(run.id);
+          allLines.push(...runLines.map((l) => ({ ...l, payRun: run })));
+        }
+        lines = allLines;
+      }
+
+      if (contractorId) {
+        const allPayRuns = await storage.getPayRuns();
+        const payRunMap = new Map(allPayRuns.map((r) => [r.id, r]));
+        lines = lines
+          .filter((l: any) => {
+            const run = payRunMap.get(l.payRunId);
+            return run && run.status === "FILED";
+          })
+          .map((l: any) => ({
+            ...l,
+            payRun: payRunMap.get(l.payRunId),
+          }));
+      }
+
+      res.json({ payslips: lines });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch payslips" });
+    }
+  });
+
+  app.get("/api/payslips/:lineId", async (req, res) => {
+    try {
+      const line = await storage.getPayRunLine(req.params.lineId);
+      if (!line) return res.status(404).json({ message: "Payslip not found" });
+
+      const payRun = await storage.getPayRun(line.payRunId);
+      if (!payRun) return res.status(404).json({ message: "Pay run not found" });
+
+      const contractor = await storage.getContractor(line.contractorId);
+      if (!contractor) return res.status(404).json({ message: "Contractor not found" });
+
+      const bank = await storage.getBankAccount(line.contractorId);
+
+      const allSettings = await storage.getSettings();
+      const settingsMap: Record<string, string> = {};
+      for (const s of allSettings) {
+        settingsMap[s.key] = s.value;
+      }
+
+      const allLines = await storage.getPayRunLinesByContractor(line.contractorId);
+      const allPayRuns = await storage.getPayRuns();
+      const payRunMap = new Map(allPayRuns.map((r) => [r.id, r]));
+      const ytd = allLines.reduce(
+        (acc, l) => {
+          const run = payRunMap.get(l.payRunId);
+          if (run && run.status === "FILED" && run.year === payRun.year) {
+            return {
+              gross: acc.gross + Number(l.grossEarnings),
+              payg: acc.payg + Number(l.paygWithheld),
+              super: acc.super + Number(l.superAmount),
+            };
+          }
+          return acc;
+        },
+        { gross: 0, payg: 0, super: 0 }
+      );
+
+      const payslipNum = `PS-${payRun.year}-${String(payRun.month).padStart(2, "0")}-${String(req.params.lineId).slice(-4)}`;
+
+      const payslipData = buildPayslipData({
+        line,
+        contractor,
+        bank: bank || undefined,
+        settings: settingsMap,
+        ytd,
+        payRun,
+        payslipNum,
+      });
+
+      const html = generatePayslipHTML(payslipData);
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `inline; filename="${payslipNum}.html"`);
+      res.send(html);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to generate payslip" });
+    }
+  });
+
+  app.post("/api/payroll/aba", async (req, res) => {
+    try {
+      const { payRunId } = req.body;
+      if (!payRunId) return res.status(400).json({ message: "payRunId required" });
+
+      const payRun = await storage.getPayRun(payRunId);
+      if (!payRun) return res.status(404).json({ message: "Pay run not found" });
+
+      const lines = await storage.getPayRunLines(payRunId);
+      const includedLines = lines.filter((l) => l.status === "INCLUDED");
+
+      const allSettings = await storage.getSettings();
+      const settingsMap: Record<string, string> = {};
+      for (const s of allSettings) {
+        settingsMap[s.key] = s.value;
+      }
+
+      const abaLines = [];
+      const missing: string[] = [];
+      let lineIdx = 1;
+
+      for (const line of includedLines) {
+        const contractor = await storage.getContractor(line.contractorId);
+        if (!contractor) continue;
+        const bank = await storage.getBankAccount(line.contractorId);
+        if (!bank) {
+          missing.push(`${contractor.firstName} ${contractor.lastName}`);
+          continue;
+        }
+
+        const payslipNum = `PS-${payRun.year}-${String(payRun.month).padStart(2, "0")}-${String(lineIdx++).padStart(3, "0")}`;
+        abaLines.push({
+          contractorName: `${contractor.firstName} ${contractor.lastName}`,
+          bsb: bank.bsb,
+          accountNumber: bank.accountNumber,
+          netPay: Number(line.netPay),
+          payslipNumber: payslipNum,
+        });
+      }
+
+      if (missing.length > 0) {
+        return res.status(422).json({
+          message: `Missing bank details for: ${missing.join(", ")}. Add bank accounts before generating ABA file.`,
+        });
+      }
+
+      if (abaLines.length === 0) {
+        return res.status(422).json({ message: "No pay run lines to include" });
+      }
+
+      const pd = new Date(payRun.paymentDate || payRun.payDate || new Date());
+      const processingDate = `${String(pd.getDate()).padStart(2, "0")}${String(pd.getMonth() + 1).padStart(2, "0")}${String(pd.getFullYear()).slice(-2)}`;
+
+      const header: ABAHeader = {
+        bsb: "000-000",
+        accountNumber: "000000000",
+        accountName: settingsMap.company_name || "Agency",
+        apcsUserName: settingsMap.company_name || "Agency",
+        apcsUserId: "000000",
+        description: "PAYROLL",
+        processingDate,
+      };
+
+      const { content, totalAmount, entryCount } = buildABAFromPayRun({
+        header,
+        lines: abaLines,
+        paymentDate: payRun.paymentDate || payRun.payDate || undefined,
+      });
+
+      const fileName = `payroll-${payRun.year}-${String(payRun.month).padStart(2, "0")}-${Date.now()}.aba`;
+
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.setHeader("X-ABA-Total", String(totalAmount));
+      res.setHeader("X-ABA-Entries", String(entryCount));
+      res.send(content);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to generate ABA file" });
+    }
+  });
+
+  app.get("/api/documents/:contractorId", async (req, res) => {
+    try {
+      const docs = await storage.getDocuments(req.params.contractorId);
+      res.json(docs);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch documents" });
     }
   });
 

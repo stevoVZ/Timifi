@@ -1,13 +1,15 @@
 import { db } from "./db";
-import { eq, desc, sql, and } from "drizzle-orm";
+import { eq, desc, sql, and, inArray } from "drizzle-orm";
 import {
-  contractors, timesheets, invoices, payRuns,
+  contractors, timesheets, invoices, payRuns, payRunLines, documents,
   notifications, messages, settings,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
   type Contractor, type InsertContractor,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
   type PayRun, type InsertPayRun,
+  type PayRunLine, type InsertPayRunLine,
+  type Document, type InsertDocument,
   type Notification, type InsertNotification,
   type Message, type InsertMessage,
   type Setting, type InsertSetting,
@@ -40,6 +42,16 @@ export interface IStorage {
   getPayRuns(): Promise<PayRun[]>;
   getPayRun(id: string): Promise<PayRun | undefined>;
   createPayRun(data: InsertPayRun): Promise<PayRun>;
+  updatePayRun(id: string, data: Partial<InsertPayRun>): Promise<PayRun | undefined>;
+
+  getPayRunLines(payRunId: string): Promise<PayRunLine[]>;
+  getPayRunLinesByContractor(contractorId: string): Promise<PayRunLine[]>;
+  getPayRunLine(id: string): Promise<PayRunLine | undefined>;
+  createPayRunLine(data: InsertPayRunLine): Promise<PayRunLine>;
+  createPayRunLines(data: InsertPayRunLine[]): Promise<PayRunLine[]>;
+
+  getDocuments(contractorId: string): Promise<Document[]>;
+  createDocument(data: InsertDocument): Promise<Document>;
 
   getDashboardStats(): Promise<{
     activeContractors: number;
@@ -191,6 +203,53 @@ export class DatabaseStorage implements IStorage {
   async createPayRun(data: InsertPayRun): Promise<PayRun> {
     const [payRun] = await db.insert(payRuns).values(data).returning();
     return payRun;
+  }
+
+  async updatePayRun(id: string, data: Partial<InsertPayRun>): Promise<PayRun | undefined> {
+    const [payRun] = await db
+      .update(payRuns)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(payRuns.id, id))
+      .returning();
+    return payRun;
+  }
+
+  async getPayRunLines(payRunId: string): Promise<PayRunLine[]> {
+    return db.select().from(payRunLines)
+      .where(eq(payRunLines.payRunId, payRunId))
+      .orderBy(desc(payRunLines.createdAt));
+  }
+
+  async getPayRunLinesByContractor(contractorId: string): Promise<PayRunLine[]> {
+    return db.select().from(payRunLines)
+      .where(eq(payRunLines.contractorId, contractorId))
+      .orderBy(desc(payRunLines.createdAt));
+  }
+
+  async getPayRunLine(id: string): Promise<PayRunLine | undefined> {
+    const [line] = await db.select().from(payRunLines).where(eq(payRunLines.id, id));
+    return line;
+  }
+
+  async createPayRunLine(data: InsertPayRunLine): Promise<PayRunLine> {
+    const [line] = await db.insert(payRunLines).values(data).returning();
+    return line;
+  }
+
+  async createPayRunLines(data: InsertPayRunLine[]): Promise<PayRunLine[]> {
+    if (data.length === 0) return [];
+    return db.insert(payRunLines).values(data).returning();
+  }
+
+  async getDocuments(contractorId: string): Promise<Document[]> {
+    return db.select().from(documents)
+      .where(eq(documents.contractorId, contractorId))
+      .orderBy(desc(documents.createdAt));
+  }
+
+  async createDocument(data: InsertDocument): Promise<Document> {
+    const [doc] = await db.insert(documents).values(data).returning();
+    return doc;
   }
 
   async getDashboardStats() {

@@ -15,8 +15,8 @@ Labour hire agency management portal for contractors, timesheets, invoicing, and
 - **Dashboard**: KPI overview with active contractors, timesheets due, outstanding invoices, next pay run
 - **Contractors**: List, search, filter by status, add new (full form + quick add), detail view with timesheet history
 - **Timesheets**: Create, view by status tabs (pending/approved/drafts/rejected), approve/reject workflow
-- **Payroll**: Current pay run overview, pay run history with gross/PAYG/super/net breakdown
-- **Invoices**: Create, track by status (outstanding/paid/draft), send/mark paid workflow
+- **Payroll**: Enhanced pay run management with contractor-level pay lines (hours, rate, gross, PAYG, super, net), file workflow (Draft → Review → Filed), ABA direct entry file download, payslip generation, month navigation
+- **Invoices**: KPI strip (Outstanding, Overdue, Paid totals), filter tabs, pending invoices from approved timesheets, create/send workflow
 - **Leave Management**: Pending/approved/rejected tabs, approve/reject with review notes
 - **Pay Items**: Pay code management with type, rate, multiplier, taxable/superable flags, active toggle
 - **Notifications**: Priority-based notification center with filtering by type/priority, mark read/unread
@@ -27,7 +27,7 @@ Labour hire agency management portal for contractors, timesheets, invoicing, and
 - **Portal Dashboard**: Contractor-specific KPIs (hours, pending timesheets, messages)
 - **Portal Timesheets**: View and submit timesheets
 - **Portal Leave**: View leave balances, request leave, see history
-- **Portal Payslips**: View invoices and payment history
+- **Portal Payslips**: Expandable payslip cards with earnings breakdown, YTD summary (Gross, PAYG, Super), download/view HTML payslip
 - **Portal Messages**: Send/receive messages with admin
 - **Portal Onboarding**: 7-step wizard (Welcome, Personal, Address, Tax, Bank, Super, Complete)
 
@@ -45,7 +45,7 @@ client/src/
     dashboard.tsx             - Dashboard with KPIs and quick links
     contractors.tsx           - Contractor list with search/filter
     contractor-new.tsx        - Full contractor creation form
-    contractor-detail.tsx     - Individual contractor view
+    contractor-detail.tsx     - Contractor detail with tabs (Profile, Timesheets, Invoices, Documents)
     timesheets.tsx            - Timesheet management with tabs
     payroll.tsx               - Pay run overview
     invoices.tsx              - Invoice management
@@ -68,6 +68,8 @@ server/
   storage.ts                  - Database storage layer with Drizzle
   db.ts                       - Database connection
   seed.ts                     - Seed data for development
+  payslip.ts                  - HTML payslip generation (browser print-to-PDF)
+  aba.ts                      - ABA direct entry file generation
 
 shared/
   schema.ts                   - Drizzle schema with all tables and types
@@ -78,7 +80,9 @@ shared/
 - `contractors` - Contractor profiles with clearance, rates, employment, personal details
 - `timesheets` - Monthly timesheet records with hours and status workflow
 - `invoices` - Invoice records with GST calculations and status tracking
-- `pay_runs` - Payroll run records with PAYG/super breakdowns
+- `pay_runs` - Payroll run records with PAYG/super breakdowns, period dates, payment date
+- `pay_run_lines` - Contractor-level pay run detail lines (hours, rate, gross, PAYG, super, net)
+- `documents` - Contractor documents (payslips, contracts, clearances)
 - `notifications` - Admin notification center with type/priority/read status
 - `messages` - Messaging between admin and contractors
 - `settings` - Key-value application settings

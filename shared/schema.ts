@@ -13,6 +13,8 @@ export const notificationTypeEnum = pgEnum("notification_type", ["PAYRUN", "STP"
 export const notificationPriorityEnum = pgEnum("notification_priority", ["URGENT", "HIGH", "MEDIUM", "LOW"]);
 export const leaveTypeEnum = pgEnum("leave_type", ["ANNUAL", "SICK", "LONG_SERVICE", "PERSONAL", "COMPASSIONATE", "UNPAID", "PUBLIC_HOLIDAY"]);
 export const leaveStatusEnum = pgEnum("leave_status", ["PENDING", "APPROVED", "REJECTED", "CANCELLED"]);
+export const payRunLineStatusEnum = pgEnum("pay_run_line_status", ["INCLUDED", "EXCLUDED"]);
+export const documentTypeEnum = pgEnum("document_type", ["PAYSLIP", "CONTRACT", "CLEARANCE", "OTHER"]);
 
 export const contractors = pgTable("contractors", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -88,6 +90,10 @@ export const payRuns = pgTable("pay_runs", {
   year: smallint("year").notNull(),
   month: smallint("month").notNull(),
   payDate: date("pay_date"),
+  periodStart: date("period_start"),
+  periodEnd: date("period_end"),
+  paymentDate: date("payment_date"),
+  superRate: numeric("super_rate", { precision: 5, scale: 4 }).default("0.1150"),
   totalGross: numeric("total_gross", { precision: 12, scale: 2 }).notNull().default("0"),
   totalPayg: numeric("total_payg", { precision: 12, scale: 2 }).notNull().default("0"),
   totalSuper: numeric("total_super", { precision: 12, scale: 2 }).notNull().default("0"),
@@ -96,6 +102,32 @@ export const payRuns = pgTable("pay_runs", {
   status: text("status").notNull().default("DRAFT"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const payRunLines = pgTable("pay_run_lines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  payRunId: varchar("pay_run_id").notNull().references(() => payRuns.id),
+  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  timesheetId: varchar("timesheet_id").references(() => timesheets.id),
+  hoursWorked: numeric("hours_worked", { precision: 6, scale: 2 }).notNull().default("0"),
+  ratePerHour: numeric("rate_per_hour", { precision: 10, scale: 2 }).notNull().default("0"),
+  grossEarnings: numeric("gross_earnings", { precision: 12, scale: 2 }).notNull().default("0"),
+  paygWithheld: numeric("payg_withheld", { precision: 12, scale: 2 }).notNull().default("0"),
+  superAmount: numeric("super_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  netPay: numeric("net_pay", { precision: 12, scale: 2 }).notNull().default("0"),
+  status: payRunLineStatusEnum("status").notNull().default("INCLUDED"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const documents = pgTable("documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  type: documentTypeEnum("type").notNull().default("OTHER"),
+  name: text("name").notNull(),
+  fileUrl: text("file_url"),
+  fileType: text("file_type"),
+  metadata: text("metadata"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const users = pgTable("users", {
@@ -270,6 +302,16 @@ export const insertSuperMembershipSchema = createInsertSchema(superMemberships).
   createdAt: true,
 });
 
+export const insertPayRunLineSchema = createInsertSchema(payRunLines).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertDocumentSchema = createInsertSchema(documents).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type Contractor = typeof contractors.$inferSelect;
 export type InsertContractor = z.infer<typeof insertContractorSchema>;
 export type Timesheet = typeof timesheets.$inferSelect;
@@ -296,3 +338,7 @@ export type BankAccount = typeof bankAccounts.$inferSelect;
 export type InsertBankAccount = z.infer<typeof insertBankAccountSchema>;
 export type SuperMembership = typeof superMemberships.$inferSelect;
 export type InsertSuperMembership = z.infer<typeof insertSuperMembershipSchema>;
+export type PayRunLine = typeof payRunLines.$inferSelect;
+export type InsertPayRunLine = z.infer<typeof insertPayRunLineSchema>;
+export type Document = typeof documents.$inferSelect;
+export type InsertDocument = z.infer<typeof insertDocumentSchema>;

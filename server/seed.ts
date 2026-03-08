@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { contractors, timesheets, invoices, payRuns, notifications, messages, settings, leaveRequests, payItems } from "@shared/schema";
+import { contractors, timesheets, invoices, payRuns, payRunLines, documents, notifications, messages, settings, leaveRequests, payItems } from "@shared/schema";
 import { sql } from "drizzle-orm";
 
 export async function seedDatabase() {
@@ -233,12 +233,16 @@ export async function seedDatabase() {
     },
   ]);
 
-  await db.insert(payRuns).values([
+  const [pr1, pr2] = await db.insert(payRuns).values([
     {
       payRunRef: "PR-2026-02",
       year: 2026,
       month: 2,
       payDate: "2026-02-28",
+      periodStart: "2026-02-01",
+      periodEnd: "2026-02-28",
+      paymentDate: "2026-03-07",
+      superRate: "0.1150",
       totalGross: "84040.00",
       totalPayg: "25212.00",
       totalSuper: "9664.60",
@@ -251,12 +255,89 @@ export async function seedDatabase() {
       year: 2026,
       month: 3,
       payDate: "2026-03-31",
+      periodStart: "2026-03-01",
+      periodEnd: "2026-03-31",
+      paymentDate: "2026-04-07",
+      superRate: "0.1150",
       totalGross: "87360.00",
       totalPayg: "26208.00",
       totalSuper: "10046.40",
       totalNet: "61152.00",
       employeeCount: 4,
       status: "DRAFT",
+    },
+  ]).returning();
+
+  await db.insert(payRunLines).values([
+    {
+      payRunId: pr1.id,
+      contractorId: c1.id,
+      hoursWorked: "160.00",
+      ratePerHour: "125.00",
+      grossEarnings: "20000.00",
+      paygWithheld: "5833.00",
+      superAmount: "2300.00",
+      netPay: "14167.00",
+      status: "INCLUDED",
+    },
+    {
+      payRunId: pr1.id,
+      contractorId: c2.id,
+      hoursWorked: "152.00",
+      ratePerHour: "95.00",
+      grossEarnings: "14440.00",
+      paygWithheld: "3677.00",
+      superAmount: "1661.00",
+      netPay: "10763.00",
+      status: "INCLUDED",
+    },
+    {
+      payRunId: pr1.id,
+      contractorId: c3.id,
+      hoursWorked: "160.00",
+      ratePerHour: "145.00",
+      grossEarnings: "23200.00",
+      paygWithheld: "7077.00",
+      superAmount: "2668.00",
+      netPay: "16123.00",
+      status: "INCLUDED",
+    },
+    {
+      payRunId: pr1.id,
+      contractorId: c5.id,
+      hoursWorked: "160.00",
+      ratePerHour: "165.00",
+      grossEarnings: "26400.00",
+      paygWithheld: "8625.00",
+      superAmount: "3036.00",
+      netPay: "17775.00",
+      status: "INCLUDED",
+    },
+  ]);
+
+  await db.insert(documents).values([
+    {
+      contractorId: c1.id,
+      type: "PAYSLIP",
+      name: "Payslip - February 2026",
+      fileUrl: `/api/payslips/feb-2026-${c1.id}`,
+      fileType: "text/html",
+      metadata: JSON.stringify({ year: 2026, month: 2, payRunId: pr1.id }),
+    },
+    {
+      contractorId: c2.id,
+      type: "PAYSLIP",
+      name: "Payslip - February 2026",
+      fileUrl: `/api/payslips/feb-2026-${c2.id}`,
+      fileType: "text/html",
+      metadata: JSON.stringify({ year: 2026, month: 2, payRunId: pr1.id }),
+    },
+    {
+      contractorId: c1.id,
+      type: "CONTRACT",
+      name: "Employment Contract - Alex Rivera",
+      fileType: "application/pdf",
+      metadata: JSON.stringify({ signedDate: "2024-03-01" }),
     },
   ]);
 

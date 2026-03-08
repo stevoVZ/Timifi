@@ -14,7 +14,10 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
   VOIDED: { label: "Voided", variant: "outline" },
   OVERDUE: { label: "Overdue", variant: "destructive" },
   PROCESSING: { label: "Processing", variant: "secondary" },
+  REVIEW: { label: "Review", variant: "secondary" },
   FILED: { label: "Filed", variant: "default" },
+  INCLUDED: { label: "Included", variant: "default" },
+  EXCLUDED: { label: "Excluded", variant: "outline" },
   ERROR: { label: "Error", variant: "destructive" },
 };
 
