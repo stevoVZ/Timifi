@@ -90,7 +90,7 @@ shared/
 
 ## Database Tables
 
-- `employees` - Employee profiles with optional `xero_employee_id` for Xero sync, `payment_method` (PAYROLL/INVOICE enum), `company_name`, `abn`
+- `employees` - Employee profiles with optional `xero_employee_id` for Xero sync, `payment_method` (PAYROLL/INVOICE enum), `company_name`, `abn`, `charge_out_rate` (billable rate ex GST), `hourly_rate` (pay rate / rate to them ex GST)
 - `timesheets` - Monthly timesheet records with `employee_id` FK, hours and status workflow
 - `invoices` - Invoice records with GST calculations and status tracking, nullable `employee_id`, `contact_name` for client org, `xero_invoice_id` for sync dedup
 - `pay_runs` - Payroll run records with PAYG/super breakdowns, period dates, payment date

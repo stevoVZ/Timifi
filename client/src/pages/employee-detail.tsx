@@ -316,22 +316,6 @@ export default function EmployeeDetailPage() {
                       isPending={updateMutation.isPending}
                       testId="text-client"
                     />
-                    <EditableField
-                      icon={DollarSign}
-                      label="Rate ($/hr)"
-                      field="hourlyRate"
-                      value={employee.hourlyRate ? `$${employee.hourlyRate}/hr` : "Not set"}
-                      rawValue={employee.hourlyRate || ""}
-                      editingField={editingField}
-                      editValues={editValues}
-                      setEditValues={setEditValues}
-                      onStartEdit={startEdit}
-                      onSave={saveEdit}
-                      onCancel={cancelEdit}
-                      locked={!!employee.xeroEmployeeId}
-                      isPending={updateMutation.isPending}
-                      testId="text-rate"
-                    />
                     <InfoRow icon={CreditCard} label="Payment Method" value={employee.paymentMethod === "INVOICE" ? "Invoice (Pty Ltd)" : "Payroll"} testId="text-payment-method" />
                     {employee.paymentMethod === "INVOICE" && (
                       <>
@@ -378,6 +362,77 @@ export default function EmployeeDetailPage() {
                       </div>
                     )}
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Rates & Billing</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+                    <EditableField
+                      icon={DollarSign}
+                      label="Charge-Out Rate (Ex GST)"
+                      field="chargeOutRate"
+                      value={employee.chargeOutRate ? `$${parseFloat(employee.chargeOutRate).toFixed(2)}/hr` : "Not set"}
+                      rawValue={employee.chargeOutRate || ""}
+                      editingField={editingField}
+                      editValues={editValues}
+                      setEditValues={setEditValues}
+                      onStartEdit={startEdit}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      isPending={updateMutation.isPending}
+                      testId="text-charge-out-rate"
+                    />
+                    <EditableField
+                      icon={DollarSign}
+                      label="Pay Rate / Rate to Them (Ex GST)"
+                      field="hourlyRate"
+                      value={employee.hourlyRate ? `$${parseFloat(employee.hourlyRate).toFixed(2)}/hr` : "Not set"}
+                      rawValue={employee.hourlyRate || ""}
+                      editingField={editingField}
+                      editValues={editValues}
+                      setEditValues={setEditValues}
+                      onStartEdit={startEdit}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      locked={!!employee.xeroEmployeeId}
+                      isPending={updateMutation.isPending}
+                      testId="text-pay-rate"
+                    />
+                  </div>
+                  {(employee.chargeOutRate || employee.hourlyRate) && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 p-3 rounded-lg bg-muted/50 border border-border">
+                      <div>
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Total Rate (Inc GST)</span>
+                        <div className="text-sm font-bold text-foreground" data-testid="text-total-rate-inc-gst">
+                          {employee.chargeOutRate ? `$${(parseFloat(employee.chargeOutRate) * 1.1).toFixed(2)}` : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Billable Rate (Ex GST)</span>
+                        <div className="text-sm font-bold text-foreground" data-testid="text-billable-rate-ex-gst">
+                          {employee.chargeOutRate ? `$${parseFloat(employee.chargeOutRate).toFixed(2)}` : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">GST</span>
+                        <div className="text-sm font-bold text-foreground" data-testid="text-gst-amount">
+                          {employee.chargeOutRate ? `$${(parseFloat(employee.chargeOutRate) * 0.1).toFixed(2)}` : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Margin</span>
+                        <div className="text-sm font-bold text-foreground" data-testid="text-margin">
+                          {employee.chargeOutRate && employee.hourlyRate
+                            ? `$${(parseFloat(employee.chargeOutRate) - parseFloat(employee.hourlyRate)).toFixed(2)}/hr`
+                            : "—"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

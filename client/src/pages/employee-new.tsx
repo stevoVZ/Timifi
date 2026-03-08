@@ -41,6 +41,7 @@ export default function EmployeeNewPage() {
     companyName: "",
     abn: "",
     hourlyRate: "",
+    chargeOutRate: "",
     contractHoursPA: "2000",
     payFrequency: "MONTHLY",
     startDate: "",
@@ -74,6 +75,7 @@ export default function EmployeeNewPage() {
     const payload: Record<string, unknown> = {
       ...form,
       hourlyRate: form.hourlyRate || null,
+      chargeOutRate: form.chargeOutRate || null,
       companyName: form.companyName || null,
       abn: form.abn || null,
       contractHoursPA: parseInt(form.contractHoursPA) || 2000,
@@ -223,9 +225,43 @@ export default function EmployeeNewPage() {
               </>
             )}
             <div>
-              <Label>Hourly Rate ($)</Label>
-              <Input type="number" step="0.01" value={form.hourlyRate} onChange={(e) => update("hourlyRate", e.target.value)} data-testid="input-hourly-rate" />
+              <Label>Charge-Out Rate (Ex GST)</Label>
+              <Input type="number" step="0.01" value={form.chargeOutRate} onChange={(e) => update("chargeOutRate", e.target.value)} placeholder="e.g. 180.00" data-testid="input-charge-out-rate" />
             </div>
+            <div>
+              <Label>Pay Rate / Rate to Them (Ex GST)</Label>
+              <Input type="number" step="0.01" value={form.hourlyRate} onChange={(e) => update("hourlyRate", e.target.value)} placeholder="e.g. 160.00" data-testid="input-hourly-rate" />
+            </div>
+            {(form.chargeOutRate || form.hourlyRate) && (
+              <div className="col-span-full grid grid-cols-2 md:grid-cols-4 gap-3 p-3 rounded-lg bg-muted/50 border border-border">
+                <div>
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Total Rate (Inc GST)</span>
+                  <div className="text-sm font-bold text-foreground" data-testid="text-total-rate-inc-gst">
+                    ${form.chargeOutRate ? (parseFloat(form.chargeOutRate) * 1.1).toFixed(2) : "—"}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Billable Rate (Ex GST)</span>
+                  <div className="text-sm font-bold text-foreground" data-testid="text-billable-rate-ex-gst">
+                    ${form.chargeOutRate ? parseFloat(form.chargeOutRate).toFixed(2) : "—"}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">GST</span>
+                  <div className="text-sm font-bold text-foreground" data-testid="text-gst-amount">
+                    ${form.chargeOutRate ? (parseFloat(form.chargeOutRate) * 0.1).toFixed(2) : "—"}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Margin</span>
+                  <div className="text-sm font-bold text-foreground" data-testid="text-margin">
+                    {form.chargeOutRate && form.hourlyRate
+                      ? `$${(parseFloat(form.chargeOutRate) - parseFloat(form.hourlyRate)).toFixed(2)}/hr`
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+            )}
             <div>
               <Label>Contract Hours p.a.</Label>
               <Input type="number" value={form.contractHoursPA} onChange={(e) => update("contractHoursPA", e.target.value)} data-testid="input-contract-hours" />

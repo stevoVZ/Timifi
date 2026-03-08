@@ -54,7 +54,7 @@ export async function registerRoutes(
       const stats = allEmployees.map(c => ({
         ...c,
         ytdHours: ytdByEmployee[c.id] || 0,
-        ytdBillings: (ytdByEmployee[c.id] || 0) * (c.hourlyRate ? parseFloat(c.hourlyRate) : 0),
+        ytdBillings: (ytdByEmployee[c.id] || 0) * (c.chargeOutRate ? parseFloat(c.chargeOutRate) : c.hourlyRate ? parseFloat(c.hourlyRate) : 0),
       }));
       res.json(stats);
     } catch (err) {

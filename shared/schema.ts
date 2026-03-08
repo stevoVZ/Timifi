@@ -31,6 +31,7 @@ export const employees = pgTable("employees", {
   employmentType: employmentTypeEnum("employment_type").notNull().default("LABOURHIRE"),
   payFrequency: payCalendarEnum("pay_frequency").notNull().default("MONTHLY"),
   hourlyRate: numeric("hourly_rate", { precision: 10, scale: 2 }),
+  chargeOutRate: numeric("charge_out_rate", { precision: 10, scale: 2 }),
   contractHoursPA: integer("contract_hours_pa").notNull().default(2000),
   startDate: date("start_date"),
   endDate: date("end_date"),
