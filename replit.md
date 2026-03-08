@@ -71,9 +71,9 @@ shared/
 
 ## Database Tables
 
-- `contractors` - Contractor profiles with optional `xero_employee_id` for Xero sync
+- `contractors` - Contractor profiles with optional `xero_employee_id` for Xero sync, `payment_method` (PAYROLL/INVOICE enum), `company_name`, `abn` for Pty Ltd contractors
 - `timesheets` - Monthly timesheet records with hours and status workflow
-- `invoices` - Invoice records with GST calculations and status tracking
+- `invoices` - Invoice records with GST calculations and status tracking, nullable `contractor_id`, `contact_name` for client org, `xero_invoice_id` for sync dedup
 - `pay_runs` - Payroll run records with PAYG/super breakdowns, period dates, payment date
 - `pay_run_lines` - Contractor-level pay run detail lines
 - `documents` - Contractor documents with categories
@@ -97,7 +97,7 @@ shared/
 ## Xero Integration
 
 - OAuth2 with Xero Payroll AU API + Accounting API
-- Scopes: openid, profile, email, payroll.*, accounting.transactions.*, accounting.contacts.read, offline_access
+- Scopes: openid, profile, email, payroll.*, accounting.invoices, accounting.invoices.read, accounting.contacts.read, offline_access
 - Multi-organisation support via tenant picker in settings
 - Sync functions: syncEmployees, syncPayRuns, syncTimesheets, syncInvoices, syncPayrollSettings
 - Token refresh handled automatically

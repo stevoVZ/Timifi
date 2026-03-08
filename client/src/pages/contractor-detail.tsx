@@ -314,6 +314,39 @@ export default function ContractorDetailPage() {
                       isPending={updateMutation.isPending}
                       testId="text-rate"
                     />
+                    <InfoRow icon={CreditCard} label="Payment Method" value={contractor.paymentMethod === "INVOICE" ? "Invoice (Pty Ltd)" : "Payroll"} testId="text-payment-method" />
+                    {contractor.paymentMethod === "INVOICE" && (
+                      <>
+                        <EditableField
+                          icon={Landmark}
+                          label="Company Name"
+                          field="companyName"
+                          value={contractor.companyName || "Not set"}
+                          editingField={editingField}
+                          editValues={editValues}
+                          setEditValues={setEditValues}
+                          onStartEdit={startEdit}
+                          onSave={saveEdit}
+                          onCancel={cancelEdit}
+                          isPending={updateMutation.isPending}
+                          testId="text-company-name"
+                        />
+                        <EditableField
+                          icon={IdCard}
+                          label="ABN"
+                          field="abn"
+                          value={contractor.abn || "Not set"}
+                          editingField={editingField}
+                          editValues={editValues}
+                          setEditValues={setEditValues}
+                          onStartEdit={startEdit}
+                          onSave={saveEdit}
+                          onCancel={cancelEdit}
+                          isPending={updateMutation.isPending}
+                          testId="text-abn"
+                        />
+                      </>
+                    )}
                     <InfoRow icon={Calendar} label="Start Date" value={contractor.startDate ? new Date(contractor.startDate).toLocaleDateString("en-AU") : "Not set"} testId="text-start-date" />
                     <InfoRow icon={Clock} label="Contract Hours" value={`${contractor.contractHoursPA?.toLocaleString()} h/yr (${Math.round(monthlyAllocation)} h/mo)`} testId="text-contract-hours" />
                     <InfoRow icon={MapPin} label="Location" value={[contractor.suburb, contractor.state].filter(Boolean).join(", ") || "Not set"} testId="text-location" />

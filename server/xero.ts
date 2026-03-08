@@ -769,6 +769,9 @@ export async function syncInvoices(): Promise<{
 
   const allContractors = await storage.getContractors();
   const contractorByEmail = new Map(allContractors.map(c => [c.email.toLowerCase(), c]));
+  const contractorByCompany = new Map(
+    allContractors.filter(c => c.companyName).map(c => [c.companyName!.toLowerCase(), c])
+  );
 
   for (const inv of xeroInvoices) {
     try {
@@ -776,9 +779,14 @@ export async function syncInvoices(): Promise<{
 
       const contactEmail = inv.Contact?.EmailAddress?.toLowerCase();
       const contactName = inv.Contact?.Name || "";
+
       let contractor = contactEmail ? contractorByEmail.get(contactEmail) : undefined;
 
-      if (!contractor) {
+      if (!contractor && contactName) {
+        contractor = contractorByCompany.get(contactName.toLowerCase());
+      }
+
+      if (!contractor && contactName) {
         const nameParts = contactName.split(" ");
         if (nameParts.length >= 2) {
           contractor = allContractors.find(
@@ -786,11 +794,6 @@ export async function syncInvoices(): Promise<{
                  c.lastName.toLowerCase() === nameParts[nameParts.length - 1].toLowerCase()
           );
         }
-      }
-
-      if (!contractor) {
-        errors.push(`Skipped invoice ${inv.InvoiceNumber || inv.InvoiceID} — no matching contractor for contact "${contactName}"`);
-        continue;
       }
 
       const invoiceDate = parseXeroDate(inv.Date) || new Date().toISOString().split("T")[0];
@@ -815,13 +818,18 @@ export async function syncInvoices(): Promise<{
         localStatus = "OVERDUE";
       }
 
-      const existingInvoices = await storage.getInvoicesByContractor(contractor.id);
-      const existing = existingInvoices.find(
-        ei => ei.invoiceNumber === inv.InvoiceNumber
-      );
+      const invNumber = inv.InvoiceNumber || null;
+      const xeroInvoiceId = inv.InvoiceID || null;
+      let existing = invNumber ? await storage.getInvoiceByNumber(invNumber) : undefined;
+      if (!existing && xeroInvoiceId) {
+        existing = await storage.getInvoiceByXeroId(xeroInvoiceId);
+      }
 
       if (existing) {
         await storage.updateInvoice(existing.id, {
+          contactName: contactName || existing.contactName,
+          contractorId: contractor?.id || existing.contractorId,
+          xeroInvoiceId: xeroInvoiceId || existing.xeroInvoiceId,
           status: localStatus,
           amountExclGst: String(amountExclGst),
           gstAmount: String(gstAmount),
@@ -838,10 +846,12 @@ export async function syncInvoices(): Promise<{
         }
 
         await storage.createInvoice({
-          contractorId: contractor.id,
+          contractorId: contractor?.id || null,
+          contactName: contactName || null,
+          xeroInvoiceId: xeroInvoiceId,
           year,
           month,
-          invoiceNumber: inv.InvoiceNumber || null,
+          invoiceNumber: invNumber,
           amountExclGst: String(amountExclGst),
           gstAmount: String(gstAmount),
           amountInclGst: String(amountInclGst),

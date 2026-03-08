@@ -6,6 +6,7 @@ import { z } from "zod";
 export const contractorStatusEnum = pgEnum("contractor_status", ["ACTIVE", "PENDING_SETUP", "OFFBOARDED"]);
 export const clearanceLevelEnum = pgEnum("clearance_level", ["NONE", "BASELINE", "NV1", "NV2", "PV"]);
 export const employmentTypeEnum = pgEnum("employment_type", ["FULLTIME", "PARTTIME", "CASUAL", "LABOURHIRE"]);
+export const paymentMethodEnum = pgEnum("payment_method", ["PAYROLL", "INVOICE"]);
 export const payCalendarEnum = pgEnum("pay_calendar", ["WEEKLY", "FORTNIGHTLY", "MONTHLY"]);
 export const timesheetStatusEnum = pgEnum("timesheet_status", ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", ["DRAFT", "AUTHORISED", "SENT", "PAID", "VOIDED", "OVERDUE"]);
@@ -41,6 +42,9 @@ export const contractors = pgTable("contractors", {
   gender: text("gender"),
   addressLine1: text("address_line1"),
   postcode: text("postcode"),
+  companyName: text("company_name"),
+  abn: text("abn"),
+  paymentMethod: paymentMethodEnum("payment_method").notNull().default("PAYROLL"),
   xeroEmployeeId: text("xero_employee_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -66,7 +70,9 @@ export const timesheets = pgTable("timesheets", {
 
 export const invoices = pgTable("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  contractorId: varchar("contractor_id").references(() => contractors.id),
+  contactName: text("contact_name"),
+  xeroInvoiceId: text("xero_invoice_id").unique(),
   timesheetId: varchar("timesheet_id").references(() => timesheets.id),
   year: smallint("year").notNull(),
   month: smallint("month").notNull(),

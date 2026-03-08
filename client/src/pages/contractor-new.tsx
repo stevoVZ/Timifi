@@ -37,6 +37,9 @@ export default function ContractorNewPage() {
     jobTitle: "",
     clientName: "",
     employmentType: "LABOURHIRE",
+    paymentMethod: "PAYROLL",
+    companyName: "",
+    abn: "",
     hourlyRate: "",
     contractHoursPA: "2000",
     payFrequency: "MONTHLY",
@@ -71,6 +74,8 @@ export default function ContractorNewPage() {
     const payload: Record<string, unknown> = {
       ...form,
       hourlyRate: form.hourlyRate || null,
+      companyName: form.companyName || null,
+      abn: form.abn || null,
       contractHoursPA: parseInt(form.contractHoursPA) || 2000,
       clearanceExpiry: form.clearanceExpiry || null,
       startDate: form.startDate || null,
@@ -193,6 +198,30 @@ export default function ContractorNewPage() {
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <Label>Payment Method</Label>
+              <Select value={form.paymentMethod} onValueChange={(v) => update("paymentMethod", v)}>
+                <SelectTrigger data-testid="select-payment-method">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PAYROLL">Payroll (paid via pay run)</SelectItem>
+                  <SelectItem value="INVOICE">Invoice (contractor invoices via Pty Ltd)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {form.paymentMethod === "INVOICE" && (
+              <>
+                <div>
+                  <Label>Company / Trading Name</Label>
+                  <Input value={form.companyName} onChange={(e) => update("companyName", e.target.value)} placeholder="e.g. Smith Consulting Pty Ltd" data-testid="input-company-name" />
+                </div>
+                <div>
+                  <Label>ABN</Label>
+                  <Input value={form.abn} onChange={(e) => update("abn", e.target.value)} placeholder="e.g. 12 345 678 901" data-testid="input-abn" />
+                </div>
+              </>
+            )}
             <div>
               <Label>Hourly Rate ($)</Label>
               <Input type="number" step="0.01" value={form.hourlyRate} onChange={(e) => update("hourlyRate", e.target.value)} data-testid="input-hourly-rate" />

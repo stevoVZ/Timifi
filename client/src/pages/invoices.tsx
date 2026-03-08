@@ -105,9 +105,10 @@ export default function InvoicesPage() {
   });
 
   const filtered = invoicesList?.filter((inv) => {
-    const c = contractorMap.get(inv.contractorId);
+    const c = inv.contractorId ? contractorMap.get(inv.contractorId) : undefined;
     const name = c ? `${c.firstName} ${c.lastName}` : "";
-    return `${name} ${inv.invoiceNumber || ""} ${inv.description || ""}`.toLowerCase().includes(search.toLowerCase());
+    const contact = inv.contactName || "";
+    return `${name} ${contact} ${inv.invoiceNumber || ""} ${inv.description || ""}`.toLowerCase().includes(search.toLowerCase());
   });
 
   const outstanding = filtered?.filter((i) => ["AUTHORISED", "SENT", "OVERDUE"].includes(i.status)) || [];
@@ -377,7 +378,9 @@ export default function InvoicesPage() {
                 ) : (
                   <div className="space-y-2">
                     {tabInvoices.map((inv) => {
-                      const c = contractorMap.get(inv.contractorId);
+                      const c = inv.contractorId ? contractorMap.get(inv.contractorId) : undefined;
+                      const displayName = inv.contactName || (c ? `${c.firstName} ${c.lastName}` : "Unknown");
+                      const contractorName = c ? `${c.firstName} ${c.lastName}` : null;
                       return (
                         <Card key={inv.id} className="hover-elevate" data-testid={`card-invoice-${inv.id}`}>
                           <CardContent className="p-4">
@@ -394,8 +397,13 @@ export default function InvoicesPage() {
                                     <StatusBadge status={inv.status} />
                                   </div>
                                   <div className="text-xs text-muted-foreground mt-0.5">
-                                    {c ? `${c.firstName} ${c.lastName}` : "Unknown"} · {MONTHS[inv.month]} {inv.year}
+                                    {displayName} · {MONTHS[inv.month]} {inv.year}
                                   </div>
+                                  {contractorName && inv.contactName && contractorName !== inv.contactName && (
+                                    <div className="text-[11px] text-muted-foreground/70 mt-0.5">
+                                      Contractor: {contractorName}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <div className="flex items-center gap-4 flex-wrap">
