@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown,
   Search, CheckCircle, XCircle, ChevronDown, ChevronUp, Wallet,
+  Landmark, CreditCard,
 } from "lucide-react";
 import type { BankTransaction } from "@shared/schema";
 
@@ -38,12 +39,21 @@ interface GroupedExpenses {
   transactions: BankTransaction[];
 }
 
+interface AccountSummary {
+  bankAccountId: string;
+  bankAccountName: string;
+  totalIn: number;
+  totalOut: number;
+  txnCount: number;
+}
+
 export default function BankStatementsPage() {
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [search, setSearch] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [selectedAccount, setSelectedAccount] = useState<string>("all");
 
   const { data, isLoading } = useQuery<BankTransaction[]>({
     queryKey: ["/api/bank-transactions", month, year],
@@ -56,15 +66,44 @@ export default function BankStatementsPage() {
 
   const transactions = data || [];
 
+  const accountSummaries = useMemo(() => {
+    const map: Record<string, AccountSummary> = {};
+    for (const t of transactions) {
+      const id = t.bankAccountId || "unknown";
+      if (!map[id]) {
+        map[id] = {
+          bankAccountId: id,
+          bankAccountName: t.bankAccountName || "Unknown Account",
+          totalIn: 0,
+          totalOut: 0,
+          txnCount: 0,
+        };
+      }
+      map[id].txnCount++;
+      if (t.type === "RECEIVE") {
+        map[id].totalIn += safeAmount(t.amount);
+      } else {
+        map[id].totalOut += safeAmount(t.amount);
+      }
+    }
+    return Object.values(map).sort((a, b) => b.txnCount - a.txnCount);
+  }, [transactions]);
+
+  const accountFiltered = useMemo(() => {
+    if (selectedAccount === "all") return transactions;
+    return transactions.filter(t => (t.bankAccountId || "unknown") === selectedAccount);
+  }, [transactions, selectedAccount]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return transactions;
+    if (!search.trim()) return accountFiltered;
     const s = search.toLowerCase();
-    return transactions.filter(t =>
+    return accountFiltered.filter(t =>
       (t.contactName || "").toLowerCase().includes(s) ||
       (t.description || "").toLowerCase().includes(s) ||
-      (t.reference || "").toLowerCase().includes(s)
+      (t.reference || "").toLowerCase().includes(s) ||
+      (t.bankAccountName || "").toLowerCase().includes(s)
     );
-  }, [transactions, search]);
+  }, [accountFiltered, search]);
 
   const expenses = filtered.filter(t => t.type === "SPEND");
   const income = filtered.filter(t => t.type === "RECEIVE");
@@ -103,6 +142,14 @@ export default function BankStatementsPage() {
   const nextMonth = () => {
     if (month === 12) { setMonth(1); setYear(year + 1); }
     else setMonth(month + 1);
+  };
+
+  const getAccountIcon = (name: string) => {
+    const lower = name.toLowerCase();
+    if (lower.includes("credit") || lower.includes("amex") || lower.includes("card")) {
+      return <CreditCard className="w-4 h-4" />;
+    }
+    return <Landmark className="w-4 h-4" />;
   };
 
   return (
@@ -145,17 +192,77 @@ export default function BankStatementsPage() {
               </Button>
             </div>
 
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search transactions..."
-                className="pl-8 h-8 w-[220px] text-sm"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                data-testid="input-search"
-              />
+            <div className="flex items-center gap-2">
+              <Select value={selectedAccount} onValueChange={setSelectedAccount}>
+                <SelectTrigger className="h-8 w-[180px] text-sm" data-testid="select-account-filter">
+                  <SelectValue placeholder="All Accounts" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Accounts</SelectItem>
+                  {accountSummaries.map(a => (
+                    <SelectItem key={a.bankAccountId} value={a.bankAccountId}>
+                      {a.bankAccountName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search transactions..."
+                  className="pl-8 h-8 w-[220px] text-sm"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  data-testid="input-search"
+                />
+              </div>
             </div>
           </div>
+
+          {accountSummaries.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="bank-accounts-overview">
+              {accountSummaries.map(a => {
+                const net = a.totalIn - a.totalOut;
+                const isSelected = selectedAccount === a.bankAccountId;
+                return (
+                  <button
+                    key={a.bankAccountId}
+                    onClick={() => setSelectedAccount(isSelected ? "all" : a.bankAccountId)}
+                    className={`p-3 rounded-lg border text-left transition-all hover:shadow-sm ${
+                      isSelected
+                        ? "ring-2 ring-primary border-primary bg-primary/5"
+                        : "bg-card hover:border-primary/40"
+                    }`}
+                    data-testid={`card-account-${a.bankAccountId}`}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className={`p-1.5 rounded-md ${isSelected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                        {getAccountIcon(a.bankAccountName)}
+                      </div>
+                      <span className="text-xs font-semibold truncate">{a.bankAccountName}</span>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-muted-foreground">In</span>
+                        <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">+{fmtCurrency(a.totalIn)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-muted-foreground">Out</span>
+                        <span className="text-[11px] font-medium text-red-600 dark:text-red-400">-{fmtCurrency(a.totalOut)}</span>
+                      </div>
+                      <div className="flex items-center justify-between border-t pt-1 mt-1">
+                        <span className="text-[10px] text-muted-foreground">Net</span>
+                        <span className={`text-[11px] font-bold ${net >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                          {net >= 0 ? "+" : "-"}{fmtCurrency(net)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1.5">{a.txnCount} transactions</div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-3">
             <div className="p-3.5 rounded-lg border bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800" data-testid="kpi-income">
@@ -217,6 +324,11 @@ export default function BankStatementsPage() {
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">
                       Expenses by Payee — {MONTHS[month]} {year}
+                      {selectedAccount !== "all" && (
+                        <span className="text-xs font-normal text-muted-foreground ml-2">
+                          ({accountSummaries.find(a => a.bankAccountId === selectedAccount)?.bankAccountName})
+                        </span>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -252,6 +364,7 @@ export default function BankStatementsPage() {
                                       <tr key={t.id} className="border-b last:border-0 border-border/50">
                                         <td className="py-2 px-3 text-xs text-muted-foreground w-[90px]">{fmtDate(t.date)}</td>
                                         <td className="py-2 px-3 text-xs truncate max-w-[200px]">{t.description || t.reference || "—"}</td>
+                                        <td className="py-2 px-3 text-xs text-muted-foreground truncate max-w-[120px] hidden md:table-cell">{t.bankAccountName || "—"}</td>
                                         <td className="py-2 px-3 text-right">
                                           <span className="font-mono text-xs font-semibold text-red-600 dark:text-red-400">
                                             {fmtCurrency(safeAmount(t.amount))}
