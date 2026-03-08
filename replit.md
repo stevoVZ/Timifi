@@ -31,7 +31,7 @@ The Recruitment Portal is built as a full-stack application.
 -   **Schema:** Key tables include `employees`, `timesheets`, `invoices`, `pay_runs`, `pay_run_lines`, `documents`, `notifications`, `messages`, `settings`, `users`, `leave_requests`, `pay_items`, `tax_declarations`, `bank_accounts`, `super_memberships`, `clients`, `placements`, `bank_transactions`, `payslip_lines`, and `rate_history`.
 
 **Feature Specifications:**
--   **Admin Panel:** Includes comprehensive modules for Dashboard, Employees (with detailed profiles, financials, documents), Timesheets (upload with AI OCR, review, approval workflow), Payroll (pay run management, payslip generation, ABA files), Invoices, Reconciliation, Bank Statements (synced from Xero), Notifications, Settings (including Xero integration), Clients, and Placements.
+-   **Admin Panel:** Includes comprehensive modules for Dashboard, Employees (with detailed profiles, financials, documents), Timesheets (upload with AI OCR, review, approval workflow), Payroll (pay run management, payslip generation, ABA files), Invoices, Reconciliation, Bank Statements (synced from Xero), Profitability (revenue vs cost per employee-client placement with auto-link invoices), Notifications, Settings (including Xero integration), Clients, and Placements.
 -   **Employee Portal:** Provides self-service functionalities for employees including Dashboard, Timesheet entry, Leave requests, Payslip access, Messaging, and an Onboarding wizard.
 
 ## External Dependencies

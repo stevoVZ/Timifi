@@ -1457,5 +1457,182 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/invoices/auto-link", async (_req, res) => {
+    try {
+      const [allPlacements, allInvoices, allEmployees] = await Promise.all([
+        storage.getAllPlacements(),
+        storage.getInvoices(),
+        storage.getEmployees(),
+      ]);
+
+      const activePlacements = allPlacements.filter(p => p.status === "ACTIVE");
+      const clients = await storage.getClients();
+      let linked = 0;
+      const claimedInvoiceIds = new Set<string>();
+
+      for (const placement of activePlacements) {
+        const employee = allEmployees.find(e => e.id === placement.employeeId);
+        if (!employee) continue;
+
+        const client = clients.find(c => c.id === placement.clientId);
+        if (!client) continue;
+
+        const rate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
+        if (rate === 0) continue;
+
+        const matchingInvoices = allInvoices.filter(inv => {
+          if (inv.employeeId) return false;
+          if (claimedInvoiceIds.has(inv.id)) return false;
+          if (inv.contactName !== client.name) return false;
+          const invRate = inv.hours && parseFloat(inv.hours) > 0
+            ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
+            : 0;
+          return Math.abs(invRate - rate) < 0.01;
+        });
+
+        for (const inv of matchingInvoices) {
+          claimedInvoiceIds.add(inv.id);
+          await storage.updateInvoice(inv.id, { employeeId: employee.id });
+          linked++;
+        }
+      }
+
+      res.json({ linked, message: `Auto-linked ${linked} invoices to employees` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to auto-link invoices" });
+    }
+  });
+
+  app.get("/api/profitability", async (req, res) => {
+    try {
+      const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+
+      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients] = await Promise.all([
+        storage.getEmployees(),
+        storage.getAllPlacements(),
+        storage.getInvoices(),
+        storage.getPayRuns(),
+        storage.getBankTransactions(),
+        storage.getClients(),
+      ]);
+
+      const activePlacements = allPlacements.filter(p => p.status === "ACTIVE");
+
+      const periodPayRuns = allPayRuns.filter(pr => pr.month === month && pr.year === year);
+      const allPayRunLines: { line: any; payRun: typeof periodPayRuns[0] }[] = [];
+      for (const pr of periodPayRuns) {
+        const lines = await storage.getPayRunLines(pr.id);
+        for (const line of lines) {
+          allPayRunLines.push({ line, payRun: pr });
+        }
+      }
+
+      const periodInvoices = allInvoices.filter(i => i.month === month && i.year === year);
+      const periodBankTxns = allBankTxns.filter(t => t.month === month && t.year === year);
+      const claimedInvoiceIds = new Set<string>();
+      const claimedBankTxnIds = new Set<string>();
+
+      const rows = activePlacements.map(placement => {
+        const employee = allEmployees.find(e => e.id === placement.employeeId);
+        if (!employee) return null;
+
+        const client = allClients.find(c => c.id === placement.clientId);
+        const clientName = placement.clientName || client?.name || "Unknown";
+
+        const chargeOutRate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
+
+        const empInvoices = periodInvoices.filter(inv => {
+          if (claimedInvoiceIds.has(inv.id)) return false;
+          if (inv.employeeId === employee.id && inv.contactName === clientName) return true;
+          if (!inv.employeeId && inv.contactName === clientName) {
+            const invRate = inv.hours && parseFloat(inv.hours) > 0
+              ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
+              : 0;
+            return Math.abs(invRate - chargeOutRate) < 0.01;
+          }
+          return false;
+        });
+        empInvoices.forEach(inv => claimedInvoiceIds.add(inv.id));
+
+        const revenue = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.amountExclGst || "0"), 0);
+        const revenueInclGst = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.amountInclGst || "0"), 0);
+        const invoiceHours = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.hours || "0"), 0);
+
+        const empPayLines = allPayRunLines.filter(pl => pl.line.employeeId === employee.id);
+
+        const grossEarnings = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.grossEarnings || "0"), 0);
+        const superAmount = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.superAmount || "0"), 0);
+        const netPay = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.netPay || "0"), 0);
+        const totalEmployeeCost = grossEarnings + superAmount;
+
+        const feePercent = parseFloat(employee.payrollFeePercent || "0");
+        const payrollFeeRevenue = grossEarnings * (feePercent / 100);
+
+        const profit = revenue - totalEmployeeCost;
+        const marginPercent = revenue > 0 ? (profit / revenue) * 100 : 0;
+
+        const clientBankTxns = periodBankTxns.filter(t =>
+          !claimedBankTxnIds.has(t.id) &&
+          t.type === "RECEIVE" && (
+            t.contactName === clientName ||
+            (client?.xeroContactId && t.xeroContactId === client.xeroContactId)
+          )
+        );
+        clientBankTxns.forEach(t => claimedBankTxnIds.add(t.id));
+        const cashReceived = clientBankTxns.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+        return {
+          placementId: placement.id,
+          employee: {
+            id: employee.id,
+            firstName: employee.firstName,
+            lastName: employee.lastName,
+            chargeOutRate: employee.chargeOutRate,
+            hourlyRate: employee.hourlyRate,
+            payrollFeePercent: employee.payrollFeePercent,
+          },
+          client: {
+            id: client?.id || null,
+            name: clientName,
+          },
+          revenue: {
+            invoiceCount: empInvoices.length,
+            hours: invoiceHours,
+            amountExGst: Math.round(revenue * 100) / 100,
+            amountInclGst: Math.round(revenueInclGst * 100) / 100,
+          },
+          cost: {
+            grossEarnings: Math.round(grossEarnings * 100) / 100,
+            superAmount: Math.round(superAmount * 100) / 100,
+            netPay: Math.round(netPay * 100) / 100,
+            totalCost: Math.round(totalEmployeeCost * 100) / 100,
+          },
+          payrollFeeRevenue: Math.round(payrollFeeRevenue * 100) / 100,
+          cashReceived: Math.round(cashReceived * 100) / 100,
+          profit: Math.round(profit * 100) / 100,
+          marginPercent: Math.round(marginPercent * 10) / 10,
+        };
+      }).filter(Boolean);
+
+      const totals = {
+        totalRevenue: rows.reduce((s, r: any) => s + r.revenue.amountExGst, 0),
+        totalCost: rows.reduce((s, r: any) => s + r.cost.totalCost, 0),
+        totalProfit: rows.reduce((s, r: any) => s + r.profit, 0),
+        totalCashReceived: rows.reduce((s, r: any) => s + r.cashReceived, 0),
+        totalPayrollFees: rows.reduce((s, r: any) => s + r.payrollFeeRevenue, 0),
+      };
+      const avgMargin = totals.totalRevenue > 0 ? (totals.totalProfit / totals.totalRevenue) * 100 : 0;
+
+      res.json({
+        rows,
+        totals: { ...totals, avgMargin: Math.round(avgMargin * 10) / 10 },
+        period: { month, year },
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch profitability data" });
+    }
+  });
+
   return httpServer;
 }

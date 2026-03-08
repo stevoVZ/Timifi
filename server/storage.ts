@@ -128,6 +128,7 @@ export interface IStorage {
   createClient(data: InsertClient): Promise<Client>;
   updateClient(id: string, data: Partial<InsertClient>): Promise<Client | undefined>;
 
+  getAllPlacements(): Promise<Placement[]>;
   getPlacements(employeeId: string): Promise<Placement[]>;
   getPlacement(id: string): Promise<Placement | undefined>;
   createPlacement(data: InsertPlacement): Promise<Placement>;
@@ -655,6 +656,10 @@ export class DatabaseStorage implements IStorage {
   async updateClient(id: string, data: Partial<InsertClient>): Promise<Client | undefined> {
     const [client] = await db.update(clients).set({ ...data, updatedAt: new Date() }).where(eq(clients.id, id)).returning();
     return client;
+  }
+
+  async getAllPlacements(): Promise<Placement[]> {
+    return db.select().from(placements).orderBy(desc(placements.createdAt));
   }
 
   async getPlacements(employeeId: string): Promise<Placement[]> {
