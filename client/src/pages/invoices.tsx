@@ -62,6 +62,7 @@ export default function InvoicesPage() {
   const [activeTab, setActiveTab] = useState("all");
   const [sortField, setSortField] = useState<string>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
   const { toast } = useToast();
 
   const { data: invoicesList, isLoading } = useQuery<Invoice[]>({
@@ -466,7 +467,7 @@ export default function InvoicesPage() {
                               const isPaid = inv.status === "PAID";
                               const isOutstanding = ["AUTHORISED", "SENT", "OVERDUE"].includes(inv.status);
                               return (
-                                <TableRow key={inv.id} data-testid={`row-invoice-${inv.id}`}>
+                                <TableRow key={inv.id} data-testid={`row-invoice-${inv.id}`} className="cursor-pointer hover:bg-muted/50" onClick={() => setDetailInvoice(inv)}>
                                   <TableCell>
                                     <span className="font-mono font-medium text-foreground" data-testid={`text-invoice-number-${inv.id}`}>
                                       {inv.invoiceNumber || "—"}
@@ -490,7 +491,7 @@ export default function InvoicesPage() {
                                   <TableCell className="text-center">
                                     <StatusBadge status={inv.status} />
                                   </TableCell>
-                                  <TableCell className="text-right">
+                                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                                     {inv.status === "DRAFT" && (
                                       <Button size="sm" variant="secondary" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "AUTHORISED" } })} data-testid={`button-authorise-${inv.id}`}>
                                         <CheckCircle className="w-3.5 h-3.5" />
@@ -524,7 +525,138 @@ export default function InvoicesPage() {
           )}
         </div>
       </main>
+
+      {detailInvoice && (
+        <InvoiceDetailDialog
+          invoice={detailInvoice}
+          employees={employees || []}
+          onClose={() => setDetailInvoice(null)}
+          onSave={(id, data) => {
+            updateMutation.mutate({ id, data }, {
+              onSuccess: () => setDetailInvoice(null),
+            });
+          }}
+          isPending={updateMutation.isPending}
+        />
+      )}
     </div>
+  );
+}
+
+function InvoiceDetailDialog({
+  invoice,
+  employees,
+  onClose,
+  onSave,
+  isPending,
+}: {
+  invoice: Invoice;
+  employees: Employee[];
+  onClose: () => void;
+  onSave: (id: string, data: Record<string, any>) => void;
+  isPending: boolean;
+}) {
+  const linkedEmployee = invoice.employeeId ? employees.find(e => e.id === invoice.employeeId) : null;
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(invoice.employeeId || "none");
+  const hasChanged = selectedEmployeeId !== (invoice.employeeId || "none");
+
+  return (
+    <Dialog open onOpenChange={() => onClose()}>
+      <DialogContent className="max-w-lg" data-testid="dialog-invoice-detail">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileText className="w-4 h-4" />
+            Invoice {invoice.invoiceNumber || "—"}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <span className="text-xs text-muted-foreground block">Contact Name</span>
+              <span className="font-medium" data-testid="text-detail-contact">{invoice.contactName || "—"}</span>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground block">Status</span>
+              <StatusBadge status={invoice.status} />
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground block">Amount (excl. GST)</span>
+              <span className="font-mono font-medium" data-testid="text-detail-amount">{formatCurrency(invoice.amountExclGst || "0")}</span>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground block">Amount (incl. GST)</span>
+              <span className="font-mono font-medium">{formatCurrency(invoice.amountInclGst || "0")}</span>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground block">Hours</span>
+              <span className="font-mono">{invoice.hours ? `${invoice.hours}h` : "—"}</span>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground block">Hourly Rate</span>
+              <span className="font-mono">{invoice.hourlyRate ? formatCurrency(invoice.hourlyRate) : "—"}</span>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground block">Issue Date</span>
+              <span>{invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString("en-AU") : "—"}</span>
+            </div>
+            <div>
+              <span className="text-xs text-muted-foreground block">Period</span>
+              <span>{MONTHS[invoice.month]} {invoice.year}</span>
+            </div>
+          </div>
+
+          {invoice.description && (
+            <div className="text-sm">
+              <span className="text-xs text-muted-foreground block">Description</span>
+              <span className="text-foreground">{invoice.description}</span>
+            </div>
+          )}
+
+          <div className="border-t pt-4">
+            <Label className="text-sm font-semibold mb-2 block">Linked Employee</Label>
+            {linkedEmployee && (
+              <div className="text-xs text-muted-foreground mb-2 p-2 rounded bg-muted/50" data-testid="text-link-reason">
+                Currently linked to <span className="font-semibold text-foreground">{linkedEmployee.firstName} {linkedEmployee.lastName}</span>
+                {linkedEmployee.chargeOutRate && invoice.hourlyRate && (
+                  <span> (charge-out rate: {formatCurrency(linkedEmployee.chargeOutRate)}, invoice rate: {formatCurrency(invoice.hourlyRate)})</span>
+                )}
+              </div>
+            )}
+            {!linkedEmployee && invoice.employeeId === null && (
+              <div className="text-xs text-muted-foreground mb-2 p-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                Not linked to any employee. Select one below to link this invoice.
+              </div>
+            )}
+            <Select value={selectedEmployeeId} onValueChange={setSelectedEmployeeId}>
+              <SelectTrigger data-testid="select-detail-employee">
+                <SelectValue placeholder="Select employee" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No employee (unlink)</SelectItem>
+                {employees.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.firstName} {e.lastName}
+                    {e.chargeOutRate ? ` — $${parseFloat(e.chargeOutRate).toFixed(0)}/hr` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={onClose} data-testid="button-detail-cancel">Cancel</Button>
+            <Button
+              disabled={!hasChanged || isPending}
+              onClick={() => onSave(invoice.id, { employeeId: selectedEmployeeId === "none" ? null : selectedEmployeeId })}
+              data-testid="button-detail-save"
+            >
+              {isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

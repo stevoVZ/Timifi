@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { StatusBadge } from "@/components/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -117,6 +118,10 @@ export default function TimesheetsPage() {
                 <FileText className="w-3.5 h-3.5" />
                 Submissions
               </TabsTrigger>
+              <TabsTrigger value="monthly" className="gap-1.5" data-testid="tab-monthly">
+                <Users className="w-3.5 h-3.5" />
+                Monthly Hours
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="upload">
@@ -125,6 +130,10 @@ export default function TimesheetsPage() {
 
             <TabsContent value="submissions">
               <SubmissionsView />
+            </TabsContent>
+
+            <TabsContent value="monthly">
+              <MonthlyHoursView />
             </TabsContent>
           </Tabs>
         </div>
@@ -1668,5 +1677,291 @@ function TimesheetRow({
         </CardContent>
       </Card>
     </>
+  );
+}
+
+function MonthlyHoursView() {
+  const { toast } = useToast();
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [editing, setEditing] = useState<Record<string, { totalHours: string; regularHours: string; overtimeHours: string }>>({});
+
+  const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
+  const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
+
+  const activeEmployees = employees?.filter(e => e.status === "ACTIVE") || [];
+
+  const employeeTimesheets = activeEmployees.map(emp => {
+    const ts = timesheets?.find(t => t.employeeId === emp.id && t.month === month && t.year === year) || null;
+    return { employee: emp, timesheet: ts };
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, empId, data }: { id: string; empId: string; data: Record<string, any> }) => {
+      const res = await apiRequest("PATCH", `/api/timesheets/${id}`, data);
+      return res.json();
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      setEditing(prev => { const next = { ...prev }; delete next[vars.empId]; return next; });
+      toast({ title: "Timesheet updated" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: Record<string, any> & { employeeId: string }) => {
+      const res = await apiRequest("POST", "/api/timesheets", data);
+      return res.json();
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      setEditing(prev => { const next = { ...prev }; delete next[vars.employeeId]; return next; });
+      toast({ title: "Timesheet created" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const startEdit = (empId: string, ts: Timesheet | null) => {
+    setEditing(prev => ({
+      ...prev,
+      [empId]: {
+        totalHours: ts?.totalHours || "0",
+        regularHours: ts?.regularHours || "0",
+        overtimeHours: ts?.overtimeHours || "0",
+      },
+    }));
+  };
+
+  const cancelEdit = (empId: string) => {
+    setEditing(prev => { const next = { ...prev }; delete next[empId]; return next; });
+  };
+
+  const saveEdit = (empId: string, ts: Timesheet | null) => {
+    const edit = editing[empId];
+    if (!edit) return;
+
+    const total = parseFloat(edit.totalHours) || 0;
+    const regular = parseFloat(edit.regularHours) || 0;
+    const overtime = parseFloat(edit.overtimeHours) || 0;
+    const emp = activeEmployees.find(e => e.id === empId);
+    const rate = emp?.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
+
+    if (ts) {
+      updateMutation.mutate({
+        id: ts.id,
+        empId,
+        data: {
+          totalHours: String(total),
+          regularHours: String(regular),
+          overtimeHours: String(overtime),
+          grossValue: String(total * rate),
+        },
+      });
+    } else {
+      createMutation.mutate({
+        employeeId: empId,
+        month,
+        year,
+        totalHours: String(total),
+        regularHours: String(regular),
+        overtimeHours: String(overtime),
+        grossValue: String(total * rate),
+        status: "DRAFT",
+        notes: JSON.stringify({ intakeSource: "ADMIN_ENTRY" }),
+      });
+    }
+  };
+
+  const updateEditField = (empId: string, field: string, value: string) => {
+    setEditing(prev => {
+      const current = prev[empId];
+      if (!current) return prev;
+      const updated = { ...current, [field]: value };
+      if (field === "regularHours" || field === "overtimeHours") {
+        const reg = parseFloat(updated.regularHours) || 0;
+        const ot = parseFloat(updated.overtimeHours) || 0;
+        updated.totalHours = String(reg + ot);
+      }
+      return { ...prev, [empId]: updated };
+    });
+  };
+
+  const prevMonth = () => {
+    if (month === 1) { setMonth(12); setYear(year - 1); }
+    else setMonth(month - 1);
+  };
+  const nextMonth = () => {
+    if (month === 12) { setMonth(1); setYear(year + 1); }
+    else setMonth(month + 1);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth} data-testid="button-monthly-prev">
+          <ChevronLeft className="w-4 h-4" />
+        </Button>
+        <Select value={String(month)} onValueChange={(v) => setMonth(parseInt(v))}>
+          <SelectTrigger className="h-8 w-[130px] text-sm font-semibold" data-testid="select-monthly-month">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {MONTHS.slice(1).map((m, i) => (
+              <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={String(year)} onValueChange={(v) => setYear(parseInt(v))}>
+          <SelectTrigger className="h-8 w-[80px] text-sm font-semibold" data-testid="select-monthly-year">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {[now.getFullYear() - 2, now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="outline" size="icon" className="h-8 w-8" onClick={nextMonth} data-testid="button-monthly-next">
+          <ChevronRight className="w-4 h-4" />
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="p-6 space-y-3">
+              {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full" />)}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="table-monthly-hours">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="text-left px-4 py-2.5 font-medium">Employee</th>
+                    <th className="text-right px-4 py-2.5 font-medium w-24">Regular</th>
+                    <th className="text-right px-4 py-2.5 font-medium w-24">Overtime</th>
+                    <th className="text-right px-4 py-2.5 font-medium w-24">Total</th>
+                    <th className="text-center px-4 py-2.5 font-medium w-24">Status</th>
+                    <th className="text-right px-4 py-2.5 font-medium w-32">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employeeTimesheets.map(({ employee, timesheet }) => {
+                    const isEditing = !!editing[employee.id];
+                    const edit = editing[employee.id];
+
+                    return (
+                      <tr key={employee.id} className="border-b last:border-0" data-testid={`row-monthly-${employee.id}`}>
+                        <td className="px-4 py-3">
+                          <span className="font-medium text-foreground">{employee.firstName} {employee.lastName}</span>
+                          {employee.hourlyRate && (
+                            <span className="text-xs text-muted-foreground ml-2">${parseFloat(employee.hourlyRate).toFixed(0)}/hr</span>
+                          )}
+                        </td>
+                        {isEditing ? (
+                          <>
+                            <td className="px-4 py-2">
+                              <Input
+                                type="number"
+                                step="0.5"
+                                className="h-8 w-20 text-right font-mono ml-auto"
+                                value={edit.regularHours}
+                                onChange={(e) => updateEditField(employee.id, "regularHours", e.target.value)}
+                                data-testid={`input-regular-${employee.id}`}
+                              />
+                            </td>
+                            <td className="px-4 py-2">
+                              <Input
+                                type="number"
+                                step="0.5"
+                                className="h-8 w-20 text-right font-mono ml-auto"
+                                value={edit.overtimeHours}
+                                onChange={(e) => updateEditField(employee.id, "overtimeHours", e.target.value)}
+                                data-testid={`input-overtime-${employee.id}`}
+                              />
+                            </td>
+                            <td className="px-4 py-2">
+                              <Input
+                                type="number"
+                                step="0.5"
+                                className="h-8 w-20 text-right font-mono ml-auto"
+                                value={edit.totalHours}
+                                onChange={(e) => updateEditField(employee.id, "totalHours", e.target.value)}
+                                data-testid={`input-total-${employee.id}`}
+                              />
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-4 py-3 text-right font-mono tabular-nums">{timesheet?.regularHours || "—"}</td>
+                            <td className="px-4 py-3 text-right font-mono tabular-nums">{timesheet?.overtimeHours || "—"}</td>
+                            <td className="px-4 py-3 text-right font-mono tabular-nums font-semibold">{timesheet?.totalHours || "—"}</td>
+                          </>
+                        )}
+                        <td className="px-4 py-3 text-center">
+                          {timesheet ? (
+                            <Badge variant={timesheet.status === "APPROVED" ? "default" : "secondary"} className="text-[10px]">
+                              {timesheet.status}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {isEditing ? (
+                            <div className="flex items-center gap-1 justify-end">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => cancelEdit(employee.id)}
+                                data-testid={`button-cancel-${employee.id}`}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                onClick={() => saveEdit(employee.id, timesheet)}
+                                disabled={updateMutation.isPending || createMutation.isPending}
+                                data-testid={`button-save-${employee.id}`}
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                Save
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => startEdit(employee.id, timesheet)}
+                              data-testid={`button-edit-${employee.id}`}
+                            >
+                              <FilePlus className="w-3.5 h-3.5" />
+                              {timesheet ? "Edit" : "Add"}
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {employeeTimesheets.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground text-sm">
+                        No active employees found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

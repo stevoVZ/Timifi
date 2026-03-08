@@ -1,15 +1,26 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { Link, useLocation } from "wouter";
 import { TopBar } from "@/components/top-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Users, Clock, FileText, CreditCard, CheckCircle, XCircle, AlertTriangle,
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown, DollarSign, Percent,
+  ExternalLink, Pencil,
 } from "lucide-react";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -25,9 +36,9 @@ interface ReconciliationRow {
     paymentMethod: string | null;
     payrollFeePercent: string | null;
   };
-  timesheet: { hours: number; status: string; grossValue: number } | null;
-  invoice: { amount: number; amountExGst: number; invoiceNumber: string | null; status: string; paidDate: string | null } | null;
-  payroll: { grossEarnings: number; netPay: number; hoursWorked: number; payRunStatus: string | null } | null;
+  timesheet: { id: string; hours: number; regularHours: number; overtimeHours: number; status: string; grossValue: number } | null;
+  invoice: { id: string; amount: number; amountExGst: number; invoiceNumber: string | null; status: string; paidDate: string | null } | null;
+  payroll: { payRunId: string | null; grossEarnings: number; netPay: number; hoursWorked: number; payRunStatus: string | null } | null;
   financials: { expectedRevenue: number; employeeCost: number; margin: number; marginPercent: number; payrollFeeRevenue: number };
 }
 
@@ -80,9 +91,11 @@ function fmtCurrency(n: number): string {
 }
 
 export default function ReconciliationPage() {
+  const [, navigate] = useLocation();
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
+  const [editRow, setEditRow] = useState<ReconciliationRow | null>(null);
 
   const { data, isLoading } = useQuery<ReconciliationData>({
     queryKey: ["/api/reconciliation", month, year],
@@ -301,6 +314,7 @@ export default function ReconciliationPage() {
                         <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Cost</th>
                         <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Margin</th>
                         <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden lg:table-cell">Payroll Fee</th>
+                        <th className="text-center py-2.5 px-2 text-xs font-semibold text-muted-foreground w-16"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -331,27 +345,38 @@ export default function ReconciliationPage() {
                               <span className="text-xs text-muted-foreground">{row.employee.clientName || "—"}</span>
                             </td>
                             <td className="py-3 px-2">
-                              <div className="flex items-center justify-center gap-2">
+                              <div
+                                className="group flex items-center justify-center gap-2 cursor-pointer rounded-md px-1 py-0.5 hover:bg-muted/60 transition-colors"
+                                onClick={() => navigate(`/employees/${row.employee.id}`)}
+                                title="View employee timesheets"
+                                data-testid={`cell-ts-${row.employee.id}`}
+                              >
                                 <StatusIcon status={tsStatus} type="ts" />
                                 <div className="text-center min-w-[60px]">
                                   {row.timesheet ? (
                                     <>
-                                      <div className="font-mono text-xs font-semibold text-foreground">{row.timesheet.hours}h</div>
+                                      <div className="font-mono text-xs font-semibold text-primary">{row.timesheet.hours}h</div>
                                       <div className="text-[10px] text-muted-foreground">{row.timesheet.status}</div>
                                     </>
                                   ) : (
                                     <div className="text-xs text-muted-foreground">Missing</div>
                                   )}
                                 </div>
+                                <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100" />
                               </div>
                             </td>
                             <td className="py-3 px-2">
-                              <div className="flex items-center justify-center gap-2">
+                              <div
+                                className="flex items-center justify-center gap-2 cursor-pointer rounded-md px-1 py-0.5 hover:bg-muted/60 transition-colors"
+                                onClick={() => navigate(`/invoices`)}
+                                title={row.invoice ? `Invoice ${row.invoice.invoiceNumber || ""}` : "View invoices"}
+                                data-testid={`cell-inv-${row.employee.id}`}
+                              >
                                 <StatusIcon status={invStatus} type="inv" />
                                 <div className="text-center min-w-[70px]">
                                   {row.invoice ? (
                                     <>
-                                      <div className="font-mono text-xs font-semibold text-foreground">
+                                      <div className="font-mono text-xs font-semibold text-primary">
                                         {fmtCurrency(row.invoice.amount)}
                                       </div>
                                       <div className="text-[10px] text-muted-foreground">{row.invoice.status}</div>
@@ -363,12 +388,17 @@ export default function ReconciliationPage() {
                               </div>
                             </td>
                             <td className="py-3 px-2">
-                              <div className="flex items-center justify-center gap-2">
+                              <div
+                                className={`flex items-center justify-center gap-2 rounded-md px-1 py-0.5 transition-colors ${row.payroll?.payRunId ? "cursor-pointer hover:bg-muted/60" : ""}`}
+                                onClick={() => row.payroll?.payRunId && navigate(`/payroll/${row.payroll.payRunId}`)}
+                                title={row.payroll ? "View pay run" : "No payroll data"}
+                                data-testid={`cell-pay-${row.employee.id}`}
+                              >
                                 <StatusIcon status={payStatus} type="pay" />
                                 <div className="text-center min-w-[70px]">
                                   {row.payroll ? (
                                     <>
-                                      <div className="font-mono text-xs font-semibold text-foreground">
+                                      <div className="font-mono text-xs font-semibold text-primary">
                                         {fmtCurrency(row.payroll.netPay)}
                                       </div>
                                       <div className="text-[10px] text-muted-foreground">{row.payroll.payRunStatus}</div>
@@ -407,6 +437,18 @@ export default function ReconciliationPage() {
                                 )}
                               </div>
                             </td>
+                            <td className="py-3 px-2 text-center">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0"
+                                onClick={() => setEditRow(row)}
+                                title="Quick edit"
+                                data-testid={`button-edit-row-${row.employee.id}`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Button>
+                            </td>
                           </tr>
                         );
                       })}
@@ -417,6 +459,7 @@ export default function ReconciliationPage() {
                           <td className="py-3 px-2 hidden md:table-cell text-right font-mono text-xs text-red-600 dark:text-red-400">{fmtCurrency(totals.totalCost)}</td>
                           <td className="py-3 px-2 hidden md:table-cell text-right font-mono text-xs text-green-700 dark:text-green-400">{fmtCurrency(totals.totalMargin)}<div className="text-[10px] text-muted-foreground font-normal">{marginPercent}%</div></td>
                           <td className="py-3 px-2 hidden lg:table-cell text-right font-mono text-xs text-violet-700 dark:text-violet-400">{fmtCurrency(totals.totalPayrollFeeRevenue)}</td>
+                          <td className="py-3 px-2"></td>
                         </tr>
                       )}
                     </tbody>
@@ -456,6 +499,236 @@ export default function ReconciliationPage() {
           )}
         </div>
       </main>
+
+      {editRow && (
+        <ReconciliationEditDialog
+          row={editRow}
+          month={month}
+          year={year}
+          onClose={() => setEditRow(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function ReconciliationEditDialog({
+  row,
+  month,
+  year,
+  onClose,
+}: {
+  row: ReconciliationRow;
+  month: number;
+  year: number;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const [hours, setHours] = useState(String(row.timesheet?.hours || 0));
+  const [regularHours, setRegularHours] = useState(String(row.timesheet?.regularHours || 0));
+  const [overtimeHours, setOvertimeHours] = useState(String(row.timesheet?.overtimeHours || 0));
+
+  const updateTimesheetMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Record<string, any> }) => {
+      const res = await apiRequest("PATCH", `/api/timesheets/${id}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reconciliation", month, year] });
+      toast({ title: "Timesheet hours updated" });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const createTimesheetMutation = useMutation({
+    mutationFn: async (data: Record<string, any>) => {
+      const res = await apiRequest("POST", "/api/timesheets", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reconciliation", month, year] });
+      toast({ title: "Timesheet created" });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleSaveHours = () => {
+    const total = parseFloat(hours) || 0;
+    const reg = parseFloat(regularHours) || 0;
+    const ot = parseFloat(overtimeHours) || 0;
+    const rate = row.employee.hourlyRate ? parseFloat(row.employee.hourlyRate) : 0;
+
+    if (row.timesheet?.id) {
+      updateTimesheetMutation.mutate({
+        id: row.timesheet.id,
+        data: {
+          totalHours: String(total),
+          regularHours: String(reg),
+          overtimeHours: String(ot),
+          grossValue: String(total * rate),
+        },
+      });
+    } else {
+      createTimesheetMutation.mutate({
+        employeeId: row.employee.id,
+        month,
+        year,
+        totalHours: String(total),
+        regularHours: String(reg),
+        overtimeHours: String(ot),
+        grossValue: String(total * rate),
+        status: "DRAFT",
+        notes: JSON.stringify({ intakeSource: "ADMIN_ENTRY" }),
+      });
+    }
+  };
+
+  const isPending = updateTimesheetMutation.isPending || createTimesheetMutation.isPending;
+
+  return (
+    <Dialog open onOpenChange={() => onClose()}>
+      <DialogContent className="max-w-md" data-testid="dialog-reconciliation-edit">
+        <DialogHeader>
+          <DialogTitle className="text-base">
+            {row.employee.firstName} {row.employee.lastName} — {MONTHS[month]} {year}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3 p-3 rounded-lg bg-muted/50 text-xs">
+            <div>
+              <span className="text-muted-foreground">Rate</span>
+              <div className="font-semibold">{row.employee.hourlyRate ? `$${parseFloat(row.employee.hourlyRate).toFixed(0)}/hr` : "—"}</div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Charge-out</span>
+              <div className="font-semibold">{row.employee.chargeOutRate ? `$${parseFloat(row.employee.chargeOutRate).toFixed(0)}/hr` : "—"}</div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Client</span>
+              <div className="font-semibold truncate">{row.employee.clientName || "—"}</div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <h4 className="text-sm font-semibold flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5" />
+              Timesheet Hours
+              {row.timesheet && (
+                <Badge variant="secondary" className="text-[10px] ml-auto">{row.timesheet.status}</Badge>
+              )}
+            </h4>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <Label className="text-xs">Total</Label>
+                <Input
+                  type="number"
+                  step="0.5"
+                  className="h-8 font-mono text-sm"
+                  value={hours}
+                  onChange={(e) => setHours(e.target.value)}
+                  data-testid="input-edit-total-hours"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Regular</Label>
+                <Input
+                  type="number"
+                  step="0.5"
+                  className="h-8 font-mono text-sm"
+                  value={regularHours}
+                  onChange={(e) => setRegularHours(e.target.value)}
+                  data-testid="input-edit-regular-hours"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Overtime</Label>
+                <Input
+                  type="number"
+                  step="0.5"
+                  className="h-8 font-mono text-sm"
+                  value={overtimeHours}
+                  onChange={(e) => setOvertimeHours(e.target.value)}
+                  data-testid="input-edit-overtime-hours"
+                />
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={handleSaveHours}
+              disabled={isPending}
+              data-testid="button-save-hours"
+            >
+              {row.timesheet ? "Update Hours" : "Create Timesheet"}
+            </Button>
+          </div>
+
+          <div className="border-t pt-3 space-y-2">
+            <h4 className="text-sm font-semibold flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5" />
+              Invoice
+            </h4>
+            {row.invoice ? (
+              <div className="flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-semibold">{row.invoice.invoiceNumber || "No number"}</span>
+                  <span className="ml-2">{fmtCurrency(row.invoice.amount)}</span>
+                  <Badge variant="secondary" className="text-[10px] ml-2">{row.invoice.status}</Badge>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => navigate("/invoices")}
+                  data-testid="button-go-invoices"
+                >
+                  <ExternalLink className="w-3 h-3 mr-1" />
+                  View
+                </Button>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">No invoice for this period</div>
+            )}
+          </div>
+
+          <div className="border-t pt-3 space-y-2">
+            <h4 className="text-sm font-semibold flex items-center gap-1.5">
+              <CreditCard className="w-3.5 h-3.5" />
+              Payroll
+            </h4>
+            {row.payroll ? (
+              <div className="flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-semibold">Gross: {fmtCurrency(row.payroll.grossEarnings)}</span>
+                  <span className="ml-2">Net: {fmtCurrency(row.payroll.netPay)}</span>
+                  <Badge variant="secondary" className="text-[10px] ml-2">{row.payroll.payRunStatus}</Badge>
+                </div>
+                {row.payroll.payRunId && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => navigate(`/payroll/${row.payroll!.payRunId}`)}
+                    data-testid="button-go-payroll"
+                  >
+                    <ExternalLink className="w-3 h-3 mr-1" />
+                    View
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">No payroll for this period</div>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

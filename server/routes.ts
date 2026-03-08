@@ -600,13 +600,17 @@ export async function registerRoutes(
           },
           timesheet: ts
             ? {
+                id: ts.id,
                 hours,
+                regularHours: parseFloat(ts.regularHours || "0"),
+                overtimeHours: parseFloat(ts.overtimeHours || "0"),
                 status: ts.status,
                 grossValue: parseFloat(ts.grossValue || "0"),
               }
             : null,
           invoice: inv
             ? {
+                id: inv.id,
                 amount: parseFloat(inv.amountInclGst || "0"),
                 amountExGst: parseFloat(inv.amountExclGst || "0"),
                 invoiceNumber: inv.invoiceNumber,
@@ -616,6 +620,7 @@ export async function registerRoutes(
             : null,
           payroll: payLine
             ? {
+                payRunId: payRun?.id || null,
                 grossEarnings: parseFloat(payLine.grossEarnings || "0"),
                 netPay: parseFloat(payLine.netPay || "0"),
                 hoursWorked: parseFloat(payLine.hoursWorked || "0"),
