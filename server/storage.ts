@@ -61,6 +61,9 @@ export interface IStorage {
     overdueAmount: string;
     nextPayRunDate: string | null;
     nextPayRunCount: number;
+    submittedTimesheets: number;
+    approvedThisMonth: number;
+    ytdBillings: string;
   }>;
 
   getNotifications(): Promise<Notification[]>;
