@@ -37,7 +37,7 @@ The Recruitment Portal is built as a full-stack application.
 ## External Dependencies
 
 -   **OpenAI GPT-4o Vision:** Accessed via Replit AI Integrations for PDF timesheet OCR and data extraction.
--   **Xero API:** OAuth2 integration with Xero Payroll AU API and Xero Accounting API for financial data synchronization (employees, pay runs, timesheets, invoices, contacts, bank transactions).
+-   **Xero API:** OAuth2 integration with Xero Payroll AU API and Xero Accounting API for financial data synchronization (employees, pay runs, timesheets, invoices, contacts, bank transactions). Uses `xeroFetch()` helper with automatic retry on 429 rate limits (up to 5 retries with exponential backoff). Daily rate limits (Retry-After > 120s) abort immediately with a clear error. Pay runs sync is optimized to skip detail fetches for unchanged records.
 -   **PostgreSQL:** Relational database for all application data storage.
 -   **pdftoppm:** Utility used server-side for converting PDF documents to PNG images for OCR processing.
 -   **jsPDF:** Server-side library for generating PDF payslips.

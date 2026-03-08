@@ -4,6 +4,42 @@ import { getSuperRate, calculateChargeOutFromPayRate } from "./rates";
 import crypto from "crypto";
 import type { InsertPayslipLine } from "@shared/schema";
 
+function parseRetryAfter(header: string): number {
+  const numeric = parseInt(header, 10);
+  if (!isNaN(numeric) && String(numeric) === header.trim()) {
+    if (numeric > 1700000000) {
+      return Math.max(Math.ceil(numeric - Date.now() / 1000), 5);
+    }
+    return Math.max(numeric, 5);
+  }
+  const dateMs = Date.parse(header);
+  if (!isNaN(dateMs)) {
+    return Math.max(Math.ceil((dateMs - Date.now()) / 1000), 5);
+  }
+  return 60;
+}
+
+async function xeroFetch(url: string, options: RequestInit, maxRetries = 5): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, options);
+    if (response.status === 429) {
+      const retryAfter = response.headers.get("Retry-After");
+      let waitSec = retryAfter ? parseRetryAfter(retryAfter) : Math.min(2 ** attempt * 5, 60);
+      if (waitSec > 120) {
+        const urlPath = new URL(url).pathname;
+        console.log(`Xero daily rate limit hit on ${urlPath}, Retry-After=${retryAfter} (${waitSec}s). Aborting retries.`);
+        throw new Error(`Xero daily rate limit exceeded for ${urlPath}. Try again later.`);
+      }
+      const urlPath = new URL(url).pathname;
+      console.log(`Xero 429 on ${urlPath}, Retry-After=${retryAfter}, waiting ${waitSec}s (retry ${attempt + 1}/${maxRetries})`);
+      await new Promise(resolve => setTimeout(resolve, waitSec * 1000));
+      continue;
+    }
+    return response;
+  }
+  throw new Error(`Xero API rate limit exceeded after ${maxRetries} retries for ${url}`);
+}
+
 let xeroClient: XeroClient | null = null;
 let cachedClientId: string | null = null;
 
@@ -119,7 +155,7 @@ export async function handleCallback(url: string): Promise<void> {
   await saveSetting("xero.refreshToken", tokenData.refresh_token);
   await saveSetting("xero.tokenExpiry", String(expiresAt));
 
-  const tenantsResponse = await fetch("https://api.xero.com/connections", {
+  const tenantsResponse = await xeroFetch("https://api.xero.com/connections", {
     headers: {
       "Authorization": `Bearer ${tokenData.access_token}`,
       "Content-Type": "application/json",
@@ -321,7 +357,7 @@ export async function syncEmployees(): Promise<{
   let hasMore = true;
 
   while (hasMore) {
-    const empResponse = await fetch(`https://api.xero.com/payroll.xro/1.0/Employees?page=${page}`, {
+    const empResponse = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/Employees?page=${page}`, {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -345,7 +381,7 @@ export async function syncEmployees(): Promise<{
 
   let calendarsMap: Record<string, string> = {};
   try {
-    const calResponse = await fetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
+    const calResponse = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -446,31 +482,20 @@ export async function syncEmployees(): Promise<{
 }
 
 async function fetchPayRunDetail(payRunId: string, accessToken: string, tenantId: string): Promise<any | null> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const response = await fetch(`https://api.xero.com/payroll.xro/1.0/PayRuns/${payRunId}`, {
-        headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "Xero-Tenant-Id": tenantId,
-          "Accept": "application/json",
-        },
-      });
-      if (response.status === 429) {
-        await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 2000));
-        continue;
-      }
-      if (!response.ok) return null;
-      const data = await response.json() as { PayRuns?: any[] };
-      return data.PayRuns?.[0] || null;
-    } catch {
-      if (attempt < 2) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        continue;
-      }
-      return null;
-    }
+  try {
+    const response = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/PayRuns/${payRunId}`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+    if (!response.ok) return null;
+    const data = await response.json() as { PayRuns?: any[] };
+    return data.PayRuns?.[0] || null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 async function syncPayRunLines(payRunId: string, localPayRunId: string, accessToken: string, tenantId: string, errors: string[], periodStart?: string | null): Promise<number> {
@@ -638,7 +663,7 @@ export async function syncPayRuns(): Promise<{
 
   let calendarNamesMap: Record<string, string> = {};
   try {
-    const calResponse = await fetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
+    const calResponse = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -660,7 +685,7 @@ export async function syncPayRuns(): Promise<{
   let prHasMore = true;
 
   while (prHasMore) {
-    const response = await fetch(`https://api.xero.com/payroll.xro/1.0/PayRuns?page=${prPage}`, {
+    const response = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/PayRuns?page=${prPage}`, {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -712,21 +737,36 @@ export async function syncPayRuns(): Promise<{
       );
 
       if (existing) {
+        const newGross = String(pr.Wages || 0);
+        const newPayg = String(pr.Tax || 0);
+        const newSuper = String(pr.Super || 0);
+        const newNet = String(pr.NetPay || 0);
+        const totalsChanged = existing.totalGross !== newGross ||
+          existing.totalPayg !== newPayg ||
+          existing.totalSuper !== newSuper ||
+          existing.totalNet !== newNet;
+        const statusChanged = existing.status !== localStatus;
+
         await storage.updatePayRun(existing.id, {
           status: localStatus,
           periodStart,
           periodEnd,
           paymentDate: payDate,
-          totalGross: String(pr.Wages || 0),
-          totalPayg: String(pr.Tax || 0),
-          totalSuper: String(pr.Super || 0),
-          totalNet: String(pr.NetPay || 0),
+          totalGross: newGross,
+          totalPayg: newPayg,
+          totalSuper: newSuper,
+          totalNet: newNet,
           employeeCount,
           calendarName,
         });
 
         if (pr.PayRunID) {
-          await syncPayRunLines(pr.PayRunID, existing.id, accessToken, tenantId, errors, periodStart);
+          const existingLines = await storage.getPayRunLines(existing.id);
+          if (existingLines.length === 0 || totalsChanged || statusChanged) {
+            console.log(`Fetching detail for ${totalsChanged ? 'changed' : statusChanged ? 'status-changed' : 'empty'} pay run ${payRunRef}`);
+            await syncPayRunLines(pr.PayRunID, existing.id, accessToken, tenantId, errors, periodStart);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
         }
 
         updated++;
@@ -750,13 +790,15 @@ export async function syncPayRuns(): Promise<{
         });
 
         if (pr.PayRunID) {
+          console.log(`Fetching detail for new pay run ${payRunRef}`);
           await syncPayRunLines(pr.PayRunID, newPayRun.id, accessToken, tenantId, errors, periodStart);
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         created++;
       }
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 300));
     } catch (err: any) {
       errors.push(`Error syncing pay run ${pr.PayRunID}: ${err.message}`);
     }
@@ -780,7 +822,7 @@ export async function syncTimesheets(): Promise<{
   let tsHasMore = true;
 
   while (tsHasMore) {
-    const response = await fetch(`https://api.xero.com/payroll.xro/1.0/Timesheets?page=${tsPage}`, {
+    const response = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/Timesheets?page=${tsPage}`, {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -889,7 +931,7 @@ export async function syncPayrollSettings(): Promise<{
   let payItemsSynced = 0;
 
   try {
-    const calResponse = await fetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
+    const calResponse = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -909,7 +951,7 @@ export async function syncPayrollSettings(): Promise<{
   } catch {}
 
   try {
-    const piResponse = await fetch("https://api.xero.com/payroll.xro/1.0/PayItems", {
+    const piResponse = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayItems", {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -984,7 +1026,7 @@ export async function syncInvoices(): Promise<{
   let hasMore = true;
 
   while (hasMore) {
-    const response = await fetch(`https://api.xero.com/api.xro/2.0/Invoices?Statuses=AUTHORISED,PAID,SUBMITTED,DRAFT,VOIDED&page=${page}`, {
+    const response = await xeroFetch(`https://api.xero.com/api.xro/2.0/Invoices?Statuses=AUTHORISED,PAID,SUBMITTED,DRAFT,VOIDED&page=${page}`, {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -1141,7 +1183,7 @@ export async function syncContacts(): Promise<{
   let hasMore = true;
 
   while (hasMore) {
-    const response = await fetch(`https://api.xero.com/api.xro/2.0/Contacts?page=${page}`, {
+    const response = await xeroFetch(`https://api.xero.com/api.xro/2.0/Contacts?page=${page}`, {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
@@ -1246,7 +1288,7 @@ export async function syncBankTransactions(): Promise<{
   let hasMore = true;
 
   while (hasMore) {
-    const response = await fetch(`https://api.xero.com/api.xro/2.0/BankTransactions?page=${page}&where=Status!%3D%22DELETED%22`, {
+    const response = await xeroFetch(`https://api.xero.com/api.xro/2.0/BankTransactions?page=${page}&where=Status!%3D%22DELETED%22`, {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Xero-Tenant-Id": tenantId,
