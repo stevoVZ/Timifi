@@ -53,6 +53,7 @@ export interface IStorage {
   getPayRunLine(id: string): Promise<PayRunLine | undefined>;
   createPayRunLine(data: InsertPayRunLine): Promise<PayRunLine>;
   createPayRunLines(data: InsertPayRunLine[]): Promise<PayRunLine[]>;
+  deletePayRunLines(payRunId: string): Promise<void>;
 
   getDocuments(contractorId: string): Promise<Document[]>;
   createDocument(data: InsertDocument): Promise<Document>;
@@ -269,6 +270,10 @@ export class DatabaseStorage implements IStorage {
   async createPayRunLines(data: InsertPayRunLine[]): Promise<PayRunLine[]> {
     if (data.length === 0) return [];
     return db.insert(payRunLines).values(data).returning();
+  }
+
+  async deletePayRunLines(payRunId: string): Promise<void> {
+    await db.delete(payRunLines).where(eq(payRunLines.payRunId, payRunId));
   }
 
   async getDocuments(contractorId: string): Promise<Document[]> {

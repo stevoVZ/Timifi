@@ -431,6 +431,82 @@ export async function syncEmployees(): Promise<{
   };
 }
 
+async function fetchPayRunDetail(payRunId: string, accessToken: string, tenantId: string): Promise<any | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(`https://api.xero.com/payroll.xro/1.0/PayRuns/${payRunId}`, {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Xero-Tenant-Id": tenantId,
+          "Accept": "application/json",
+        },
+      });
+      if (response.status === 429) {
+        await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 2000));
+        continue;
+      }
+      if (!response.ok) return null;
+      const data = await response.json() as { PayRuns?: any[] };
+      return data.PayRuns?.[0] || null;
+    } catch {
+      if (attempt < 2) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+async function syncPayRunLines(payRunId: string, localPayRunId: string, accessToken: string, tenantId: string, errors: string[]): Promise<number> {
+  const detail = await fetchPayRunDetail(payRunId, accessToken, tenantId);
+  if (!detail || !detail.Payslips || !Array.isArray(detail.Payslips) || detail.Payslips.length === 0) {
+    return 0;
+  }
+
+  await storage.deletePayRunLines(localPayRunId);
+
+  let lineCount = 0;
+  for (const slip of detail.Payslips) {
+    try {
+      const contractor = slip.EmployeeID
+        ? await storage.getContractorByXeroId(slip.EmployeeID)
+        : null;
+      if (!contractor) continue;
+
+      let hoursWorked = "0";
+      let ratePerHour = "0";
+      if (slip.EarningsLines && Array.isArray(slip.EarningsLines) && slip.EarningsLines.length > 0) {
+        const totalHours = slip.EarningsLines.reduce((sum: number, el: any) => sum + (el.NumberOfUnits || 0), 0);
+        hoursWorked = String(totalHours);
+        const primaryLine = slip.EarningsLines[0];
+        ratePerHour = String(primaryLine.RatePerUnit || 0);
+      }
+
+      const grossEarnings = slip.EarningsLines
+        ? String(slip.EarningsLines.reduce((sum: number, el: any) => sum + (el.Amount || 0), 0))
+        : "0";
+
+      await storage.createPayRunLine({
+        payRunId: localPayRunId,
+        contractorId: contractor.id,
+        hoursWorked,
+        ratePerHour,
+        grossEarnings,
+        paygWithheld: String(slip.Tax || 0),
+        superAmount: String(slip.Super || 0),
+        netPay: String(slip.NetPay || 0),
+        status: "INCLUDED",
+      });
+      lineCount++;
+    } catch (lineErr: any) {
+      errors.push(`Error syncing payslip for employee ${slip.EmployeeID}: ${lineErr.message}`);
+    }
+  }
+  return lineCount;
+}
+
 export async function syncPayRuns(): Promise<{
   total: number;
   created: number;
@@ -459,6 +535,8 @@ export async function syncPayRuns(): Promise<{
   let updated = 0;
   const errors: string[] = [];
 
+  const existingPayRuns = await storage.getPayRuns();
+
   for (const pr of payRuns) {
     try {
       const payDate = parseXeroDate(pr.PaymentDate) || parseXeroDate(pr.PayRunPeriodEndDate);
@@ -475,8 +553,8 @@ export async function syncPayRuns(): Promise<{
       else if (xeroStatus === "DRAFT") localStatus = "DRAFT";
 
       const payRunRef = `XERO-${pr.PayRunID?.substring(0, 8) || year + "-" + month}`;
+      const employeeCount = pr.Payslips?.length || 0;
 
-      const existingPayRuns = await storage.getPayRuns();
       const existing = existingPayRuns.find(
         epr => epr.payRunRef === payRunRef
       );
@@ -488,8 +566,13 @@ export async function syncPayRuns(): Promise<{
           totalPayg: String(pr.Tax || 0),
           totalSuper: String(pr.Super || 0),
           totalNet: String(pr.NetPay || 0),
-          employeeCount: pr.PayslipsSummary?.length || 0,
+          employeeCount,
         });
+
+        if (pr.PayRunID) {
+          await syncPayRunLines(pr.PayRunID, existing.id, accessToken, tenantId, errors);
+        }
+
         updated++;
       } else {
         const newPayRun = await storage.createPayRun({
@@ -505,37 +588,18 @@ export async function syncPayRuns(): Promise<{
           totalPayg: String(pr.Tax || 0),
           totalSuper: String(pr.Super || 0),
           totalNet: String(pr.NetPay || 0),
-          employeeCount: pr.PayslipsSummary?.length || 0,
+          employeeCount,
           status: localStatus,
         });
 
-        if (pr.Payslips && Array.isArray(pr.Payslips)) {
-          for (const slip of pr.Payslips) {
-            try {
-              const contractor = slip.EmployeeID
-                ? await storage.getContractorByXeroId(slip.EmployeeID)
-                : null;
-              if (!contractor) continue;
-
-              await storage.createPayRunLine({
-                payRunId: newPayRun.id,
-                contractorId: contractor.id,
-                hoursWorked: String(slip.NumberOfUnits || 0),
-                ratePerHour: String(slip.RatePerUnit || 0),
-                grossEarnings: String(slip.Wages || 0),
-                paygWithheld: String(slip.Tax || 0),
-                superAmount: String(slip.Super || 0),
-                netPay: String(slip.NetPay || 0),
-                status: "INCLUDED",
-              });
-            } catch (lineErr: any) {
-              errors.push(`Error syncing payslip for employee ${slip.EmployeeID}: ${lineErr.message}`);
-            }
-          }
+        if (pr.PayRunID) {
+          await syncPayRunLines(pr.PayRunID, newPayRun.id, accessToken, tenantId, errors);
         }
 
         created++;
       }
+
+      await new Promise(resolve => setTimeout(resolve, 200));
     } catch (err: any) {
       errors.push(`Error syncing pay run ${pr.PayRunID}: ${err.message}`);
     }
