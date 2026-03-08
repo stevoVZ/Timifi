@@ -1,11 +1,12 @@
 import { Switch, Route, useLocation, Redirect } from "wouter";
-import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient, getQueryFn } from "./lib/queryClient";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import NotFound from "@/pages/not-found";
+import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
 import ContractorsPage from "@/pages/contractors";
 import ContractorDetailPage from "@/pages/contractor-detail";
@@ -24,6 +25,15 @@ import PortalPayslipsPage from "@/pages/portal/portal-payslips";
 import PortalMessagesPage from "@/pages/portal/portal-messages";
 import PortalLeavePage from "@/pages/portal/portal-leave";
 import PortalOnboardingPage from "@/pages/portal/portal-onboarding";
+
+function useAuth() {
+  return useQuery<{ id: string; username: string } | null>({
+    queryKey: ["/api/auth/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 60000,
+    retry: false,
+  });
+}
 
 function AdminRouter() {
   return (
@@ -45,6 +55,20 @@ function AdminRouter() {
 }
 
 function AdminLayout() {
+  const { data: user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
   const style = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",

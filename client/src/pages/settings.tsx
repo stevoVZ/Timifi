@@ -270,21 +270,86 @@ function PayrollTab({ settings }: { settings: Setting[] | undefined }) {
   );
 }
 
+type SyncResult = { total: number; created: number; updated: number; errors: string[] };
+type PayrollSettingsResult = { calendars: any[]; earningsRates: any[]; leaveTypes: any[]; payItemsSynced: number };
+
+function SyncButton({ label, endpoint, invalidateKeys, onResult, isPending, setIsPending }: {
+  label: string;
+  endpoint: string;
+  invalidateKeys: string[];
+  onResult: (label: string, data: SyncResult) => void;
+  isPending: boolean;
+  setIsPending: (v: boolean) => void;
+}) {
+  const { toast } = useToast();
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      setIsPending(true);
+      const res = await apiRequest("POST", endpoint);
+      return res.json();
+    },
+    onSuccess: (data: SyncResult) => {
+      setIsPending(false);
+      onResult(label, data);
+      for (const key of invalidateKeys) {
+        queryClient.invalidateQueries({ queryKey: [key] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: `${label}: ${data.total} found, ${data.created} created, ${data.updated} updated` });
+    },
+    onError: (err: Error) => {
+      setIsPending(false);
+      toast({ title: `${label} sync failed: ${err.message}`, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => mutation.mutate()}
+      disabled={isPending}
+      data-testid={`button-sync-${label.toLowerCase().replace(/\s+/g, "-")}`}
+    >
+      {isPending ? (
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      ) : (
+        <RefreshCw className="w-3.5 h-3.5" />
+      )}
+      {isPending ? "Syncing..." : `Sync ${label}`}
+    </Button>
+  );
+}
+
 function XeroTab({ settings }: { settings: Setting[] | undefined }) {
   const { toast } = useToast();
   const [xeroClientId, setXeroClientId] = useState("");
   const [xeroClientSecret, setXeroClientSecret] = useState("");
   const [autoSyncEmployees, setAutoSyncEmployees] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ total: number; created: number; updated: number; errors: string[] } | null>(null);
+  const [syncResults, setSyncResults] = useState<Record<string, SyncResult>>({});
+  const [syncingLabel, setSyncingLabel] = useState<string | null>(null);
+  const [syncAllPending, setSyncAllPending] = useState(false);
 
   const statusQuery = useQuery<{ connected: boolean; tenantName: string; lastSyncAt: string; callbackUri: string }>({
     queryKey: ["/api/xero/status"],
     queryFn: async () => {
-      const res = await fetch("/api/xero/status");
+      const res = await fetch("/api/xero/status", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch status");
       return res.json();
     },
     refetchInterval: 30000,
+  });
+
+  const tenantsQuery = useQuery<Array<{ tenantId: string; tenantName: string; tenantType: string; selected: boolean }>>({
+    queryKey: ["/api/xero/tenants"],
+    queryFn: async () => {
+      const res = await fetch("/api/xero/tenants", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: statusQuery.data?.connected || false,
   });
 
   useEffect(() => {
@@ -314,7 +379,7 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
     mutationFn: async () => {
       await apiRequest("PUT", "/api/settings/xero.clientId", { value: xeroClientId });
       await apiRequest("PUT", "/api/settings/xero.clientSecret", { value: xeroClientSecret });
-      const res = await fetch("/api/xero/connect");
+      const res = await fetch("/api/xero/connect", { credentials: "include" });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.message || "Failed to connect");
@@ -336,6 +401,7 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/xero/tenants"] });
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Disconnected from Xero" });
     },
@@ -344,25 +410,87 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
     },
   });
 
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/xero/sync");
-      return res.json();
+  const selectTenantMutation = useMutation({
+    mutationFn: async (tenantId: string) => {
+      await apiRequest("POST", "/api/xero/tenants/select", { tenantId });
     },
-    onSuccess: (data: { total: number; created: number; updated: number; errors: string[] }) => {
-      setSyncResult(data);
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/contractors"] });
-      toast({ title: `Synced ${data.total} employees (${data.created} new, ${data.updated} updated)` });
+      queryClient.invalidateQueries({ queryKey: ["/api/xero/tenants"] });
+      toast({ title: "Organisation switched" });
     },
     onError: (err: Error) => {
-      toast({ title: err.message || "Sync failed", variant: "destructive" });
+      toast({ title: err.message || "Failed to switch organisation", variant: "destructive" });
+    },
+  });
+
+  const handleSyncResult = (label: string, data: SyncResult) => {
+    setSyncResults(prev => ({ ...prev, [label]: data }));
+  };
+
+  const syncAllMutation = useMutation({
+    mutationFn: async () => {
+      setSyncAllPending(true);
+      const endpoints = [
+        { label: "Employees", url: "/api/xero/sync" },
+        { label: "Pay Runs", url: "/api/xero/sync-payruns" },
+        { label: "Timesheets", url: "/api/xero/sync-timesheets" },
+        { label: "Invoices", url: "/api/xero/sync-invoices" },
+      ];
+      const results: Record<string, SyncResult> = {};
+      for (const ep of endpoints) {
+        try {
+          const res = await apiRequest("POST", ep.url);
+          const data = await res.json();
+          results[ep.label] = data;
+        } catch (err: any) {
+          results[ep.label] = { total: 0, created: 0, updated: 0, errors: [err.message || "Failed"] };
+        }
+      }
+      try {
+        const res = await fetch("/api/xero/payroll-settings", { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          results["Payroll Settings"] = { total: data.payItemsSynced || 0, created: data.payItemsSynced || 0, updated: 0, errors: [] };
+        }
+      } catch {}
+      return results;
+    },
+    onSuccess: (results: Record<string, SyncResult>) => {
+      setSyncAllPending(false);
+      setSyncResults(results);
+      queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contractors"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      const totalCreated = Object.values(results).reduce((s, r) => s + r.created, 0);
+      const totalUpdated = Object.values(results).reduce((s, r) => s + r.updated, 0);
+      toast({ title: `Sync All complete: ${totalCreated} created, ${totalUpdated} updated` });
+    },
+    onError: () => {
+      setSyncAllPending(false);
+      toast({ title: "Sync All failed", variant: "destructive" });
     },
   });
 
   const isConnected = statusQuery.data?.connected || false;
   const tenantName = statusQuery.data?.tenantName || "";
   const lastSyncAt = statusQuery.data?.lastSyncAt || "";
+
+  const lastEmployeeSyncAt = useSettingValue(settings, "xero.lastEmployeeSyncAt", "");
+  const lastPayRunSyncAt = useSettingValue(settings, "xero.lastPayRunSyncAt", "");
+  const lastTimesheetSyncAt = useSettingValue(settings, "xero.lastTimesheetSyncAt", "");
+  const lastInvoiceSyncAt = useSettingValue(settings, "xero.lastInvoiceSyncAt", "");
+  const lastSettingsSyncAt = useSettingValue(settings, "xero.lastSettingsSyncAt", "");
+
+  const tenants = tenantsQuery.data || [];
+  const selectedTenantId = tenants.find(t => t.selected)?.tenantId || "";
+
+  const syncItems = [
+    { label: "Employees", endpoint: "/api/xero/sync", invalidateKeys: ["/api/contractors"], lastSync: lastEmployeeSyncAt },
+    { label: "Pay Runs", endpoint: "/api/xero/sync-payruns", invalidateKeys: ["/api/pay-runs"], lastSync: lastPayRunSyncAt },
+    { label: "Timesheets", endpoint: "/api/xero/sync-timesheets", invalidateKeys: ["/api/timesheets"], lastSync: lastTimesheetSyncAt },
+    { label: "Invoices", endpoint: "/api/xero/sync-invoices", invalidateKeys: ["/api/invoices"], lastSync: lastInvoiceSyncAt },
+  ];
 
   return (
     <div className="space-y-6">
@@ -405,6 +533,28 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
           )}
         </div>
       </div>
+
+      {isConnected && tenants.length > 1 && (
+        <div className="space-y-2">
+          <Label data-testid="label-xero-org-picker">Organisation</Label>
+          <Select
+            value={selectedTenantId}
+            onValueChange={(val) => selectTenantMutation.mutate(val)}
+          >
+            <SelectTrigger data-testid="select-xero-org">
+              <SelectValue placeholder="Select organisation" />
+            </SelectTrigger>
+            <SelectContent>
+              {tenants.map((t) => (
+                <SelectItem key={t.tenantId} value={t.tenantId} data-testid={`option-org-${t.tenantId}`}>
+                  {t.tenantName} ({t.tenantType})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Switch between your connected Xero organisations</p>
+        </div>
+      )}
 
       <div className="space-y-4">
         <div className="space-y-2">
@@ -469,7 +619,122 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
           </Button>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-5">
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <Label className="text-sm font-medium">Data Sync</Label>
+              <Button
+                size="sm"
+                onClick={() => syncAllMutation.mutate()}
+                disabled={syncAllPending || syncingLabel !== null}
+                data-testid="button-sync-all"
+              >
+                {syncAllPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                )}
+                {syncAllPending ? "Syncing All..." : "Sync All"}
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              {syncItems.map((item) => (
+                <div
+                  key={item.label}
+                  className="flex items-center justify-between p-3 rounded-lg border bg-card"
+                  data-testid={`sync-row-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
+                >
+                  <div>
+                    <div className="text-sm font-medium">{item.label}</div>
+                    {item.lastSync && (
+                      <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <Clock className="w-3 h-3" />
+                        {new Date(item.lastSync).toLocaleString("en-AU")}
+                      </div>
+                    )}
+                    {syncResults[item.label] && (
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {syncResults[item.label].created} created, {syncResults[item.label].updated} updated
+                        {syncResults[item.label].errors.length > 0 && (
+                          <span className="text-destructive ml-1">({syncResults[item.label].errors.length} errors)</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <SyncButton
+                    label={item.label}
+                    endpoint={item.endpoint}
+                    invalidateKeys={item.invalidateKeys}
+                    onResult={handleSyncResult}
+                    isPending={syncingLabel === item.label || syncAllPending}
+                    setIsPending={(v) => setSyncingLabel(v ? item.label : null)}
+                  />
+                </div>
+              ))}
+
+              <div
+                className="flex items-center justify-between p-3 rounded-lg border bg-card"
+                data-testid="sync-row-payroll-settings"
+              >
+                <div>
+                  <div className="text-sm font-medium">Payroll Settings</div>
+                  {lastSettingsSyncAt && (
+                    <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <Clock className="w-3 h-3" />
+                      {new Date(lastSettingsSyncAt).toLocaleString("en-AU")}
+                    </div>
+                  )}
+                  {syncResults["Payroll Settings"] && (
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {syncResults["Payroll Settings"].created} pay items synced
+                    </div>
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    setSyncingLabel("Payroll Settings");
+                    try {
+                      const res = await fetch("/api/xero/payroll-settings", { credentials: "include" });
+                      if (!res.ok) throw new Error("Failed to fetch payroll settings");
+                      const data: PayrollSettingsResult = await res.json();
+                      handleSyncResult("Payroll Settings", { total: data.payItemsSynced, created: data.payItemsSynced, updated: 0, errors: [] });
+                      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+                      toast({ title: `Payroll Settings: ${data.calendars.length} calendars, ${data.earningsRates.length} earnings rates, ${data.leaveTypes.length} leave types` });
+                    } catch (err: any) {
+                      toast({ title: err.message || "Failed", variant: "destructive" });
+                    }
+                    setSyncingLabel(null);
+                  }}
+                  disabled={syncingLabel === "Payroll Settings" || syncAllPending}
+                  data-testid="button-sync-payroll-settings"
+                >
+                  {syncingLabel === "Payroll Settings" ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  )}
+                  {syncingLabel === "Payroll Settings" ? "Syncing..." : "Sync Settings"}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {Object.values(syncResults).some(r => r.errors.length > 0) && (
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm space-y-1" data-testid="text-sync-errors">
+              <div className="font-medium text-destructive">Sync Errors</div>
+              {Object.entries(syncResults).map(([label, result]) =>
+                result.errors.map((e, i) => (
+                  <div key={`${label}-${i}`} className="text-xs text-destructive/80">
+                    [{label}] {e}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <div>
               <Label data-testid="label-auto-sync-employees">Auto-sync Employees</Label>
@@ -485,45 +750,15 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
             />
           </div>
 
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
-              data-testid="button-xero-sync"
-            >
-              {syncMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-              {syncMutation.isPending ? "Syncing..." : "Sync Employees Now"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => saveCredentialsMutation.mutate()}
-              disabled={saveCredentialsMutation.isPending}
-              data-testid="button-save-xero-settings"
-            >
-              <Save className="w-4 h-4" />
-              Save Settings
-            </Button>
-          </div>
-
-          {syncResult && (
-            <div className="p-3 rounded-lg bg-muted/50 border text-sm space-y-1" data-testid="text-sync-result">
-              <div className="font-medium">Sync Complete</div>
-              <div className="text-muted-foreground">
-                Total: {syncResult.total} employees | {syncResult.created} created | {syncResult.updated} updated
-              </div>
-              {syncResult.errors.length > 0 && (
-                <div className="text-destructive text-xs mt-1">
-                  {syncResult.errors.map((e, i) => (
-                    <div key={i}>{e}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <Button
+            variant="outline"
+            onClick={() => saveCredentialsMutation.mutate()}
+            disabled={saveCredentialsMutation.isPending}
+            data-testid="button-save-xero-settings"
+          >
+            <Save className="w-4 h-4" />
+            {saveCredentialsMutation.isPending ? "Saving..." : "Save Settings"}
+          </Button>
         </div>
       )}
     </div>

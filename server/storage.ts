@@ -2,7 +2,7 @@ import { db } from "./db";
 import { eq, desc, sql, and, inArray } from "drizzle-orm";
 import {
   contractors, timesheets, invoices, payRuns, payRunLines, documents,
-  notifications, messages, settings,
+  notifications, messages, settings, users,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
   type Contractor, type InsertContractor,
   type Timesheet, type InsertTimesheet,
@@ -18,6 +18,7 @@ import {
   type TaxDeclaration, type InsertTaxDeclaration,
   type BankAccount, type InsertBankAccount,
   type SuperMembership, type InsertSuperMembership,
+  type User, type InsertUser,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -107,6 +108,10 @@ export interface IStorage {
     bank: boolean;
     super: boolean;
   }>;
+
+  getUser(id: string): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(data: InsertUser): Promise<User>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -527,6 +532,21 @@ export class DatabaseStorage implements IStorage {
     }
     const [created] = await db.insert(superMemberships).values(data).returning();
     return created;
+  }
+
+  async getUser(id: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
+  }
+
+  async createUser(data: InsertUser): Promise<User> {
+    const [user] = await db.insert(users).values(data).returning();
+    return user;
   }
 
   async getOnboardingStatus(contractorId: string): Promise<{

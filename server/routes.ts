@@ -4,12 +4,20 @@ import { storage } from "./storage";
 import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
-import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri } from "./xero";
+import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices } from "./xero";
+import { requireAuth } from "./auth";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  app.use("/api", (req, res, next) => {
+    if (req.path.startsWith("/auth/")) return next();
+    if (req.path.startsWith("/portal/")) return next();
+    if (req.path === "/xero/callback") return next();
+    requireAuth(req, res, next);
+  });
 
   app.get("/api/dashboard/stats", async (_req, res) => {
     try {
@@ -925,6 +933,62 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to disconnect Xero" });
+    }
+  });
+
+  app.get("/api/xero/tenants", async (_req, res) => {
+    try {
+      const tenants = await getTenants();
+      res.json(tenants);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch Xero tenants" });
+    }
+  });
+
+  app.post("/api/xero/tenants/select", async (req, res) => {
+    try {
+      const { tenantId } = req.body;
+      if (!tenantId) return res.status(400).json({ message: "tenantId is required" });
+      await selectTenant(tenantId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to select tenant" });
+    }
+  });
+
+  app.post("/api/xero/sync-payruns", async (_req, res) => {
+    try {
+      const result = await syncPayRuns();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to sync pay runs from Xero" });
+    }
+  });
+
+  app.post("/api/xero/sync-timesheets", async (_req, res) => {
+    try {
+      const result = await syncTimesheets();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to sync timesheets from Xero" });
+    }
+  });
+
+  app.post("/api/xero/sync-invoices", async (_req, res) => {
+    try {
+      const result = await syncInvoices();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to sync invoices from Xero" });
+    }
+  });
+
+  app.get("/api/xero/payroll-settings", async (_req, res) => {
+    try {
+      const result = await syncPayrollSettings();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch payroll settings from Xero" });
     }
   });
 
