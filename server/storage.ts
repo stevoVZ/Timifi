@@ -295,6 +295,36 @@ export class DatabaseStorage implements IStorage {
       .orderBy(payRuns.payDate)
       .limit(1);
 
+    const [submittedResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(timesheets)
+      .where(eq(timesheets.status, "SUBMITTED"));
+
+    const [approvedThisMonthResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(timesheets)
+      .where(
+        and(
+          eq(timesheets.year, currentYear),
+          eq(timesheets.month, currentMonth),
+          eq(timesheets.status, "APPROVED")
+        )
+      );
+
+    const fyStart = new Date().getMonth() >= 6
+      ? new Date(currentYear, 6, 1)
+      : new Date(currentYear - 1, 6, 1);
+
+    const [ytdBillingsResult] = await db
+      .select({ total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text` })
+      .from(invoices)
+      .where(
+        and(
+          eq(invoices.status, "PAID"),
+          sql`${invoices.createdAt} >= ${fyStart.toISOString()}`
+        )
+      );
+
     return {
       activeContractors: activeResult?.count || 0,
       pendingContractors: pendingResult?.count || 0,
@@ -303,6 +333,9 @@ export class DatabaseStorage implements IStorage {
       overdueAmount: overdueResult?.total || "0",
       nextPayRunDate: nextPayRun[0]?.payDate || null,
       nextPayRunCount: nextPayRun[0]?.employeeCount || 0,
+      submittedTimesheets: submittedResult?.count || 0,
+      approvedThisMonth: approvedThisMonthResult?.count || 0,
+      ytdBillings: ytdBillingsResult?.total || "0",
     };
   }
 

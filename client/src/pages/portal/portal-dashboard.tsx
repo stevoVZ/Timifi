@@ -1,10 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { PortalShell } from "@/components/portal-shell";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Clock, FileText, MessageSquare, Calendar } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/status-badge";
+import { Clock, DollarSign, Calendar, FileText, Receipt, MessageSquare, ArrowRight } from "lucide-react";
 import type { Contractor } from "@shared/schema";
+
+interface RecentTimesheet {
+  id: string;
+  period: string;
+  hours: number;
+  status: string;
+  gross: number;
+  year: number;
+  month: number;
+}
+
+interface RecentPayslip {
+  id: string;
+  period: string;
+  gross: number;
+  net: number;
+  payDate: string | null;
+  year: number;
+  month: number;
+}
 
 interface PortalStats {
   contractor: Contractor;
@@ -12,6 +35,12 @@ interface PortalStats {
   pendingTimesheets: number;
   unreadMessages: number;
   totalTimesheets: number;
+  ytdHours: number;
+  ytdGross: number;
+  contractHoursPA: number;
+  rate: number;
+  recentTimesheets: RecentTimesheet[];
+  recentPayslips: RecentPayslip[];
 }
 
 function getContractorId(): string | null {
@@ -20,6 +49,15 @@ function getContractorId(): string | null {
 
 function getContractorName(): string {
   return localStorage.getItem("portal_contractor_name") || "Contractor";
+}
+
+function formatCurrency(val: number): string {
+  return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val);
+}
+
+function formatMonth(year: number, month: number): string {
+  const d = new Date(year, month - 1);
+  return d.toLocaleDateString("en-AU", { month: "short", year: "numeric" });
 }
 
 export default function PortalDashboardPage() {
@@ -52,31 +90,31 @@ export default function PortalDashboardPage() {
           bgColor: "bg-primary/5",
         },
         {
-          label: "Pending timesheets",
-          value: String(stats.pendingTimesheets),
-          sub: `${stats.totalTimesheets} total submitted`,
-          icon: FileText,
-          color: "text-amber-600 dark:text-amber-400",
-          bgColor: "bg-amber-50 dark:bg-amber-900/20",
+          label: "YTD earnings",
+          value: formatCurrency(stats.ytdGross),
+          sub: `${stats.ytdHours.toFixed(1)} hours worked`,
+          icon: DollarSign,
+          color: "text-green-600 dark:text-green-400",
+          bgColor: "bg-green-50 dark:bg-green-900/20",
         },
         {
           label: "Next pay date",
           value: getNextPayDate(),
           sub: stats.contractor.payFrequency || "Monthly",
           icon: Calendar,
-          color: "text-green-600 dark:text-green-400",
-          bgColor: "bg-green-50 dark:bg-green-900/20",
-        },
-        {
-          label: "Unread messages",
-          value: String(stats.unreadMessages),
-          sub: "From admin",
-          icon: MessageSquare,
-          color: "text-blue-600 dark:text-blue-400",
-          bgColor: "bg-blue-50 dark:bg-blue-900/20",
+          color: "text-amber-600 dark:text-amber-400",
+          bgColor: "bg-amber-50 dark:bg-amber-900/20",
         },
       ]
     : [];
+
+  const utilisationPct = stats
+    ? Math.min(100, Math.round((stats.ytdHours / stats.contractHoursPA) * 100))
+    : 0;
+
+  const annualContractValue = stats
+    ? stats.contractHoursPA * stats.rate
+    : 0;
 
   return (
     <PortalShell contractorName={contractorName}>
@@ -91,9 +129,9 @@ export default function PortalDashboardPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {isLoading
-              ? Array.from({ length: 4 }).map((_, i) => (
+              ? Array.from({ length: 3 }).map((_, i) => (
                   <Card key={i}>
                     <CardContent className="p-5">
                       <Skeleton className="h-3 w-24 mb-3" />
@@ -131,52 +169,173 @@ export default function PortalDashboardPage() {
           {stats && (
             <Card>
               <CardContent className="p-5">
-                <h2 className="text-sm font-semibold text-foreground mb-3" data-testid="text-portal-profile-heading">
-                  Your details
+                <h2 className="text-sm font-semibold text-foreground mb-4" data-testid="text-contract-utilisation-heading">
+                  Contract utilisation
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">Name</span>
-                    <p className="font-medium text-foreground" data-testid="text-portal-contractor-name">
-                      {stats.contractor.firstName} {stats.contractor.lastName}
-                    </p>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap text-sm">
+                    <span className="text-muted-foreground">
+                      YTD hours: <span className="font-medium text-foreground" data-testid="text-ytd-hours">{stats.ytdHours.toFixed(1)}</span> / {stats.contractHoursPA}
+                    </span>
+                    <span className="font-medium text-foreground" data-testid="text-utilisation-pct">{utilisationPct}%</span>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Email</span>
-                    <p className="font-medium text-foreground" data-testid="text-portal-contractor-email">
-                      {stats.contractor.email}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Job title</span>
-                    <p className="font-medium text-foreground" data-testid="text-portal-contractor-job">
-                      {stats.contractor.jobTitle || "Not specified"}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Client</span>
-                    <p className="font-medium text-foreground" data-testid="text-portal-contractor-client">
-                      {stats.contractor.clientName || "Not specified"}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Pay frequency</span>
-                    <p className="font-medium text-foreground" data-testid="text-portal-contractor-pay-frequency">
-                      {stats.contractor.payFrequency}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Hourly rate</span>
-                    <p className="font-medium text-foreground" data-testid="text-portal-contractor-rate">
-                      {stats.contractor.hourlyRate
-                        ? `$${parseFloat(stats.contractor.hourlyRate).toFixed(2)}/hr`
-                        : "Not set"}
-                    </p>
+                  <Progress value={utilisationPct} className="h-2" data-testid="progress-utilisation" />
+                  <div className="flex items-center justify-between gap-2 flex-wrap text-sm">
+                    <span className="text-muted-foreground">
+                      Annual contract value
+                    </span>
+                    <span className="font-medium text-foreground" data-testid="text-annual-contract-value">
+                      {formatCurrency(annualContractValue)}
+                    </span>
                   </div>
                 </div>
               </CardContent>
             </Card>
           )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Link href="/portal/timesheets">
+              <Card className="hover-elevate cursor-pointer">
+                <CardContent className="p-5 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-md bg-primary/5 flex items-center justify-center">
+                    <FileText className="w-4 h-4 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-foreground" data-testid="link-quick-timesheets">Timesheets</div>
+                    <div className="text-xs text-muted-foreground">Submit & track hours</div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                </CardContent>
+              </Card>
+            </Link>
+            <Link href="/portal/payslips">
+              <Card className="hover-elevate cursor-pointer">
+                <CardContent className="p-5 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-md bg-green-50 dark:bg-green-900/20 flex items-center justify-center">
+                    <Receipt className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-foreground" data-testid="link-quick-payslips">Payslips</div>
+                    <div className="text-xs text-muted-foreground">View pay history</div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                </CardContent>
+              </Card>
+            </Link>
+            <Link href="/portal/messages">
+              <Card className="hover-elevate cursor-pointer">
+                <CardContent className="p-5 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-md bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+                    <MessageSquare className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-foreground" data-testid="link-quick-messages">Messages</div>
+                    <div className="text-xs text-muted-foreground">
+                      {stats ? `${stats.unreadMessages} unread` : "View messages"}
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                </CardContent>
+              </Card>
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-4">
+                  <h2 className="text-sm font-semibold text-foreground" data-testid="text-recent-timesheets-heading">
+                    Recent timesheets
+                  </h2>
+                  <Link href="/portal/timesheets">
+                    <Button variant="ghost" size="sm" data-testid="link-view-all-timesheets">
+                      View all
+                    </Button>
+                  </Link>
+                </div>
+                {isLoading ? (
+                  <div className="space-y-3">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <Skeleton key={i} className="h-10 w-full" />
+                    ))}
+                  </div>
+                ) : stats && stats.recentTimesheets.length > 0 ? (
+                  <div className="space-y-2">
+                    {stats.recentTimesheets.map((ts) => (
+                      <div
+                        key={ts.id}
+                        className="flex items-center justify-between gap-2 flex-wrap py-2 border-b last:border-b-0"
+                        data-testid={`row-timesheet-${ts.id}`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-foreground">
+                            {formatMonth(ts.year, ts.month)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {ts.hours.toFixed(1)} hrs · {formatCurrency(ts.gross)}
+                          </div>
+                        </div>
+                        <StatusBadge status={ts.status} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground" data-testid="text-no-timesheets">No timesheets yet</p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-4">
+                  <h2 className="text-sm font-semibold text-foreground" data-testid="text-recent-payslips-heading">
+                    Recent payslips
+                  </h2>
+                  <Link href="/portal/payslips">
+                    <Button variant="ghost" size="sm" data-testid="link-view-all-payslips">
+                      View all
+                    </Button>
+                  </Link>
+                </div>
+                {isLoading ? (
+                  <div className="space-y-3">
+                    {Array.from({ length: 2 }).map((_, i) => (
+                      <Skeleton key={i} className="h-10 w-full" />
+                    ))}
+                  </div>
+                ) : stats && stats.recentPayslips.length > 0 ? (
+                  <div className="space-y-2">
+                    {stats.recentPayslips.map((ps) => (
+                      <div
+                        key={ps.id}
+                        className="flex items-center justify-between gap-2 flex-wrap py-2 border-b last:border-b-0"
+                        data-testid={`row-payslip-${ps.id}`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-foreground">
+                            {formatMonth(ps.year, ps.month)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Paid {ps.payDate ? new Date(ps.payDate).toLocaleDateString("en-AU", { day: "numeric", month: "short" }) : "—"}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-medium text-foreground" data-testid={`text-payslip-net-${ps.id}`}>
+                            {formatCurrency(ps.net)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Gross {formatCurrency(ps.gross)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground" data-testid="text-no-payslips">No payslips yet</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     </PortalShell>

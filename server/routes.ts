@@ -28,6 +28,27 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/contractors/stats", async (_req, res) => {
+    try {
+      const allContractors = await storage.getContractors();
+      const allTimesheets = await storage.getTimesheets();
+      const currentYear = new Date().getFullYear();
+      const approvedTs = allTimesheets.filter(t => t.status === "APPROVED" && t.year === currentYear);
+      const ytdByContractor: Record<string, number> = {};
+      for (const t of approvedTs) {
+        ytdByContractor[t.contractorId] = (ytdByContractor[t.contractorId] || 0) + parseFloat(t.totalHours);
+      }
+      const stats = allContractors.map(c => ({
+        ...c,
+        ytdHours: ytdByContractor[c.id] || 0,
+        ytdBillings: (ytdByContractor[c.id] || 0) * (c.hourlyRate ? parseFloat(c.hourlyRate) : 0),
+      }));
+      res.json(stats);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch contractor stats" });
+    }
+  });
+
   app.get("/api/contractors/:id", async (req, res) => {
     try {
       const contractor = await storage.getContractor(req.params.id);
@@ -88,8 +109,20 @@ export async function registerRoutes(
 
   app.post("/api/timesheets", async (req, res) => {
     try {
-      const parsed = insertTimesheetSchema.parse(req.body);
+      const { fileData, fileType: uploadedFileType, ...timesheetData } = req.body;
+      const parsed = insertTimesheetSchema.parse(timesheetData);
       const timesheet = await storage.createTimesheet(parsed);
+
+      if (fileData && parsed.fileName && parsed.contractorId) {
+        await storage.createDocument({
+          contractorId: parsed.contractorId,
+          type: "TIMESHEET",
+          name: parsed.fileName,
+          fileUrl: fileData,
+          fileType: uploadedFileType || "application/pdf",
+        });
+      }
+
       res.status(201).json(timesheet);
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Invalid timesheet data" });
@@ -300,17 +333,70 @@ export async function registerRoutes(
       if (!contractor) return res.status(404).json({ message: "Contractor not found" });
       const ts = await storage.getTimesheetsByContractor(req.params.contractorId);
       const msgs = await storage.getMessagesByContractor(req.params.contractorId);
+      const payRunLines = await storage.getPayRunLinesByContractor(req.params.contractorId);
       const currentMonth = new Date().getMonth() + 1;
       const currentYear = new Date().getFullYear();
       const currentTs = ts.find(t => t.year === currentYear && t.month === currentMonth);
       const pendingTs = ts.filter(t => t.status === "DRAFT" || t.status === "SUBMITTED").length;
       const unreadMsgs = msgs.filter(m => !m.read && m.senderRole === "admin").length;
+      const approvedTs = ts.filter(t => t.status === "APPROVED" && t.year === currentYear);
+      const ytdHours = approvedTs.reduce((s, t) => s + parseFloat(t.totalHours), 0);
+      const rate = contractor.hourlyRate ? parseFloat(contractor.hourlyRate) : 0;
+      const ytdGross = ytdHours * rate;
+      const contractHoursPA = contractor.contractHoursPA ? parseFloat(contractor.contractHoursPA as string) : 2000;
+
+      const recentTimesheets = ts
+        .sort((a, b) => {
+          if (b.year !== a.year) return b.year - a.year;
+          return b.month - a.month;
+        })
+        .slice(0, 3)
+        .map(t => ({
+          id: t.id,
+          period: t.year + "-" + t.month,
+          hours: parseFloat(t.totalHours),
+          status: t.status,
+          gross: parseFloat(t.totalHours) * rate,
+          year: t.year,
+          month: t.month,
+        }));
+
+      const payRuns = await storage.getPayRuns();
+      const payRunMap = new Map(payRuns.map(pr => [pr.id, pr]));
+      const recentPayslips = payRunLines
+        .map(pl => {
+          const pr = payRunMap.get(pl.payRunId);
+          return { ...pl, payRun: pr };
+        })
+        .filter(pl => pl.payRun)
+        .sort((a, b) => {
+          if (!a.payRun || !b.payRun) return 0;
+          if (b.payRun.year !== a.payRun.year) return b.payRun.year - a.payRun.year;
+          return b.payRun.month - a.payRun.month;
+        })
+        .slice(0, 2)
+        .map(pl => ({
+          id: pl.id,
+          period: pl.payRun!.year + "-" + pl.payRun!.month,
+          gross: parseFloat(pl.grossEarnings),
+          net: parseFloat(pl.netPay),
+          payDate: pl.payRun!.paymentDate || pl.payRun!.payDate,
+          year: pl.payRun!.year,
+          month: pl.payRun!.month,
+        }));
+
       res.json({
         contractor,
         hoursThisMonth: currentTs ? parseFloat(currentTs.totalHours) : 0,
         pendingTimesheets: pendingTs,
         unreadMessages: unreadMsgs,
         totalTimesheets: ts.length,
+        ytdHours,
+        ytdGross,
+        contractHoursPA,
+        rate,
+        recentTimesheets,
+        recentPayslips,
       });
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch portal stats" });

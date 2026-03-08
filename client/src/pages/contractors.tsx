@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { StatusBadge } from "@/components/status-badge";
@@ -20,20 +20,42 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
-import { Plus, Search, Shield, MapPin, Briefcase, ArrowRight } from "lucide-react";
+import { Plus, Search, Users, DollarSign, Clock, ArrowUpDown, ArrowUp, ArrowDown, ArrowRight } from "lucide-react";
 import type { Contractor } from "@shared/schema";
 
-const CLEARANCE_COLORS: Record<string, string> = {
-  NONE: "text-muted-foreground",
-  BASELINE: "text-blue-600 dark:text-blue-400",
-  NV1: "text-green-600 dark:text-green-400",
-  NV2: "text-amber-600 dark:text-amber-400",
-  PV: "text-red-600 dark:text-red-400",
+type ContractorWithStats = Contractor & {
+  ytdHours: number;
+  ytdBillings: number;
 };
+
+type SortField = "name" | "rate" | "ytdHours" | "startDate";
+type SortDir = "asc" | "desc";
+
+function formatCurrency(val: number) {
+  return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val);
+}
+
+function formatRate(val: string | null) {
+  if (!val) return "-";
+  return `$${parseFloat(val).toFixed(2)}/hr`;
+}
+
+function formatDate(val: string | null) {
+  if (!val) return "-";
+  return new Date(val).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
+}
 
 function getInitials(first: string, last: string) {
   return `${first[0]}${last[0]}`.toUpperCase();
@@ -53,14 +75,23 @@ function getAvatarColor(name: string) {
   return colors[Math.abs(hash) % colors.length];
 }
 
+function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
+  if (field !== sortField) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-40" />;
+  return sortDir === "asc"
+    ? <ArrowUp className="w-3 h-3 ml-1" />
+    : <ArrowDown className="w-3 h-3 ml-1" />;
+}
+
 export default function ContractorsPage() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [sortField, setSortField] = useState<SortField>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const { toast } = useToast();
 
-  const { data: contractors, isLoading } = useQuery<Contractor[]>({
-    queryKey: ["/api/contractors"],
+  const { data: contractorsWithStats, isLoading } = useQuery<ContractorWithStats[]>({
+    queryKey: ["/api/contractors/stats"],
   });
 
   const createMutation = useMutation({
@@ -70,6 +101,7 @@ export default function ContractorsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/contractors"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contractors/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       setDialogOpen(false);
       toast({ title: "Contractor created", description: "New contractor has been added." });
@@ -79,13 +111,58 @@ export default function ContractorsPage() {
     },
   });
 
-  const filtered = contractors?.filter((c) => {
-    const matchSearch = `${c.firstName} ${c.lastName} ${c.email} ${c.clientName || ""}`
-      .toLowerCase()
-      .includes(search.toLowerCase());
-    const matchStatus = filterStatus === "ALL" || c.status === filterStatus;
-    return matchSearch && matchStatus;
-  });
+  const toggleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  };
+
+  const kpis = useMemo(() => {
+    if (!contractorsWithStats) return { active: 0, pending: 0, ytdBillings: 0, avgRate: 0 };
+    const active = contractorsWithStats.filter(c => c.status === "ACTIVE").length;
+    const pending = contractorsWithStats.filter(c => c.status === "PENDING_SETUP").length;
+    const ytdBillings = contractorsWithStats.reduce((sum, c) => sum + c.ytdBillings, 0);
+    const withRate = contractorsWithStats.filter(c => c.hourlyRate && parseFloat(c.hourlyRate) > 0);
+    const avgRate = withRate.length > 0
+      ? withRate.reduce((sum, c) => sum + parseFloat(c.hourlyRate!), 0) / withRate.length
+      : 0;
+    return { active, pending, ytdBillings, avgRate };
+  }, [contractorsWithStats]);
+
+  const filtered = useMemo(() => {
+    if (!contractorsWithStats) return [];
+    let list = contractorsWithStats.filter((c) => {
+      const matchSearch = `${c.firstName} ${c.lastName} ${c.email} ${c.clientName || ""}`
+        .toLowerCase()
+        .includes(search.toLowerCase());
+      const matchStatus = filterStatus === "ALL" || c.status === filterStatus;
+      return matchSearch && matchStatus;
+    });
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sortField) {
+        case "name":
+          cmp = `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+          break;
+        case "rate":
+          cmp = (parseFloat(a.hourlyRate || "0")) - (parseFloat(b.hourlyRate || "0"));
+          break;
+        case "ytdHours":
+          cmp = a.ytdHours - b.ytdHours;
+          break;
+        case "startDate":
+          cmp = (a.startDate || "").localeCompare(b.startDate || "");
+          break;
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+
+    return list;
+  }, [contractorsWithStats, search, filterStatus, sortField, sortDir]);
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -99,7 +176,7 @@ export default function ContractorsPage() {
     <div className="flex flex-col h-full">
       <TopBar
         title="Contractors"
-        subtitle={`${contractors?.length || 0} total`}
+        subtitle={`${contractorsWithStats?.length || 0} total`}
         actions={
           <>
             <Link href="/contractors/new">
@@ -164,6 +241,61 @@ export default function ContractorsPage() {
       />
       <main className="flex-1 overflow-auto p-6 bg-muted/30">
         <div className="max-w-6xl mx-auto space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Card data-testid="kpi-active-count">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-9 h-9 rounded-md bg-green-100 dark:bg-green-900/30">
+                    <Users className="w-4 h-4 text-green-700 dark:text-green-300" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Active</p>
+                    <p className="text-xl font-bold text-foreground" data-testid="text-kpi-active">{isLoading ? "-" : kpis.active}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card data-testid="kpi-pending-count">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-9 h-9 rounded-md bg-amber-100 dark:bg-amber-900/30">
+                    <Clock className="w-4 h-4 text-amber-700 dark:text-amber-300" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Pending</p>
+                    <p className="text-xl font-bold text-foreground" data-testid="text-kpi-pending">{isLoading ? "-" : kpis.pending}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card data-testid="kpi-ytd-billings">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-9 h-9 rounded-md bg-blue-100 dark:bg-blue-900/30">
+                    <DollarSign className="w-4 h-4 text-blue-700 dark:text-blue-300" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">YTD Billings</p>
+                    <p className="text-xl font-bold text-foreground" data-testid="text-kpi-billings">{isLoading ? "-" : formatCurrency(kpis.ytdBillings)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card data-testid="kpi-avg-rate">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-9 h-9 rounded-md bg-purple-100 dark:bg-purple-900/30">
+                    <DollarSign className="w-4 h-4 text-purple-700 dark:text-purple-300" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Avg Rate</p>
+                    <p className="text-xl font-bold text-foreground" data-testid="text-kpi-avg-rate">{isLoading ? "-" : `$${kpis.avgRate.toFixed(0)}/hr`}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
           <div className="flex items-center gap-3 flex-wrap">
             <div className="relative flex-1 min-w-[200px] max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -189,20 +321,20 @@ export default function ContractorsPage() {
           </div>
 
           {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Card key={i}>
-                  <CardContent className="p-5 flex items-center gap-4">
-                    <Skeleton className="w-10 h-10 rounded-md" />
-                    <div className="flex-1 space-y-2">
-                      <Skeleton className="h-4 w-40" />
-                      <Skeleton className="h-3 w-60" />
+            <Card>
+              <CardContent className="p-0">
+                <div className="space-y-0">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-4 p-4 border-b last:border-b-0">
+                      <Skeleton className="w-8 h-8 rounded-md" />
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-4 w-20 ml-auto" />
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : filtered?.length === 0 ? (
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : filtered.length === 0 ? (
             <Card>
               <CardContent className="py-16 text-center">
                 <Users className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
@@ -213,53 +345,107 @@ export default function ContractorsPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-2">
-              {filtered?.map((c) => (
-                <Link key={c.id} href={`/contractors/${c.id}`}>
-                  <Card className="hover-elevate cursor-pointer group" data-testid={`card-contractor-${c.id}`}>
-                    <CardContent className="p-4 flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-md flex items-center justify-center font-bold text-sm flex-shrink-0 ${getAvatarColor(c.firstName + c.lastName)}`}>
-                        {getInitials(c.firstName, c.lastName)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-semibold text-foreground" data-testid={`text-contractor-name-${c.id}`}>
-                            {c.firstName} {c.lastName}
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>
+                        <button
+                          onClick={() => toggleSort("name")}
+                          className="flex items-center text-xs font-medium"
+                          data-testid="sort-name"
+                        >
+                          Contractor
+                          <SortIcon field="name" sortField={sortField} sortDir={sortDir} />
+                        </button>
+                      </TableHead>
+                      <TableHead className="hidden md:table-cell">Client</TableHead>
+                      <TableHead>
+                        <button
+                          onClick={() => toggleSort("rate")}
+                          className="flex items-center text-xs font-medium"
+                          data-testid="sort-rate"
+                        >
+                          Rate
+                          <SortIcon field="rate" sortField={sortField} sortDir={sortDir} />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button
+                          onClick={() => toggleSort("ytdHours")}
+                          className="flex items-center text-xs font-medium"
+                          data-testid="sort-ytd-hours"
+                        >
+                          YTD Hours
+                          <SortIcon field="ytdHours" sortField={sortField} sortDir={sortDir} />
+                        </button>
+                      </TableHead>
+                      <TableHead className="hidden sm:table-cell">Status</TableHead>
+                      <TableHead className="hidden lg:table-cell">
+                        <button
+                          onClick={() => toggleSort("startDate")}
+                          className="flex items-center text-xs font-medium"
+                          data-testid="sort-start-date"
+                        >
+                          Start Date
+                          <SortIcon field="startDate" sortField={sortField} sortDir={sortDir} />
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-10"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((c) => (
+                      <TableRow key={c.id} className="hover-elevate cursor-pointer" data-testid={`row-contractor-${c.id}`}>
+                        <TableCell>
+                          <Link href={`/contractors/${c.id}`}>
+                            <div className="flex items-center gap-3">
+                              <div className={`w-8 h-8 rounded-md flex items-center justify-center font-bold text-xs flex-shrink-0 ${getAvatarColor(c.firstName + c.lastName)}`}>
+                                {getInitials(c.firstName, c.lastName)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-foreground truncate" data-testid={`text-contractor-name-${c.id}`}>
+                                  {c.firstName} {c.lastName}
+                                </div>
+                                <div className="text-xs text-muted-foreground truncate">{c.jobTitle || c.email}</div>
+                              </div>
+                            </div>
+                          </Link>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          <span className="text-sm text-muted-foreground">{c.clientName || "-"}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm font-mono text-foreground" data-testid={`text-rate-${c.id}`}>
+                            {formatRate(c.hourlyRate)}
                           </span>
+                        </TableCell>
+                        <TableCell>
+                          <div data-testid={`text-ytd-hours-${c.id}`}>
+                            <div className="text-sm font-medium text-foreground">{c.ytdHours.toFixed(1)}h</div>
+                            <div className="text-xs text-muted-foreground">{formatCurrency(c.ytdBillings)}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
                           <StatusBadge status={c.status} />
-                        </div>
-                        <div className="flex items-center gap-4 mt-1 flex-wrap">
-                          {c.jobTitle && (
-                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Briefcase className="w-3 h-3" />
-                              {c.jobTitle}
-                            </span>
-                          )}
-                          {c.clientName && (
-                            <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <MapPin className="w-3 h-3" />
-                              {c.clientName}
-                            </span>
-                          )}
-                          {c.clearanceLevel && c.clearanceLevel !== "NONE" && (
-                            <span className={`text-xs flex items-center gap-1 ${CLEARANCE_COLORS[c.clearanceLevel]}`}>
-                              <Shield className="w-3 h-3" />
-                              {c.clearanceLevel}
-                            </span>
-                          )}
-                          {c.hourlyRate && (
-                            <span className="text-xs font-mono text-muted-foreground">
-                              ${c.hourlyRate}/hr
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                    </CardContent>
-                  </Card>
-                </Link>
-              ))}
-            </div>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell">
+                          <span className="text-sm text-muted-foreground">{formatDate(c.startDate)}</span>
+                        </TableCell>
+                        <TableCell>
+                          <Link href={`/contractors/${c.id}`}>
+                            <Button size="icon" variant="ghost" data-testid={`button-view-contractor-${c.id}`}>
+                              <ArrowRight className="w-4 h-4" />
+                            </Button>
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           )}
         </div>
       </main>

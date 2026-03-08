@@ -12,23 +12,23 @@ Labour hire agency management portal for contractors, timesheets, invoicing, and
 ## Key Features
 
 ### Admin Panel
-- **Dashboard**: KPI overview with active contractors, timesheets due, outstanding invoices, next pay run
-- **Contractors**: List, search, filter by status, add new (full form + quick add), detail view with timesheet history
-- **Timesheets**: Create, view by status tabs (pending/approved/drafts/rejected), approve/reject workflow
+- **Dashboard**: Enhanced KPI overview (active contractors, pending timesheets, outstanding invoices, next pay run, YTD billings), recent activity feed from notifications, contractors mini-table, quick action grid
+- **Contractors**: KPI strip (Active/Pending/YTD Billings/Avg Rate), sortable table (name/rate/YTD hours/start date), search, filter by status, add new (full form + quick add), detail view with timesheet history
+- **Timesheets**: Create with intake source tracking (Email/Portal Upload/Walk-in/Admin Entry), status tabs, approve/reject workflow, intake source badges
 - **Payroll**: Enhanced pay run management with contractor-level pay lines (hours, rate, gross, PAYG, super, net), file workflow (Draft → Review → Filed), ABA direct entry file download, payslip generation, month navigation
 - **Invoices**: KPI strip (Outstanding, Overdue, Paid totals), filter tabs, pending invoices from approved timesheets, create/send workflow
-- **Leave Management**: Pending/approved/rejected tabs, approve/reject with review notes
+- **Leave Management**: 2-column layout with request tabs (Pending/Approved/Rejected) on left and per-contractor balance sidebar cards on right with progress bars, approve/reject with review notes
 - **Pay Items**: Pay code management with type, rate, multiplier, taxable/superable flags, active toggle
 - **Notifications**: Priority-based notification center with filtering by type/priority, mark read/unread
 - **Settings**: Tabbed settings page (Branding, Company, Payroll, Xero, Portal, Users)
 
 ### Contractor Portal (/portal/*)
 - **Portal Login**: Email-based login for contractors
-- **Portal Dashboard**: Contractor-specific KPIs (hours, pending timesheets, messages)
-- **Portal Timesheets**: View and submit timesheets
-- **Portal Leave**: View leave balances, request leave, see history
+- **Portal Dashboard**: 3 KPI cards (This month hours, YTD earnings, Next pay date), contract utilisation progress bar, quick action links, recent timesheets/payslips mini-tables
+- **Portal Timesheets**: Weekly hour breakdown entry (auto-generated week labels per month), auto-calculated totals, expandable history with week-by-week detail, resubmit rejected timesheets
+- **Portal Leave**: Tab-based layout (History/New Request tabs), 2 balance cards (Annual/Sick) with progress bars, inline leave request form with 2x2 leave type grid buttons
 - **Portal Payslips**: Expandable payslip cards with earnings breakdown, YTD summary (Gross, PAYG, Super), download/view HTML payslip
-- **Portal Messages**: Send/receive messages with admin
+- **Portal Messages**: Split-pane inbox with message list sidebar, conversation detail view, reply functionality, compose new message
 - **Portal Onboarding**: 7-step wizard (Welcome, Personal, Address, Tax, Bank, Super, Complete)
 
 ## File Structure
