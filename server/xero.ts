@@ -1,8 +1,8 @@
 import { XeroClient } from "xero-node";
 import { storage } from "./storage";
-import crypto from "crypto";
 
 let xeroClient: XeroClient | null = null;
+let cachedClientId: string | null = null;
 
 async function getSettingValue(key: string): Promise<string> {
   const s = await storage.getSetting(key);
@@ -13,6 +13,15 @@ async function saveSetting(key: string, value: string): Promise<void> {
   await storage.upsertSetting(key, value);
 }
 
+function getRedirectUri(): string {
+  const baseUrl = process.env.REPLIT_DEV_DOMAIN
+    ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+    : process.env.REPL_SLUG
+      ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
+      : "http://localhost:5000";
+  return `${baseUrl}/api/xero/callback`;
+}
+
 export async function getXeroClient(): Promise<XeroClient> {
   const clientId = await getSettingValue("xero.clientId");
   const clientSecret = await getSettingValue("xero.clientSecret");
@@ -21,13 +30,11 @@ export async function getXeroClient(): Promise<XeroClient> {
     throw new Error("Xero Client ID and Client Secret are required. Configure them in Settings.");
   }
 
-  const baseUrl = process.env.REPLIT_DEV_DOMAIN
-    ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-    : process.env.REPL_SLUG
-      ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
-      : "http://localhost:5000";
+  if (xeroClient && cachedClientId === clientId) {
+    return xeroClient;
+  }
 
-  const redirectUri = `${baseUrl}/api/xero/callback`;
+  const redirectUri = getRedirectUri();
 
   xeroClient = new XeroClient({
     clientId,
@@ -51,29 +58,21 @@ export async function getXeroClient(): Promise<XeroClient> {
     ],
   });
 
+  cachedClientId = clientId;
   return xeroClient;
 }
 
 export async function getConsentUrl(): Promise<string> {
   const client = await getXeroClient();
-  const state = crypto.randomBytes(32).toString("hex");
-  await saveSetting("xero.oauthState", state);
   const url = await client.buildConsentUrl();
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}state=${state}`;
+  return url;
 }
 
 export async function handleCallback(callbackUrl: string): Promise<void> {
-  const urlObj = new URL(callbackUrl);
-  const returnedState = urlObj.searchParams.get("state");
-  const savedState = await getSettingValue("xero.oauthState");
-  if (!savedState || returnedState !== savedState) {
-    await saveSetting("xero.oauthState", "");
-    throw new Error("OAuth state mismatch. Please try connecting again.");
+  if (!xeroClient) {
+    await getXeroClient();
   }
-  await saveSetting("xero.oauthState", "");
-
-  const client = await getXeroClient();
+  const client = xeroClient!;
   const tokenSet = await client.apiCallback(callbackUrl);
   await client.updateTenants();
 
@@ -158,6 +157,8 @@ export async function isConnected(): Promise<{
 }
 
 export async function disconnect(): Promise<void> {
+  xeroClient = null;
+  cachedClientId = null;
   const keys = [
     "xero.accessToken",
     "xero.refreshToken",
