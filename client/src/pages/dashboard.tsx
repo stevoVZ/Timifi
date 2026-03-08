@@ -9,11 +9,11 @@ import {
   Upload, Receipt, UserPlus, Briefcase,
   Bell, ShieldCheck, DollarSign,
 } from "lucide-react";
-import type { Contractor, Notification, Invoice, PayRun } from "@shared/schema";
+import type { Employee, Notification, Invoice, PayRun } from "@shared/schema";
 
 interface DashboardStats {
-  activeContractors: number;
-  pendingContractors: number;
+  activeEmployees: number;
+  pendingEmployees: number;
   totalInvoices: number;
   totalBilled: string;
   totalPaid: string;
@@ -72,7 +72,7 @@ export default function DashboardPage() {
     queryKey: ["/api/dashboard/stats"],
   });
 
-  const { data: contractors } = useQuery<Contractor[]>({
+  const { data: employees } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
   });
 
@@ -88,7 +88,7 @@ export default function DashboardPage() {
     queryKey: ["/api/pay-runs"],
   });
 
-  const activeContractors = contractors?.filter((c) => c.status === "ACTIVE" || c.status === "PENDING_SETUP").slice(0, 6) || [];
+  const activeEmployees = employees?.filter((c) => c.status === "ACTIVE" || c.status === "PENDING_SETUP").slice(0, 6) || [];
   const recentActivity = notifications?.slice(0, 8) || [];
 
   const recentInvoices = invoices
@@ -110,8 +110,8 @@ export default function DashboardPage() {
   const kpis = stats ? [
     {
       label: "Active employees",
-      value: String(stats.activeContractors),
-      sub: `${stats.pendingContractors} pending setup`,
+      value: String(stats.activeEmployees),
+      sub: `${stats.pendingEmployees} pending setup`,
       icon: Users,
       color: "text-primary",
       bgColor: "bg-primary/5",
@@ -303,11 +303,11 @@ export default function DashboardPage() {
                   </Link>
                 </div>
                 <CardContent className="p-0">
-                  {activeContractors.length === 0 ? (
+                  {activeEmployees.length === 0 ? (
                     <div className="p-6 text-center text-sm text-muted-foreground">No employees</div>
                   ) : (
                     <div className="divide-y">
-                      {activeContractors.map((c) => (
+                      {activeEmployees.map((c) => (
                         <Link key={c.id} href={`/employees/${c.id}`} data-testid={`link-employee-${c.id}`}>
                           <div className="px-5 py-3 hover:bg-muted/30 transition-colors cursor-pointer">
                             <div className="flex items-center gap-2.5">

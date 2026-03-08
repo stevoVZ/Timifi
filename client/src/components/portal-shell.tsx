@@ -27,16 +27,16 @@ const portalNavItems = [
 
 interface PortalShellProps {
   children: React.ReactNode;
-  contractorName?: string;
+  employeeName?: string;
 }
 
-function PortalSidebar({ contractorName }: { contractorName?: string }) {
+function PortalSidebar({ employeeName }: { employeeName?: string }) {
   const [location] = useLocation();
 
   const isActive = (url: string) => location === url || location.startsWith(url + "/");
 
-  const initials = contractorName
-    ? contractorName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+  const initials = employeeName
+    ? employeeName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : "CP";
 
   return (
@@ -89,7 +89,7 @@ function PortalSidebar({ contractorName }: { contractorName?: string }) {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-sidebar-foreground truncate" data-testid="text-portal-user">
-              {contractorName || "Employee"}
+              {employeeName || "Employee"}
             </div>
             <div className="text-[11px] text-muted-foreground">Employee</div>
           </div>
@@ -100,8 +100,8 @@ function PortalSidebar({ contractorName }: { contractorName?: string }) {
           className="w-full justify-start gap-2 mt-2"
           data-testid="button-portal-logout"
           onClick={() => {
-            localStorage.removeItem("portal_contractor_id");
-            localStorage.removeItem("portal_contractor_name");
+            localStorage.removeItem("portal_employee_id");
+            localStorage.removeItem("portal_employee_name");
             window.location.href = "/portal/login";
           }}
         >
@@ -113,7 +113,7 @@ function PortalSidebar({ contractorName }: { contractorName?: string }) {
   );
 }
 
-export function PortalShell({ children, contractorName }: PortalShellProps) {
+export function PortalShell({ children, employeeName }: PortalShellProps) {
   const style = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
@@ -122,7 +122,7 @@ export function PortalShell({ children, contractorName }: PortalShellProps) {
   return (
     <SidebarProvider style={style as React.CSSProperties}>
       <div className="flex h-screen w-full">
-        <PortalSidebar contractorName={contractorName} />
+        <PortalSidebar employeeName={employeeName} />
         <div className="flex flex-col flex-1 min-w-0">
           <header className="flex items-center gap-3 px-6 py-4 border-b bg-background sticky top-0 z-50">
             <SidebarTrigger data-testid="button-portal-sidebar-toggle" />

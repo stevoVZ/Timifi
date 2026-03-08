@@ -56,8 +56,8 @@ function formatDate(dateStr: string) {
 }
 
 export default function PortalLeavePage() {
-  const contractorId = localStorage.getItem("portal_contractor_id") || "";
-  const contractorName = localStorage.getItem("portal_contractor_name") || "";
+  const employeeId = localStorage.getItem("portal_employee_id") || "";
+  const employeeName = localStorage.getItem("portal_employee_name") || "";
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("history");
   const [form, setForm] = useState({
@@ -68,7 +68,7 @@ export default function PortalLeavePage() {
   });
 
   const { data: leaveRequests, isLoading } = useQuery<LeaveRequest[]>({
-    queryKey: ["/api/leave/employee", contractorId],
+    queryKey: ["/api/leave/employee", employeeId],
   });
 
   const createMutation = useMutation({
@@ -76,7 +76,7 @@ export default function PortalLeavePage() {
       await apiRequest("POST", "/api/leave", data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/leave/employee", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leave/employee", employeeId] });
       toast({ title: "Leave request submitted" });
       setActiveTab("history");
       setForm({ leaveType: "ANNUAL", startDate: "", endDate: "", reason: "" });
@@ -107,7 +107,7 @@ export default function PortalLeavePage() {
       return;
     }
     createMutation.mutate({
-      contractorId,
+      employeeId,
       leaveType: form.leaveType,
       startDate: form.startDate,
       endDate: form.endDate,
@@ -134,7 +134,7 @@ export default function PortalLeavePage() {
   const sickRemaining = sickEntitlement - sickUsed;
 
   return (
-    <PortalShell contractorName={contractorName}>
+    <PortalShell employeeName={employeeName}>
       <div className="p-6 space-y-6 bg-muted/30 min-h-full">
         <div className="max-w-5xl mx-auto space-y-6">
           <div>

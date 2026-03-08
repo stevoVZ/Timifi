@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { users, settings, contractors, timesheets, invoices, payRuns, payRunLines, documents, notifications, messages, leaveRequests, payItems } from "@shared/schema";
+import { users, settings, employees, timesheets, invoices, payRuns, payRunLines, documents, notifications, messages, leaveRequests, payItems } from "@shared/schema";
 import { sql, isNull } from "drizzle-orm";
 import { hashPassword } from "./auth";
 
@@ -44,7 +44,7 @@ export async function cleanDemoData() {
   await db.delete(payItems);
   await db.delete(invoices);
   await db.delete(timesheets);
-  await db.delete(contractors).where(isNull(contractors.xeroEmployeeId));
+  await db.delete(employees).where(isNull(employees.xeroEmployeeId));
 
-  console.log("Demo data cleaned. Xero-synced contractors preserved.");
+  console.log("Demo data cleaned. Xero-synced employees preserved.");
 }

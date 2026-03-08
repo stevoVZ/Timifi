@@ -87,8 +87,8 @@ function AdminLayout() {
 }
 
 function PortalGuard({ component: Component }: { component: React.ComponentType }) {
-  const contractorId = localStorage.getItem("portal_contractor_id");
-  if (!contractorId) {
+  const employeeId = localStorage.getItem("portal_employee_id");
+  if (!employeeId) {
     return <Redirect to="/portal/login" />;
   }
   return <Component />;
@@ -105,8 +105,8 @@ function PortalRouter() {
       <Route path="/portal/leave">{() => <PortalGuard component={PortalLeavePage} />}</Route>
       <Route path="/portal/onboarding">{() => <PortalGuard component={PortalOnboardingPage} />}</Route>
       <Route path="/portal">{() => {
-        const contractorId = localStorage.getItem("portal_contractor_id");
-        return <Redirect to={contractorId ? "/portal/dashboard" : "/portal/login"} />;
+        const employeeId = localStorage.getItem("portal_employee_id");
+        return <Redirect to={employeeId ? "/portal/dashboard" : "/portal/login"} />;
       }}</Route>
       <Route component={NotFound} />
     </Switch>

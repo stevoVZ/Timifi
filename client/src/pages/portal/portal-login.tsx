@@ -32,8 +32,8 @@ export default function PortalLoginPage() {
         throw new Error(data.message || "Login failed");
       }
       const data = await res.json();
-      localStorage.setItem("portal_contractor_id", data.contractorId);
-      localStorage.setItem("portal_contractor_name", data.name);
+      localStorage.setItem("portal_employee_id", data.employeeId);
+      localStorage.setItem("portal_employee_name", data.name);
       setLocation("/portal/dashboard");
     } catch (err: any) {
       toast({ title: "Login failed", description: err.message || "Invalid credentials", variant: "destructive" });

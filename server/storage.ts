@@ -1,10 +1,10 @@
 import { db } from "./db";
 import { eq, desc, sql, and, inArray } from "drizzle-orm";
 import {
-  contractors, timesheets, invoices, payRuns, payRunLines, documents,
+  employees, timesheets, invoices, payRuns, payRunLines, documents,
   notifications, messages, settings, users,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
-  type Contractor, type InsertContractor,
+  type Employee, type InsertEmployee,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
   type PayRun, type InsertPayRun,
@@ -22,21 +22,21 @@ import {
 } from "@shared/schema";
 
 export interface IStorage {
-  getContractors(): Promise<Contractor[]>;
-  getContractor(id: string): Promise<Contractor | undefined>;
-  getContractorByEmail(email: string): Promise<Contractor | undefined>;
-  getContractorByXeroId(xeroEmployeeId: string): Promise<Contractor | undefined>;
-  createContractor(data: InsertContractor): Promise<Contractor>;
-  updateContractor(id: string, data: Partial<InsertContractor>): Promise<Contractor | undefined>;
+  getEmployees(): Promise<Employee[]>;
+  getEmployee(id: string): Promise<Employee | undefined>;
+  getEmployeeByEmail(email: string): Promise<Employee | undefined>;
+  getEmployeeByXeroId(xeroEmployeeId: string): Promise<Employee | undefined>;
+  createEmployee(data: InsertEmployee): Promise<Employee>;
+  updateEmployee(id: string, data: Partial<InsertEmployee>): Promise<Employee | undefined>;
 
   getTimesheets(): Promise<Timesheet[]>;
-  getTimesheetsByContractor(contractorId: string): Promise<Timesheet[]>;
+  getTimesheetsByEmployee(employeeId: string): Promise<Timesheet[]>;
   getTimesheet(id: string): Promise<Timesheet | undefined>;
   createTimesheet(data: InsertTimesheet): Promise<Timesheet>;
   updateTimesheet(id: string, data: Partial<InsertTimesheet>): Promise<Timesheet | undefined>;
 
   getInvoices(): Promise<Invoice[]>;
-  getInvoicesByContractor(contractorId: string): Promise<Invoice[]>;
+  getInvoicesByEmployee(employeeId: string): Promise<Invoice[]>;
   getInvoice(id: string): Promise<Invoice | undefined>;
   getInvoiceByNumber(invoiceNumber: string): Promise<Invoice | undefined>;
   getInvoiceByXeroId(xeroInvoiceId: string): Promise<Invoice | undefined>;
@@ -49,19 +49,19 @@ export interface IStorage {
   updatePayRun(id: string, data: Partial<InsertPayRun>): Promise<PayRun | undefined>;
 
   getPayRunLines(payRunId: string): Promise<PayRunLine[]>;
-  getPayRunLinesByContractor(contractorId: string): Promise<PayRunLine[]>;
+  getPayRunLinesByEmployee(employeeId: string): Promise<PayRunLine[]>;
   getPayRunLine(id: string): Promise<PayRunLine | undefined>;
   createPayRunLine(data: InsertPayRunLine): Promise<PayRunLine>;
   createPayRunLines(data: InsertPayRunLine[]): Promise<PayRunLine[]>;
   deletePayRunLines(payRunId: string): Promise<void>;
 
-  getDocuments(contractorId: string): Promise<Document[]>;
+  getDocuments(employeeId: string): Promise<Document[]>;
   createDocument(data: InsertDocument): Promise<Document>;
   deleteDocument(id: string): Promise<void>;
 
   getDashboardStats(): Promise<{
-    activeContractors: number;
-    pendingContractors: number;
+    activeEmployees: number;
+    pendingEmployees: number;
     totalInvoices: number;
     totalBilled: string;
     totalPaid: string;
@@ -82,7 +82,7 @@ export interface IStorage {
   createNotification(data: InsertNotification): Promise<Notification>;
 
   getMessages(): Promise<Message[]>;
-  getMessagesByContractor(contractorId: string): Promise<Message[]>;
+  getMessagesByEmployee(employeeId: string): Promise<Message[]>;
   createMessage(data: InsertMessage): Promise<Message>;
   markMessageRead(id: string): Promise<Message | undefined>;
 
@@ -91,7 +91,7 @@ export interface IStorage {
   upsertSetting(key: string, value: string): Promise<Setting>;
 
   getLeaveRequests(): Promise<LeaveRequest[]>;
-  getLeaveRequestsByContractor(contractorId: string): Promise<LeaveRequest[]>;
+  getLeaveRequestsByEmployee(employeeId: string): Promise<LeaveRequest[]>;
   createLeaveRequest(data: InsertLeaveRequest): Promise<LeaveRequest>;
   updateLeaveRequest(id: string, data: Partial<InsertLeaveRequest>): Promise<LeaveRequest | undefined>;
 
@@ -99,16 +99,16 @@ export interface IStorage {
   createPayItem(data: InsertPayItem): Promise<PayItem>;
   updatePayItem(id: string, data: Partial<InsertPayItem>): Promise<PayItem | undefined>;
 
-  getTaxDeclaration(contractorId: string): Promise<TaxDeclaration | undefined>;
+  getTaxDeclaration(employeeId: string): Promise<TaxDeclaration | undefined>;
   upsertTaxDeclaration(data: InsertTaxDeclaration): Promise<TaxDeclaration>;
 
-  getBankAccount(contractorId: string): Promise<BankAccount | undefined>;
+  getBankAccount(employeeId: string): Promise<BankAccount | undefined>;
   upsertBankAccount(data: InsertBankAccount): Promise<BankAccount>;
 
-  getSuperMembership(contractorId: string): Promise<SuperMembership | undefined>;
+  getSuperMembership(employeeId: string): Promise<SuperMembership | undefined>;
   upsertSuperMembership(data: InsertSuperMembership): Promise<SuperMembership>;
 
-  getOnboardingStatus(contractorId: string): Promise<{
+  getOnboardingStatus(employeeId: string): Promise<{
     personal: boolean;
     tax: boolean;
     bank: boolean;
@@ -121,46 +121,46 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  async getContractors(): Promise<Contractor[]> {
-    return db.select().from(contractors).orderBy(desc(contractors.createdAt));
+  async getEmployees(): Promise<Employee[]> {
+    return db.select().from(employees).orderBy(desc(employees.createdAt));
   }
 
-  async getContractor(id: string): Promise<Contractor | undefined> {
-    const [contractor] = await db.select().from(contractors).where(eq(contractors.id, id));
-    return contractor;
+  async getEmployee(id: string): Promise<Employee | undefined> {
+    const [employee] = await db.select().from(employees).where(eq(employees.id, id));
+    return employee;
   }
 
-  async getContractorByEmail(email: string): Promise<Contractor | undefined> {
-    const [contractor] = await db.select().from(contractors).where(eq(contractors.email, email));
-    return contractor;
+  async getEmployeeByEmail(email: string): Promise<Employee | undefined> {
+    const [employee] = await db.select().from(employees).where(eq(employees.email, email));
+    return employee;
   }
 
-  async getContractorByXeroId(xeroEmployeeId: string): Promise<Contractor | undefined> {
-    const [contractor] = await db.select().from(contractors).where(eq(contractors.xeroEmployeeId, xeroEmployeeId));
-    return contractor;
+  async getEmployeeByXeroId(xeroEmployeeId: string): Promise<Employee | undefined> {
+    const [employee] = await db.select().from(employees).where(eq(employees.xeroEmployeeId, xeroEmployeeId));
+    return employee;
   }
 
-  async createContractor(data: InsertContractor): Promise<Contractor> {
-    const [contractor] = await db.insert(contractors).values(data).returning();
-    return contractor;
+  async createEmployee(data: InsertEmployee): Promise<Employee> {
+    const [employee] = await db.insert(employees).values(data).returning();
+    return employee;
   }
 
-  async updateContractor(id: string, data: Partial<InsertContractor>): Promise<Contractor | undefined> {
-    const [contractor] = await db
-      .update(contractors)
+  async updateEmployee(id: string, data: Partial<InsertEmployee>): Promise<Employee | undefined> {
+    const [employee] = await db
+      .update(employees)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(contractors.id, id))
+      .where(eq(employees.id, id))
       .returning();
-    return contractor;
+    return employee;
   }
 
   async getTimesheets(): Promise<Timesheet[]> {
     return db.select().from(timesheets).orderBy(desc(timesheets.createdAt));
   }
 
-  async getTimesheetsByContractor(contractorId: string): Promise<Timesheet[]> {
+  async getTimesheetsByEmployee(employeeId: string): Promise<Timesheet[]> {
     return db.select().from(timesheets)
-      .where(eq(timesheets.contractorId, contractorId))
+      .where(eq(timesheets.employeeId, employeeId))
       .orderBy(desc(timesheets.createdAt));
   }
 
@@ -187,9 +187,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(invoices).orderBy(desc(invoices.createdAt));
   }
 
-  async getInvoicesByContractor(contractorId: string): Promise<Invoice[]> {
+  async getInvoicesByEmployee(employeeId: string): Promise<Invoice[]> {
     return db.select().from(invoices)
-      .where(eq(invoices.contractorId, contractorId))
+      .where(eq(invoices.employeeId, employeeId))
       .orderBy(desc(invoices.createdAt));
   }
 
@@ -251,9 +251,9 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(payRunLines.createdAt));
   }
 
-  async getPayRunLinesByContractor(contractorId: string): Promise<PayRunLine[]> {
+  async getPayRunLinesByEmployee(employeeId: string): Promise<PayRunLine[]> {
     return db.select().from(payRunLines)
-      .where(eq(payRunLines.contractorId, contractorId))
+      .where(eq(payRunLines.employeeId, employeeId))
       .orderBy(desc(payRunLines.createdAt));
   }
 
@@ -276,9 +276,9 @@ export class DatabaseStorage implements IStorage {
     await db.delete(payRunLines).where(eq(payRunLines.payRunId, payRunId));
   }
 
-  async getDocuments(contractorId: string): Promise<Document[]> {
+  async getDocuments(employeeId: string): Promise<Document[]> {
     return db.select().from(documents)
-      .where(eq(documents.contractorId, contractorId))
+      .where(eq(documents.employeeId, employeeId))
       .orderBy(desc(documents.createdAt));
   }
 
@@ -294,13 +294,13 @@ export class DatabaseStorage implements IStorage {
   async getDashboardStats() {
     const [activeResult] = await db
       .select({ count: sql<number>`count(*)::int` })
-      .from(contractors)
-      .where(eq(contractors.status, "ACTIVE"));
+      .from(employees)
+      .where(eq(employees.status, "ACTIVE"));
 
     const [pendingResult] = await db
       .select({ count: sql<number>`count(*)::int` })
-      .from(contractors)
-      .where(eq(contractors.status, "PENDING_SETUP"));
+      .from(employees)
+      .where(eq(employees.status, "PENDING_SETUP"));
 
     const currentYear = new Date().getFullYear();
 
@@ -362,8 +362,8 @@ export class DatabaseStorage implements IStorage {
       );
 
     return {
-      activeContractors: activeResult?.count || 0,
-      pendingContractors: pendingResult?.count || 0,
+      activeEmployees: activeResult?.count || 0,
+      pendingEmployees: pendingResult?.count || 0,
       totalInvoices: totalInvoicesResult?.count || 0,
       totalBilled: totalInvoicesResult?.total || "0",
       totalPaid: paidResult?.total || "0",
@@ -412,9 +412,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(messages).orderBy(desc(messages.createdAt));
   }
 
-  async getMessagesByContractor(contractorId: string): Promise<Message[]> {
+  async getMessagesByEmployee(employeeId: string): Promise<Message[]> {
     return db.select().from(messages)
-      .where(eq(messages.contractorId, contractorId))
+      .where(eq(messages.employeeId, employeeId))
       .orderBy(desc(messages.createdAt));
   }
 
@@ -459,9 +459,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
   }
 
-  async getLeaveRequestsByContractor(contractorId: string): Promise<LeaveRequest[]> {
+  async getLeaveRequestsByEmployee(employeeId: string): Promise<LeaveRequest[]> {
     return db.select().from(leaveRequests)
-      .where(eq(leaveRequests.contractorId, contractorId))
+      .where(eq(leaveRequests.employeeId, employeeId))
       .orderBy(desc(leaveRequests.createdAt));
   }
 
@@ -497,14 +497,14 @@ export class DatabaseStorage implements IStorage {
     return item;
   }
 
-  async getTaxDeclaration(contractorId: string): Promise<TaxDeclaration | undefined> {
+  async getTaxDeclaration(employeeId: string): Promise<TaxDeclaration | undefined> {
     const [dec] = await db.select().from(taxDeclarations)
-      .where(and(eq(taxDeclarations.contractorId, contractorId), eq(taxDeclarations.isCurrent, true)));
+      .where(and(eq(taxDeclarations.employeeId, employeeId), eq(taxDeclarations.isCurrent, true)));
     return dec;
   }
 
   async upsertTaxDeclaration(data: InsertTaxDeclaration): Promise<TaxDeclaration> {
-    const existing = await this.getTaxDeclaration(data.contractorId);
+    const existing = await this.getTaxDeclaration(data.employeeId);
     if (existing) {
       const [updated] = await db
         .update(taxDeclarations)
@@ -517,14 +517,14 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getBankAccount(contractorId: string): Promise<BankAccount | undefined> {
+  async getBankAccount(employeeId: string): Promise<BankAccount | undefined> {
     const [acc] = await db.select().from(bankAccounts)
-      .where(and(eq(bankAccounts.contractorId, contractorId), eq(bankAccounts.isPrimary, true)));
+      .where(and(eq(bankAccounts.employeeId, employeeId), eq(bankAccounts.isPrimary, true)));
     return acc;
   }
 
   async upsertBankAccount(data: InsertBankAccount): Promise<BankAccount> {
-    const existing = await this.getBankAccount(data.contractorId);
+    const existing = await this.getBankAccount(data.employeeId);
     if (existing) {
       const [updated] = await db
         .update(bankAccounts)
@@ -537,14 +537,14 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getSuperMembership(contractorId: string): Promise<SuperMembership | undefined> {
+  async getSuperMembership(employeeId: string): Promise<SuperMembership | undefined> {
     const [mem] = await db.select().from(superMemberships)
-      .where(and(eq(superMemberships.contractorId, contractorId), eq(superMemberships.isDefault, true)));
+      .where(and(eq(superMemberships.employeeId, employeeId), eq(superMemberships.isDefault, true)));
     return mem;
   }
 
   async upsertSuperMembership(data: InsertSuperMembership): Promise<SuperMembership> {
-    const existing = await this.getSuperMembership(data.contractorId);
+    const existing = await this.getSuperMembership(data.employeeId);
     if (existing) {
       const [updated] = await db
         .update(superMemberships)
@@ -572,19 +572,19 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async getOnboardingStatus(contractorId: string): Promise<{
+  async getOnboardingStatus(employeeId: string): Promise<{
     personal: boolean;
     tax: boolean;
     bank: boolean;
     super: boolean;
   }> {
-    const contractor = await this.getContractor(contractorId);
-    const tax = await this.getTaxDeclaration(contractorId);
-    const bank = await this.getBankAccount(contractorId);
-    const superMem = await this.getSuperMembership(contractorId);
+    const employee = await this.getEmployee(employeeId);
+    const tax = await this.getTaxDeclaration(employeeId);
+    const bank = await this.getBankAccount(employeeId);
+    const superMem = await this.getSuperMembership(employeeId);
 
     return {
-      personal: !!(contractor?.dateOfBirth && contractor?.addressLine1),
+      personal: !!(employee?.dateOfBirth && employee?.addressLine1),
       tax: !!tax,
       bank: !!bank,
       super: !!superMem,

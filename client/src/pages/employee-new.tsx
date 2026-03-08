@@ -17,7 +17,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Save, User, Briefcase, Shield, Building } from "lucide-react";
-import type { Contractor } from "@shared/schema";
+import type { Employee } from "@shared/schema";
 
 export default function EmployeeNewPage() {
   const [, navigate] = useLocation();
@@ -53,12 +53,12 @@ export default function EmployeeNewPage() {
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, unknown>) => {
       const res = await apiRequest("POST", "/api/employees", data);
-      return res.json() as Promise<Contractor>;
+      return res.json() as Promise<Employee>;
     },
-    onSuccess: (contractor) => {
+    onSuccess: (employee) => {
       queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
       toast({ title: "Employee created successfully" });
-      navigate(`/employees/${contractor.id}`);
+      navigate(`/employees/${employee.id}`);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });

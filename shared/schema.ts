@@ -3,7 +3,7 @@ import { pgTable, text, varchar, integer, numeric, date, timestamp, boolean, sma
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const contractorStatusEnum = pgEnum("contractor_status", ["ACTIVE", "PENDING_SETUP", "OFFBOARDED"]);
+export const employeeStatusEnum = pgEnum("employee_status", ["ACTIVE", "PENDING_SETUP", "OFFBOARDED"]);
 export const clearanceLevelEnum = pgEnum("clearance_level", ["NONE", "BASELINE", "NV1", "NV2", "PV"]);
 export const employmentTypeEnum = pgEnum("employment_type", ["FULLTIME", "PARTTIME", "CASUAL", "LABOURHIRE"]);
 export const paymentMethodEnum = pgEnum("payment_method", ["PAYROLL", "INVOICE"]);
@@ -17,7 +17,7 @@ export const leaveStatusEnum = pgEnum("leave_status", ["PENDING", "APPROVED", "R
 export const payRunLineStatusEnum = pgEnum("pay_run_line_status", ["INCLUDED", "EXCLUDED"]);
 export const documentTypeEnum = pgEnum("document_type", ["PAYSLIP", "CONTRACT", "CLEARANCE", "OTHER"]);
 
-export const contractors = pgTable("contractors", {
+export const employees = pgTable("employees", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
@@ -25,7 +25,7 @@ export const contractors = pgTable("contractors", {
   phone: text("phone"),
   jobTitle: text("job_title"),
   clientName: text("client_name"),
-  status: contractorStatusEnum("status").notNull().default("PENDING_SETUP"),
+  status: employeeStatusEnum("status").notNull().default("PENDING_SETUP"),
   clearanceLevel: clearanceLevelEnum("clearance_level").notNull().default("NONE"),
   clearanceExpiry: date("clearance_expiry"),
   employmentType: employmentTypeEnum("employment_type").notNull().default("LABOURHIRE"),
@@ -52,7 +52,7 @@ export const contractors = pgTable("contractors", {
 
 export const timesheets = pgTable("timesheets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
   year: smallint("year").notNull(),
   month: smallint("month").notNull(),
   totalHours: numeric("total_hours", { precision: 6, scale: 2 }).notNull().default("0"),
@@ -70,7 +70,7 @@ export const timesheets = pgTable("timesheets", {
 
 export const invoices = pgTable("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").references(() => contractors.id),
+  employeeId: varchar("employee_id").references(() => employees.id),
   contactName: text("contact_name"),
   xeroInvoiceId: text("xero_invoice_id").unique(),
   timesheetId: varchar("timesheet_id").references(() => timesheets.id),
@@ -115,7 +115,7 @@ export const payRuns = pgTable("pay_runs", {
 export const payRunLines = pgTable("pay_run_lines", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   payRunId: varchar("pay_run_id").notNull().references(() => payRuns.id),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
   timesheetId: varchar("timesheet_id").references(() => timesheets.id),
   hoursWorked: numeric("hours_worked", { precision: 6, scale: 2 }).notNull().default("0"),
   ratePerHour: numeric("rate_per_hour", { precision: 10, scale: 2 }).notNull().default("0"),
@@ -129,7 +129,7 @@ export const payRunLines = pgTable("pay_run_lines", {
 
 export const documents = pgTable("documents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
   type: documentTypeEnum("type").notNull().default("OTHER"),
   name: text("name").notNull(),
   category: text("category").notNull().default("Other"),
@@ -155,13 +155,13 @@ export const notifications = pgTable("notifications", {
   actionLabel: text("action_label"),
   actionRoute: text("action_route"),
   read: boolean("read").notNull().default(false),
-  contractorId: varchar("contractor_id").references(() => contractors.id),
+  employeeId: varchar("employee_id").references(() => employees.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const messages = pgTable("messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
   senderRole: text("sender_role").notNull().default("admin"),
   subject: text("subject"),
   body: text("body").notNull(),
@@ -178,7 +178,7 @@ export const settings = pgTable("settings", {
 
 export const leaveRequests = pgTable("leave_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
   leaveType: leaveTypeEnum("leave_type").notNull(),
   startDate: date("start_date").notNull(),
   endDate: date("end_date").notNull(),
@@ -208,7 +208,7 @@ export const payItems = pgTable("pay_items", {
 
 export const taxDeclarations = pgTable("tax_declarations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
   tfn: text("tfn").notNull(),
   residencyStatus: text("residency_status").notNull().default("RESIDENT"),
   claimTaxFreeThreshold: boolean("claim_tax_free_threshold").notNull().default(true),
@@ -222,7 +222,7 @@ export const taxDeclarations = pgTable("tax_declarations", {
 
 export const bankAccounts = pgTable("bank_accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
   bsb: text("bsb").notNull(),
   accountNumber: text("account_number").notNull(),
   accountName: text("account_name").notNull(),
@@ -233,7 +233,7 @@ export const bankAccounts = pgTable("bank_accounts", {
 
 export const superMemberships = pgTable("super_memberships", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
   fundName: text("fund_name").notNull(),
   fundAbn: text("fund_abn"),
   memberNumber: text("member_number"),
@@ -242,7 +242,7 @@ export const superMemberships = pgTable("super_memberships", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-export const insertContractorSchema = createInsertSchema(contractors).omit({
+export const insertEmployeeSchema = createInsertSchema(employees).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
@@ -322,8 +322,8 @@ export const insertDocumentSchema = createInsertSchema(documents).omit({
   createdAt: true,
 });
 
-export type Contractor = typeof contractors.$inferSelect;
-export type InsertContractor = z.infer<typeof insertContractorSchema>;
+export type Employee = typeof employees.$inferSelect;
+export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
 export type Timesheet = typeof timesheets.$inferSelect;
 export type InsertTimesheet = z.infer<typeof insertTimesheetSchema>;
 export type Invoice = typeof invoices.$inferSelect;

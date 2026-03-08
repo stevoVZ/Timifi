@@ -15,12 +15,12 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Send, Mail, MailOpen, MessageSquare, Plus, ArrowLeft } from "lucide-react";
 import type { Message } from "@shared/schema";
 
-function getContractorId(): string | null {
-  return localStorage.getItem("portal_contractor_id");
+function getEmployeeId(): string | null {
+  return localStorage.getItem("portal_employee_id");
 }
 
-function getContractorName(): string {
-  return localStorage.getItem("portal_contractor_name") || "Employee";
+function getEmployeeName(): string {
+  return localStorage.getItem("portal_employee_name") || "Employee";
 }
 
 function formatTimestamp(dateStr: string | Date) {
@@ -78,7 +78,7 @@ function groupIntoThreads(messages: Message[]): ConversationThread[] {
 
 export default function PortalMessagesPage() {
   const [, setLocation] = useLocation();
-  const contractorId = getContractorId();
+  const employeeId = getEmployeeId();
   const [selectedThreadSubject, setSelectedThreadSubject] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
   const [newSubject, setNewSubject] = useState("");
@@ -86,13 +86,13 @@ export default function PortalMessagesPage() {
   const [replyBody, setReplyBody] = useState("");
   const { toast } = useToast();
 
-  if (!contractorId) {
+  if (!employeeId) {
     setLocation("/portal/login");
     return null;
   }
 
   const { data: messagesList, isLoading } = useQuery<Message[]>({
-    queryKey: ["/api/messages/employee", contractorId],
+    queryKey: ["/api/messages/employee", employeeId],
   });
 
   const sendMutation = useMutation({
@@ -101,8 +101,8 @@ export default function PortalMessagesPage() {
       return res.json();
     },
     onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/messages/employee", contractorId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", contractorId, "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/employee", employeeId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", employeeId, "stats"] });
       if (composing) {
         setComposing(false);
         setNewSubject("");
@@ -123,8 +123,8 @@ export default function PortalMessagesPage() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/messages/employee", contractorId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", contractorId, "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/employee", employeeId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", employeeId, "stats"] });
     },
   });
 
@@ -155,8 +155,8 @@ export default function PortalMessagesPage() {
   const handleSendNew = () => {
     if (!newBody.trim()) return;
     sendMutation.mutate({
-      contractorId,
-      senderRole: "contractor",
+      employeeId,
+      senderRole: "employee",
       subject: newSubject || undefined,
       body: newBody,
     });
@@ -165,15 +165,15 @@ export default function PortalMessagesPage() {
   const handleReply = () => {
     if (!replyBody.trim() || !selectedThread) return;
     sendMutation.mutate({
-      contractorId,
-      senderRole: "contractor",
+      employeeId,
+      senderRole: "employee",
       subject: selectedThread.subject,
       body: replyBody,
     });
   };
 
   return (
-    <PortalShell contractorName={getContractorName()}>
+    <PortalShell employeeName={getEmployeeName()}>
       <div className="flex h-full">
         <div className="w-[300px] flex-shrink-0 border-r flex flex-col bg-background">
           <div className="p-4 border-b">

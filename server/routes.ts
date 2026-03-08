@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema } from "@shared/schema";
+import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices } from "./xero";
@@ -34,58 +34,58 @@ export async function registerRoutes(
 
   app.get("/api/employees", async (_req, res) => {
     try {
-      const data = await storage.getContractors();
+      const data = await storage.getEmployees();
       res.json(data);
     } catch (err) {
-      res.status(500).json({ message: "Failed to fetch contractors" });
+      res.status(500).json({ message: "Failed to fetch employees" });
     }
   });
 
   app.get("/api/employees/stats", async (_req, res) => {
     try {
-      const allContractors = await storage.getContractors();
+      const allEmployees = await storage.getEmployees();
       const allTimesheets = await storage.getTimesheets();
       const currentYear = new Date().getFullYear();
       const approvedTs = allTimesheets.filter(t => t.status === "APPROVED" && t.year === currentYear);
-      const ytdByContractor: Record<string, number> = {};
+      const ytdByEmployee: Record<string, number> = {};
       for (const t of approvedTs) {
-        ytdByContractor[t.contractorId] = (ytdByContractor[t.contractorId] || 0) + parseFloat(t.totalHours);
+        ytdByEmployee[t.employeeId] = (ytdByEmployee[t.employeeId] || 0) + parseFloat(t.totalHours);
       }
-      const stats = allContractors.map(c => ({
+      const stats = allEmployees.map(c => ({
         ...c,
-        ytdHours: ytdByContractor[c.id] || 0,
-        ytdBillings: (ytdByContractor[c.id] || 0) * (c.hourlyRate ? parseFloat(c.hourlyRate) : 0),
+        ytdHours: ytdByEmployee[c.id] || 0,
+        ytdBillings: (ytdByEmployee[c.id] || 0) * (c.hourlyRate ? parseFloat(c.hourlyRate) : 0),
       }));
       res.json(stats);
     } catch (err) {
-      res.status(500).json({ message: "Failed to fetch contractor stats" });
+      res.status(500).json({ message: "Failed to fetch employee stats" });
     }
   });
 
   app.get("/api/employees/:id", async (req, res) => {
     try {
-      const contractor = await storage.getContractor(req.params.id);
-      if (!contractor) return res.status(404).json({ message: "Contractor not found" });
-      res.json(contractor);
+      const employee = await storage.getEmployee(req.params.id);
+      if (!employee) return res.status(404).json({ message: "Employee not found" });
+      res.json(employee);
     } catch (err) {
-      res.status(500).json({ message: "Failed to fetch contractor" });
+      res.status(500).json({ message: "Failed to fetch employee" });
     }
   });
 
   app.post("/api/employees", async (req, res) => {
     try {
-      const parsed = insertContractorSchema.parse(req.body);
-      const contractor = await storage.createContractor(parsed);
-      res.status(201).json(contractor);
+      const parsed = insertEmployeeSchema.parse(req.body);
+      const employee = await storage.createEmployee(parsed);
+      res.status(201).json(employee);
     } catch (err: any) {
-      res.status(400).json({ message: err.message || "Invalid contractor data" });
+      res.status(400).json({ message: err.message || "Invalid employee data" });
     }
   });
 
   app.patch("/api/employees/:id", async (req, res) => {
     try {
-      const existing = await storage.getContractor(req.params.id);
-      if (!existing) return res.status(404).json({ message: "Contractor not found" });
+      const existing = await storage.getEmployee(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Employee not found" });
 
       if (existing.xeroEmployeeId) {
         const xeroLockedFields = ["firstName", "lastName", "email", "phone", "jobTitle", "hourlyRate", "startDate", "endDate", "dateOfBirth", "gender", "addressLine1", "suburb", "state", "postcode", "payFrequency"];
@@ -93,14 +93,14 @@ export async function registerRoutes(
         for (const field of xeroLockedFields) {
           delete body[field];
         }
-        const contractor = await storage.updateContractor(req.params.id, body);
-        res.json(contractor);
+        const employee = await storage.updateEmployee(req.params.id, body);
+        res.json(employee);
       } else {
-        const contractor = await storage.updateContractor(req.params.id, req.body);
-        res.json(contractor!);
+        const employee = await storage.updateEmployee(req.params.id, req.body);
+        res.json(employee!);
       }
     } catch (err: any) {
-      res.status(400).json({ message: err.message || "Failed to update contractor" });
+      res.status(400).json({ message: err.message || "Failed to update employee" });
     }
   });
 
@@ -113,9 +113,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/timesheets/employee/:contractorId", async (req, res) => {
+  app.get("/api/timesheets/employee/:employeeId", async (req, res) => {
     try {
-      const data = await storage.getTimesheetsByContractor(req.params.contractorId);
+      const data = await storage.getTimesheetsByEmployee(req.params.employeeId);
       res.json(data);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch timesheets" });
@@ -138,9 +138,9 @@ export async function registerRoutes(
       const parsed = insertTimesheetSchema.parse(timesheetData);
       const timesheet = await storage.createTimesheet(parsed);
 
-      if (fileData && parsed.fileName && parsed.contractorId) {
+      if (fileData && parsed.fileName && parsed.employeeId) {
         await storage.createDocument({
-          contractorId: parsed.contractorId,
+          employeeId: parsed.employeeId,
           type: "TIMESHEET",
           name: parsed.fileName,
           fileUrl: fileData,
@@ -288,9 +288,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/messages/employee/:contractorId", async (req, res) => {
+  app.get("/api/messages/employee/:employeeId", async (req, res) => {
     try {
-      const data = await storage.getMessagesByContractor(req.params.contractorId);
+      const data = await storage.getMessagesByEmployee(req.params.employeeId);
       res.json(data);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch messages" });
@@ -347,9 +347,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/invoices/employee/:contractorId", async (req, res) => {
+  app.get("/api/invoices/employee/:employeeId", async (req, res) => {
     try {
-      const data = await storage.getInvoicesByContractor(req.params.contractorId);
+      const data = await storage.getInvoicesByEmployee(req.params.employeeId);
       res.json(data);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch invoices" });
@@ -360,25 +360,25 @@ export async function registerRoutes(
     try {
       const { email } = req.body;
       if (!email) return res.status(400).json({ message: "Email is required" });
-      const allContractors = await storage.getContractors();
-      const contractor = allContractors.find(c => c.email.toLowerCase() === email.toLowerCase());
-      if (!contractor) return res.status(401).json({ message: "No contractor found with that email" });
+      const allEmployees = await storage.getEmployees();
+      const employee = allEmployees.find(c => c.email.toLowerCase() === email.toLowerCase());
+      if (!employee) return res.status(401).json({ message: "No employee found with that email" });
       res.json({
-        contractorId: contractor.id,
-        name: `${contractor.firstName} ${contractor.lastName}`,
+        employeeId: employee.id,
+        name: `${employee.firstName} ${employee.lastName}`,
       });
     } catch (err) {
       res.status(500).json({ message: "Login failed" });
     }
   });
 
-  app.get("/api/portal/employee/:contractorId/stats", async (req, res) => {
+  app.get("/api/portal/employee/:employeeId/stats", async (req, res) => {
     try {
-      const contractor = await storage.getContractor(req.params.contractorId);
-      if (!contractor) return res.status(404).json({ message: "Contractor not found" });
-      const ts = await storage.getTimesheetsByContractor(req.params.contractorId);
-      const msgs = await storage.getMessagesByContractor(req.params.contractorId);
-      const payRunLines = await storage.getPayRunLinesByContractor(req.params.contractorId);
+      const employee = await storage.getEmployee(req.params.employeeId);
+      if (!employee) return res.status(404).json({ message: "Employee not found" });
+      const ts = await storage.getTimesheetsByEmployee(req.params.employeeId);
+      const msgs = await storage.getMessagesByEmployee(req.params.employeeId);
+      const payRunLines = await storage.getPayRunLinesByEmployee(req.params.employeeId);
       const currentMonth = new Date().getMonth() + 1;
       const currentYear = new Date().getFullYear();
       const currentTs = ts.find(t => t.year === currentYear && t.month === currentMonth);
@@ -386,9 +386,9 @@ export async function registerRoutes(
       const unreadMsgs = msgs.filter(m => !m.read && m.senderRole === "admin").length;
       const approvedTs = ts.filter(t => t.status === "APPROVED" && t.year === currentYear);
       const ytdHours = approvedTs.reduce((s, t) => s + parseFloat(t.totalHours), 0);
-      const rate = contractor.hourlyRate ? parseFloat(contractor.hourlyRate) : 0;
+      const rate = employee.hourlyRate ? parseFloat(employee.hourlyRate) : 0;
       const ytdGross = ytdHours * rate;
-      const contractHoursPA = contractor.contractHoursPA ? parseFloat(contractor.contractHoursPA as string) : 2000;
+      const contractHoursPA = employee.contractHoursPA ? parseFloat(employee.contractHoursPA as string) : 2000;
 
       const recentTimesheets = ts
         .sort((a, b) => {
@@ -431,7 +431,7 @@ export async function registerRoutes(
         }));
 
       res.json({
-        contractor,
+        employee,
         hoursThisMonth: currentTs ? parseFloat(currentTs.totalHours) : 0,
         pendingTimesheets: pendingTs,
         unreadMessages: unreadMsgs,
@@ -457,9 +457,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/leave/employee/:contractorId", async (req, res) => {
+  app.get("/api/leave/employee/:employeeId", async (req, res) => {
     try {
-      const data = await storage.getLeaveRequestsByContractor(req.params.contractorId);
+      const data = await storage.getLeaveRequestsByEmployee(req.params.employeeId);
       res.json(data);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch leave requests" });
@@ -515,9 +515,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/onboarding/:contractorId", async (req, res) => {
+  app.get("/api/onboarding/:employeeId", async (req, res) => {
     try {
-      const status = await storage.getOnboardingStatus(req.params.contractorId);
+      const status = await storage.getOnboardingStatus(req.params.employeeId);
       res.json(status);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch onboarding status" });
@@ -526,11 +526,11 @@ export async function registerRoutes(
 
   app.post("/api/onboarding/personal", async (req, res) => {
     try {
-      const { contractorId, ...data } = req.body;
-      if (!contractorId) return res.status(400).json({ message: "contractorId is required" });
-      const contractor = await storage.updateContractor(contractorId, data);
-      if (!contractor) return res.status(404).json({ message: "Contractor not found" });
-      res.json(contractor);
+      const { employeeId, ...data } = req.body;
+      if (!employeeId) return res.status(400).json({ message: "employeeId is required" });
+      const employee = await storage.updateEmployee(employeeId, data);
+      if (!employee) return res.status(404).json({ message: "Employee not found" });
+      res.json(employee);
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to save personal details" });
     }
@@ -566,27 +566,27 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/employee/:contractorId/tax", async (req, res) => {
+  app.get("/api/portal/employee/:employeeId/tax", async (req, res) => {
     try {
-      const dec = await storage.getTaxDeclaration(req.params.contractorId);
+      const dec = await storage.getTaxDeclaration(req.params.employeeId);
       res.json(dec || null);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch tax declaration" });
     }
   });
 
-  app.get("/api/portal/employee/:contractorId/bank", async (req, res) => {
+  app.get("/api/portal/employee/:employeeId/bank", async (req, res) => {
     try {
-      const acc = await storage.getBankAccount(req.params.contractorId);
+      const acc = await storage.getBankAccount(req.params.employeeId);
       res.json(acc || null);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch bank account" });
     }
   });
 
-  app.get("/api/portal/employee/:contractorId/super", async (req, res) => {
+  app.get("/api/portal/employee/:employeeId/super", async (req, res) => {
     try {
-      const mem = await storage.getSuperMembership(req.params.contractorId);
+      const mem = await storage.getSuperMembership(req.params.employeeId);
       res.json(mem || null);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch super membership" });
@@ -596,12 +596,11 @@ export async function registerRoutes(
   app.get("/api/pay-runs/:id/lines", async (req, res) => {
     try {
       const lines = await storage.getPayRunLines(req.params.id);
-      const contractorIds = [...new Set(lines.map((l) => l.contractorId))];
-      const allContractors = await storage.getContractors();
-      const contractorMap = new Map(allContractors.map((c) => [c.id, c]));
+      const allEmployees = await storage.getEmployees();
+      const employeeMap = new Map(allEmployees.map((c) => [c.id, c]));
       const enriched = lines.map((l) => ({
         ...l,
-        contractor: contractorMap.get(l.contractorId) || null,
+        employee: employeeMap.get(l.employeeId) || null,
       }));
       res.json(enriched);
     } catch (err) {
@@ -651,10 +650,10 @@ export async function registerRoutes(
 
       const lineData = [];
       for (const ts of approved) {
-        const contractor = await storage.getContractor(ts.contractorId);
-        if (!contractor) continue;
+        const employee = await storage.getEmployee(ts.employeeId);
+        if (!employee) continue;
         const hours = parseFloat(ts.totalHours);
-        const rate = parseFloat(contractor.hourlyRate || "0");
+        const rate = parseFloat(employee.hourlyRate || "0");
         const gross = hours * rate;
         const annualised = gross * 12;
         const paygAnnual = estimatePayg(annualised);
@@ -664,7 +663,7 @@ export async function registerRoutes(
 
         lineData.push({
           payRunId: payRun.id,
-          contractorId: ts.contractorId,
+          employeeId: ts.employeeId,
           timesheetId: ts.id,
           hoursWorked: String(hours.toFixed(2)),
           ratePerHour: String(rate.toFixed(2)),
@@ -700,10 +699,10 @@ export async function registerRoutes(
 
   app.get("/api/payslips", async (req, res) => {
     try {
-      const contractorId = req.query.contractorId as string | undefined;
+      const employeeId = req.query.employeeId as string | undefined;
       let lines;
-      if (contractorId) {
-        lines = await storage.getPayRunLinesByContractor(contractorId);
+      if (employeeId) {
+        lines = await storage.getPayRunLinesByEmployee(employeeId);
       } else {
         const allPayRuns = await storage.getPayRuns();
         const filedRuns = allPayRuns.filter((r) => r.status === "FILED");
@@ -715,7 +714,7 @@ export async function registerRoutes(
         lines = allLines;
       }
 
-      if (contractorId) {
+      if (employeeId) {
         const allPayRuns = await storage.getPayRuns();
         const payRunMap = new Map(allPayRuns.map((r) => [r.id, r]));
         lines = lines
@@ -743,10 +742,10 @@ export async function registerRoutes(
       const payRun = await storage.getPayRun(line.payRunId);
       if (!payRun) return res.status(404).json({ message: "Pay run not found" });
 
-      const contractor = await storage.getContractor(line.contractorId);
-      if (!contractor) return res.status(404).json({ message: "Contractor not found" });
+      const employee = await storage.getEmployee(line.employeeId);
+      if (!employee) return res.status(404).json({ message: "Employee not found" });
 
-      const bank = await storage.getBankAccount(line.contractorId);
+      const bank = await storage.getBankAccount(line.employeeId);
 
       const allSettings = await storage.getSettings();
       const settingsMap: Record<string, string> = {};
@@ -754,7 +753,7 @@ export async function registerRoutes(
         settingsMap[s.key] = s.value;
       }
 
-      const allLines = await storage.getPayRunLinesByContractor(line.contractorId);
+      const allLines = await storage.getPayRunLinesByEmployee(line.employeeId);
       const allPayRuns = await storage.getPayRuns();
       const payRunMap = new Map(allPayRuns.map((r) => [r.id, r]));
       const ytd = allLines.reduce(
@@ -776,7 +775,7 @@ export async function registerRoutes(
 
       const payslipData = buildPayslipData({
         line,
-        contractor,
+        employee,
         bank: bank || undefined,
         settings: settingsMap,
         ytd,
@@ -817,17 +816,17 @@ export async function registerRoutes(
       let lineIdx = 1;
 
       for (const line of includedLines) {
-        const contractor = await storage.getContractor(line.contractorId);
-        if (!contractor) continue;
-        const bank = await storage.getBankAccount(line.contractorId);
+        const employee = await storage.getEmployee(line.employeeId);
+        if (!employee) continue;
+        const bank = await storage.getBankAccount(line.employeeId);
         if (!bank) {
-          missing.push(`${contractor.firstName} ${contractor.lastName}`);
+          missing.push(`${employee.firstName} ${employee.lastName}`);
           continue;
         }
 
         const payslipNum = `PS-${payRun.year}-${String(payRun.month).padStart(2, "0")}-${String(lineIdx++).padStart(3, "0")}`;
         abaLines.push({
-          contractorName: `${contractor.firstName} ${contractor.lastName}`,
+          employeeName: `${employee.firstName} ${employee.lastName}`,
           bsb: bank.bsb,
           accountNumber: bank.accountNumber,
           netPay: Number(line.netPay),
@@ -876,20 +875,20 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/documents/:contractorId", async (req, res) => {
+  app.get("/api/documents/:employeeId", async (req, res) => {
     try {
-      const docs = await storage.getDocuments(req.params.contractorId);
+      const docs = await storage.getDocuments(req.params.employeeId);
       res.json(docs);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch documents" });
     }
   });
 
-  app.post("/api/documents/:contractorId", async (req, res) => {
+  app.post("/api/documents/:employeeId", async (req, res) => {
     try {
       const parsed = insertDocumentSchema.safeParse({
         ...req.body,
-        contractorId: req.params.contractorId,
+        employeeId: req.params.employeeId,
         type: "OTHER",
       });
       if (!parsed.success) {

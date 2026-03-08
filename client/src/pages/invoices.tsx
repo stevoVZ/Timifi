@@ -47,7 +47,7 @@ import {
   ChevronDown,
   ChevronsUpDown,
 } from "lucide-react";
-import type { Invoice, Contractor, Timesheet } from "@shared/schema";
+import type { Invoice, Employee, Timesheet } from "@shared/schema";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -68,7 +68,7 @@ export default function InvoicesPage() {
     queryKey: ["/api/invoices"],
   });
 
-  const { data: contractors } = useQuery<Contractor[]>({
+  const { data: employees } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
   });
 
@@ -76,7 +76,7 @@ export default function InvoicesPage() {
     queryKey: ["/api/timesheets"],
   });
 
-  const contractorMap = new Map(contractors?.map((c) => [c.id, c]) || []);
+  const employeeMap = new Map(employees?.map((c) => [c.id, c]) || []);
 
   const approvedTimesheetsNotInvoiced = timesheets?.filter((ts) => {
     if (ts.status !== "APPROVED") return false;
@@ -118,7 +118,7 @@ export default function InvoicesPage() {
   });
 
   const filtered = invoicesList?.filter((inv) => {
-    const c = inv.contractorId ? contractorMap.get(inv.contractorId) : undefined;
+    const c = inv.employeeId ? employeeMap.get(inv.employeeId) : undefined;
     const name = c ? `${c.firstName} ${c.lastName}` : "";
     const contact = inv.contactName || "";
     return `${name} ${contact} ${inv.invoiceNumber || ""} ${inv.description || ""}`.toLowerCase().includes(search.toLowerCase());
@@ -162,8 +162,8 @@ export default function InvoicesPage() {
     switch (sortField) {
       case "number": return (a.invoiceNumber || "").localeCompare(b.invoiceNumber || "") * dir;
       case "to": {
-        const cA = a.contractorId ? contractorMap.get(a.contractorId) : undefined;
-        const cB = b.contractorId ? contractorMap.get(b.contractorId) : undefined;
+        const cA = a.employeeId ? employeeMap.get(a.employeeId) : undefined;
+        const cB = b.employeeId ? employeeMap.get(b.employeeId) : undefined;
         const nameA = a.contactName || (cA ? `${cA.firstName} ${cA.lastName}` : "");
         const nameB = b.contactName || (cB ? `${cB.firstName} ${cB.lastName}` : "");
         return nameA.localeCompare(nameB) * dir;
@@ -185,7 +185,7 @@ export default function InvoicesPage() {
     formData.forEach((v, k) => { if (v) raw[k] = v as string; });
     const amountExcl = parseFloat(raw.amountExclGst || "0");
     createMutation.mutate({
-      contractorId: raw.contractorId,
+      employeeId: raw.employeeId,
       year: parseInt(raw.year),
       month: parseInt(raw.month),
       amountExclGst: String(amountExcl.toFixed(2)),
@@ -197,12 +197,12 @@ export default function InvoicesPage() {
   };
 
   const handleCreateFromTimesheet = (ts: Timesheet) => {
-    const c = contractorMap.get(ts.contractorId);
+    const c = employeeMap.get(ts.employeeId);
     const rate = c?.hourlyRate ? parseFloat(c.hourlyRate) : 0;
     const hours = parseFloat(ts.totalHours || "0");
     const amountExcl = hours * rate;
     createMutation.mutate({
-      contractorId: ts.contractorId,
+      employeeId: ts.employeeId,
       timesheetId: ts.id,
       year: ts.year,
       month: ts.month,
@@ -236,12 +236,12 @@ export default function InvoicesPage() {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label>Employee</Label>
-                  <Select name="contractorId" required>
+                  <Select name="employeeId" required>
                     <SelectTrigger data-testid="select-invoice-employee">
                       <SelectValue placeholder="Select employee" />
                     </SelectTrigger>
                     <SelectContent>
-                      {contractors?.map((c) => (
+                      {employees?.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.firstName} {c.lastName}
                         </SelectItem>
@@ -356,7 +356,7 @@ export default function InvoicesPage() {
               </CardHeader>
               <CardContent className="pt-0 space-y-2">
                 {approvedTimesheetsNotInvoiced.map((ts) => {
-                  const c = contractorMap.get(ts.contractorId);
+                  const c = employeeMap.get(ts.employeeId);
                   return (
                     <div key={ts.id} className="flex items-center justify-between gap-4 p-3 rounded-md bg-muted/50 flex-wrap" data-testid={`pending-invoice-${ts.id}`}>
                       <div className="min-w-0">
@@ -461,7 +461,7 @@ export default function InvoicesPage() {
                           </TableHeader>
                           <TableBody>
                             {sortedInvoices.map((inv) => {
-                              const c = inv.contractorId ? contractorMap.get(inv.contractorId) : undefined;
+                              const c = inv.employeeId ? employeeMap.get(inv.employeeId) : undefined;
                               const displayName = inv.contactName || (c ? `${c.firstName} ${c.lastName}` : "Unknown");
                               const isPaid = inv.status === "PAID";
                               const isOutstanding = ["AUTHORISED", "SENT", "OVERDUE"].includes(inv.status);

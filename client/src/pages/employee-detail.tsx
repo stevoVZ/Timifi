@@ -19,7 +19,7 @@ import {
   Receipt, User, Upload, CloudUpload, Trash2, Eye, FileBadge,
   Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File, Lock, RefreshCw
 } from "lucide-react";
-import type { Contractor, Timesheet, Invoice, Document } from "@shared/schema";
+import type { Employee, Timesheet, Invoice, Document } from "@shared/schema";
 
 function getInitials(first: string, last: string) {
   return `${first[0]}${last[0]}`.toUpperCase();
@@ -61,7 +61,7 @@ export default function EmployeeDetailPage() {
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Record<string, string>>({});
 
-  const { data: contractor, isLoading } = useQuery<Contractor>({
+  const { data: employee, isLoading } = useQuery<Employee>({
     queryKey: ["/api/employees", id],
   });
 
@@ -122,7 +122,7 @@ export default function EmployeeDetailPage() {
     );
   }
 
-  if (!contractor) {
+  if (!employee) {
     return (
       <div className="flex flex-col h-full">
         <TopBar title="Employee Not Found" />
@@ -140,15 +140,15 @@ export default function EmployeeDetailPage() {
     );
   }
 
-  const monthlyAllocation = (contractor.contractHoursPA || 2000) / 12;
-  const clearanceExpiring = isClearanceExpiringSoon(contractor.clearanceExpiry);
-  const clearanceExpired = isClearanceExpired(contractor.clearanceExpiry);
+  const monthlyAllocation = (employee.contractHoursPA || 2000) / 12;
+  const clearanceExpiring = isClearanceExpiringSoon(employee.clearanceExpiry);
+  const clearanceExpired = isClearanceExpired(employee.clearanceExpiry);
 
   return (
     <div className="flex flex-col h-full">
       <TopBar
-        title={`${contractor.firstName} ${contractor.lastName}`}
-        subtitle={contractor.jobTitle || "Employee"}
+        title={`${employee.firstName} ${employee.lastName}`}
+        subtitle={employee.jobTitle || "Employee"}
         actions={
           <Link href="/employees">
             <Button variant="secondary" size="sm" data-testid="button-back-employees">
@@ -163,25 +163,25 @@ export default function EmployeeDetailPage() {
           <Card>
             <CardContent className="p-6">
               <div className="flex items-start gap-5">
-                <div className={`w-14 h-14 rounded-md flex items-center justify-center font-bold text-lg flex-shrink-0 border ${getAvatarColor(contractor.firstName + contractor.lastName)}`}>
-                  {getInitials(contractor.firstName, contractor.lastName)}
+                <div className={`w-14 h-14 rounded-md flex items-center justify-center font-bold text-lg flex-shrink-0 border ${getAvatarColor(employee.firstName + employee.lastName)}`}>
+                  {getInitials(employee.firstName, employee.lastName)}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 flex-wrap mb-2">
                     <h2 className="text-xl font-bold text-foreground" data-testid="text-employee-full-name">
-                      {contractor.firstName} {contractor.lastName}
+                      {employee.firstName} {employee.lastName}
                     </h2>
-                    <StatusBadge status={contractor.status} />
-                    {contractor.xeroEmployeeId && (
+                    <StatusBadge status={employee.status} />
+                    {employee.xeroEmployeeId && (
                       <Badge variant="outline" className="text-xs bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800" data-testid="badge-xero-synced">
                         Xero Synced
                       </Badge>
                     )}
-                    {contractor.clearanceLevel && contractor.clearanceLevel !== "NONE" && (
+                    {employee.clearanceLevel && employee.clearanceLevel !== "NONE" && (
                       <span className="text-xs font-semibold flex items-center gap-1">
                         <Shield className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-                        <span className="text-amber-600 dark:text-amber-400">{contractor.clearanceLevel}</span>
-                        {contractor.clearanceExpiry && (
+                        <span className="text-amber-600 dark:text-amber-400">{employee.clearanceLevel}</span>
+                        {employee.clearanceExpiry && (
                           <span className={`font-normal ml-1 ${
                             clearanceExpired
                               ? "text-destructive"
@@ -189,7 +189,7 @@ export default function EmployeeDetailPage() {
                                 ? "text-amber-600 dark:text-amber-400"
                                 : "text-muted-foreground"
                           }`}>
-                            exp. {new Date(contractor.clearanceExpiry).toLocaleDateString("en-AU", { month: "short", year: "numeric" })}
+                            exp. {new Date(employee.clearanceExpiry).toLocaleDateString("en-AU", { month: "short", year: "numeric" })}
                           </span>
                         )}
                         {clearanceExpired && (
@@ -243,7 +243,7 @@ export default function EmployeeDetailPage() {
                       icon={Mail}
                       label="Email"
                       field="email"
-                      value={contractor.email}
+                      value={employee.email}
                       editingField={editingField}
                       editValues={editValues}
                       setEditValues={setEditValues}
@@ -252,13 +252,13 @@ export default function EmployeeDetailPage() {
                       onCancel={cancelEdit}
                       isPending={updateMutation.isPending}
                       testId="text-email"
-                      locked={!!contractor.xeroEmployeeId}
+                      locked={!!employee.xeroEmployeeId}
                     />
                     <EditableField
                       icon={Phone}
                       label="Phone"
                       field="phone"
-                      value={contractor.phone || "Not provided"}
+                      value={employee.phone || "Not provided"}
                       editingField={editingField}
                       editValues={editValues}
                       setEditValues={setEditValues}
@@ -267,13 +267,13 @@ export default function EmployeeDetailPage() {
                       onCancel={cancelEdit}
                       isPending={updateMutation.isPending}
                       testId="text-phone"
-                      locked={!!contractor.xeroEmployeeId}
+                      locked={!!employee.xeroEmployeeId}
                     />
                     <EditableField
                       icon={Briefcase}
                       label="Job Title"
                       field="jobTitle"
-                      value={contractor.jobTitle || "Not set"}
+                      value={employee.jobTitle || "Not set"}
                       editingField={editingField}
                       editValues={editValues}
                       setEditValues={setEditValues}
@@ -282,13 +282,13 @@ export default function EmployeeDetailPage() {
                       onCancel={cancelEdit}
                       isPending={updateMutation.isPending}
                       testId="text-job-title"
-                      locked={!!contractor.xeroEmployeeId}
+                      locked={!!employee.xeroEmployeeId}
                     />
                     <EditableField
                       icon={MapPin}
                       label="Client"
                       field="clientName"
-                      value={contractor.clientName || "Not assigned"}
+                      value={employee.clientName || "Not assigned"}
                       editingField={editingField}
                       editValues={editValues}
                       setEditValues={setEditValues}
@@ -302,26 +302,26 @@ export default function EmployeeDetailPage() {
                       icon={DollarSign}
                       label="Rate ($/hr)"
                       field="hourlyRate"
-                      value={contractor.hourlyRate ? `$${contractor.hourlyRate}/hr` : "Not set"}
-                      rawValue={contractor.hourlyRate || ""}
+                      value={employee.hourlyRate ? `$${employee.hourlyRate}/hr` : "Not set"}
+                      rawValue={employee.hourlyRate || ""}
                       editingField={editingField}
                       editValues={editValues}
                       setEditValues={setEditValues}
                       onStartEdit={startEdit}
                       onSave={saveEdit}
                       onCancel={cancelEdit}
-                      locked={!!contractor.xeroEmployeeId}
+                      locked={!!employee.xeroEmployeeId}
                       isPending={updateMutation.isPending}
                       testId="text-rate"
                     />
-                    <InfoRow icon={CreditCard} label="Payment Method" value={contractor.paymentMethod === "INVOICE" ? "Invoice (Pty Ltd)" : "Payroll"} testId="text-payment-method" />
-                    {contractor.paymentMethod === "INVOICE" && (
+                    <InfoRow icon={CreditCard} label="Payment Method" value={employee.paymentMethod === "INVOICE" ? "Invoice (Pty Ltd)" : "Payroll"} testId="text-payment-method" />
+                    {employee.paymentMethod === "INVOICE" && (
                       <>
                         <EditableField
                           icon={Landmark}
                           label="Company Name"
                           field="companyName"
-                          value={contractor.companyName || "Not set"}
+                          value={employee.companyName || "Not set"}
                           editingField={editingField}
                           editValues={editValues}
                           setEditValues={setEditValues}
@@ -335,7 +335,7 @@ export default function EmployeeDetailPage() {
                           icon={IdCard}
                           label="ABN"
                           field="abn"
-                          value={contractor.abn || "Not set"}
+                          value={employee.abn || "Not set"}
                           editingField={editingField}
                           editValues={editValues}
                           setEditValues={setEditValues}
@@ -347,15 +347,15 @@ export default function EmployeeDetailPage() {
                         />
                       </>
                     )}
-                    <InfoRow icon={Calendar} label="Start Date" value={contractor.startDate ? new Date(contractor.startDate).toLocaleDateString("en-AU") : "Not set"} testId="text-start-date" />
-                    <InfoRow icon={Clock} label="Contract Hours" value={`${contractor.contractHoursPA?.toLocaleString()} h/yr (${Math.round(monthlyAllocation)} h/mo)`} testId="text-contract-hours" />
-                    <InfoRow icon={MapPin} label="Location" value={[contractor.suburb, contractor.state].filter(Boolean).join(", ") || "Not set"} testId="text-location" />
-                    {contractor.xeroEmployeeId && (
+                    <InfoRow icon={Calendar} label="Start Date" value={employee.startDate ? new Date(employee.startDate).toLocaleDateString("en-AU") : "Not set"} testId="text-start-date" />
+                    <InfoRow icon={Clock} label="Contract Hours" value={`${employee.contractHoursPA?.toLocaleString()} h/yr (${Math.round(monthlyAllocation)} h/mo)`} testId="text-contract-hours" />
+                    <InfoRow icon={MapPin} label="Location" value={[employee.suburb, employee.state].filter(Boolean).join(", ") || "Not set"} testId="text-location" />
+                    {employee.xeroEmployeeId && (
                       <div className="flex items-center gap-2 col-span-full pt-2 border-t">
                         <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
                         <span className="text-xs text-muted-foreground">Synced from Xero</span>
                         <span className="text-xs font-mono text-muted-foreground/70" data-testid="text-xero-employee-id">
-                          ID: {contractor.xeroEmployeeId}
+                          ID: {employee.xeroEmployeeId}
                         </span>
                       </div>
                     )}
@@ -370,7 +370,7 @@ export default function EmployeeDetailPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => startEdit("notes", contractor.notes || "")}
+                      onClick={() => startEdit("notes", employee.notes || "")}
                       data-testid="button-edit-notes"
                     >
                       <Pencil className="w-4 h-4" />
@@ -409,7 +409,7 @@ export default function EmployeeDetailPage() {
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground whitespace-pre-wrap" data-testid="text-notes">
-                      {contractor.notes || "No notes added."}
+                      {employee.notes || "No notes added."}
                     </p>
                   )}
                 </CardContent>
@@ -505,7 +505,7 @@ export default function EmployeeDetailPage() {
             </TabsContent>
 
             <TabsContent value="documents" className="mt-4">
-              <DocumentsTab contractorId={id!} documents={documentsList || []} />
+              <DocumentsTab employeeId={id!} documents={documentsList || []} />
             </TabsContent>
           </Tabs>
         </div>
@@ -543,7 +543,7 @@ function formatFileSize(bytes: number | null | undefined) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function DocumentsTab({ contractorId, documents }: { contractorId: string; documents: Document[] }) {
+function DocumentsTab({ employeeId, documents }: { employeeId: string; documents: Document[] }) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -554,11 +554,11 @@ function DocumentsTab({ contractorId, documents }: { contractorId: string; docum
 
   const uploadMutation = useMutation({
     mutationFn: async (payload: { name: string; category: string; fileType: string; fileUrl: string; fileSize: number }) => {
-      const res = await apiRequest("POST", `/api/documents/${contractorId}`, payload);
+      const res = await apiRequest("POST", `/api/documents/${employeeId}`, payload);
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/documents", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/documents", employeeId] });
       toast({ title: "Uploaded", description: "Document uploaded successfully." });
       setFile(null);
       setCustomName("");
@@ -577,7 +577,7 @@ function DocumentsTab({ contractorId, documents }: { contractorId: string; docum
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/documents", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/documents", employeeId] });
       toast({ title: "Deleted", description: "Document removed." });
       setDeletingId(null);
     },

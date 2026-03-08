@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { Clock, DollarSign, Calendar, FileText, Receipt, MessageSquare, ArrowRight } from "lucide-react";
-import type { Contractor } from "@shared/schema";
+import type { Employee } from "@shared/schema";
 
 interface RecentTimesheet {
   id: string;
@@ -30,7 +30,7 @@ interface RecentPayslip {
 }
 
 interface PortalStats {
-  contractor: Contractor;
+  employee: Employee;
   hoursThisMonth: number;
   pendingTimesheets: number;
   unreadMessages: number;
@@ -43,12 +43,12 @@ interface PortalStats {
   recentPayslips: RecentPayslip[];
 }
 
-function getContractorId(): string | null {
-  return localStorage.getItem("portal_contractor_id");
+function getEmployeeId(): string | null {
+  return localStorage.getItem("portal_employee_id");
 }
 
-function getContractorName(): string {
-  return localStorage.getItem("portal_contractor_name") || "Employee";
+function getEmployeeName(): string {
+  return localStorage.getItem("portal_employee_name") || "Employee";
 }
 
 function formatCurrency(val: number): string {
@@ -62,20 +62,20 @@ function formatMonth(year: number, month: number): string {
 
 export default function PortalDashboardPage() {
   const [, setLocation] = useLocation();
-  const contractorId = getContractorId();
+  const employeeId = getEmployeeId();
 
-  if (!contractorId) {
+  if (!employeeId) {
     setLocation("/portal/login");
     return null;
   }
 
   const { data: stats, isLoading } = useQuery<PortalStats>({
-    queryKey: ["/api/portal/employee", contractorId, "stats"],
+    queryKey: ["/api/portal/employee", employeeId, "stats"],
   });
 
-  const contractorName = stats
-    ? `${stats.contractor.firstName} ${stats.contractor.lastName}`
-    : getContractorName();
+  const employeeName = stats
+    ? `${stats.employee.firstName} ${stats.employee.lastName}`
+    : getEmployeeName();
 
   const currentMonth = new Date().toLocaleDateString("en-AU", { month: "long", year: "numeric" });
 
@@ -100,7 +100,7 @@ export default function PortalDashboardPage() {
         {
           label: "Next pay date",
           value: getNextPayDate(),
-          sub: stats.contractor.payFrequency || "Monthly",
+          sub: stats.employee.payFrequency || "Monthly",
           icon: Calendar,
           color: "text-amber-600 dark:text-amber-400",
           bgColor: "bg-amber-50 dark:bg-amber-900/20",
@@ -117,12 +117,12 @@ export default function PortalDashboardPage() {
     : 0;
 
   return (
-    <PortalShell contractorName={contractorName}>
+    <PortalShell employeeName={employeeName}>
       <div className="p-6 bg-muted/30 min-h-full">
         <div className="max-w-5xl mx-auto space-y-6">
           <div>
             <h1 className="text-lg font-semibold text-foreground" data-testid="text-portal-dashboard-title">
-              Welcome back, {stats ? stats.contractor.firstName : "..."}
+              Welcome back, {stats ? stats.employee.firstName : "..."}
             </h1>
             <p className="text-sm text-muted-foreground mt-1" data-testid="text-portal-dashboard-subtitle">
               {currentMonth}

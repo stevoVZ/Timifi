@@ -4,8 +4,8 @@ export interface PayslipData {
   agencyName: string;
   agencyABN: string;
   agencyAddress?: string;
-  contractorName: string;
-  contractorAddress: string;
+  employeeName: string;
+  employeeAddress: string;
   payPeriodLabel: string;
   periodStart: string;
   periodEnd: string;
@@ -60,7 +60,7 @@ export function generatePayslipHTML(d: PayslipData): string {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Payslip - ${d.contractorName} - ${d.payPeriodLabel}</title>
+<title>Payslip - ${d.employeeName} - ${d.payPeriodLabel}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -110,8 +110,8 @@ export function generatePayslipHTML(d: PayslipData): string {
       <div class="badge">${d.payPeriodLabel}</div>
     </div>
     <div style="text-align:right">
-      <div style="font-size:18px;font-weight:700;color:#111827;margin-bottom:4px">${d.contractorName}</div>
-      <div style="font-size:12px;color:#6b7280;line-height:1.6">${(d.contractorAddress || "").replace(/,/g, "<br>")}</div>
+      <div style="font-size:18px;font-weight:700;color:#111827;margin-bottom:4px">${d.employeeName}</div>
+      <div style="font-size:12px;color:#6b7280;line-height:1.6">${(d.employeeAddress || "").replace(/,/g, "<br>")}</div>
       <div style="font-size:11px;font-family:'DM Mono',monospace;color:#9ca3af;margin-top:6px">${d.payslipNumber}</div>
     </div>
   </div>
@@ -289,14 +289,14 @@ export function generatePayslipPDF(d: PayslipData): Buffer {
   doc.setFontSize(12);
   doc.setFont("helvetica", "bold");
   y = 10;
-  const nameW = doc.getTextWidth(d.contractorName);
-  doc.text(d.contractorName, pageW - margin - nameW, y);
+  const nameW = doc.getTextWidth(d.employeeName);
+  doc.text(d.employeeName, pageW - margin - nameW, y);
 
   setColor(grayText);
   doc.setFontSize(8);
   doc.setFont("helvetica", "normal");
   y = 15;
-  const addrParts = (d.contractorAddress || "").split(",").map(s => s.trim()).filter(Boolean);
+  const addrParts = (d.employeeAddress || "").split(",").map(s => s.trim()).filter(Boolean);
   for (const part of addrParts) {
     const w = doc.getTextWidth(part);
     doc.text(part, pageW - margin - w, y);
@@ -543,14 +543,14 @@ const MONTHS = [
 
 export function buildPayslipData(opts: {
   line: Record<string, any>;
-  contractor: Record<string, any>;
+  employee: Record<string, any>;
   bank?: Record<string, any>;
   settings: Record<string, string>;
   ytd: { gross: number; payg: number; super: number };
   payRun: Record<string, any>;
   payslipNum: string;
 }): PayslipData {
-  const { line, contractor, bank, settings, ytd, payRun, payslipNum } = opts;
+  const { line, employee, bank, settings, ytd, payRun, payslipNum } = opts;
 
   const hours = Number(line.hoursWorked ?? line.hours_worked ?? 0);
   const rate = Number(line.ratePerHour ?? line.rate_per_hour ?? 0);
@@ -575,12 +575,12 @@ export function buildPayslipData(opts: {
     agencyName: settings.company_name ?? "Recruitment Agency",
     agencyABN: settings.company_abn ?? "00 000 000 000",
     agencyAddress: [settings.company_suburb, settings.company_state].filter(Boolean).join(", "),
-    contractorName: `${contractor.firstName ?? contractor.first_name} ${contractor.lastName ?? contractor.last_name}`,
-    contractorAddress: [
-      contractor.addressLine1 ?? contractor.address_line1,
-      contractor.suburb,
-      contractor.state,
-      contractor.postcode,
+    employeeName: `${employee.firstName ?? employee.first_name} ${employee.lastName ?? employee.last_name}`,
+    employeeAddress: [
+      employee.addressLine1 ?? employee.address_line1,
+      employee.suburb,
+      employee.state,
+      employee.postcode,
     ]
       .filter(Boolean)
       .join(", "),

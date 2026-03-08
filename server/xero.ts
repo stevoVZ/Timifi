@@ -370,7 +370,7 @@ export async function syncEmployees(): Promise<{
 
       const address = emp.HomeAddress;
 
-      const contractorData: Record<string, any> = {
+      const employeeData: Record<string, any> = {
         firstName: emp.FirstName || "Unknown",
         lastName: emp.LastName || "Unknown",
         email: email || `${xeroId}@xero-sync.local`,
@@ -386,33 +386,33 @@ export async function syncEmployees(): Promise<{
       };
 
       if (hourlyRate !== undefined && hourlyRate !== null) {
-        contractorData.hourlyRate = String(hourlyRate);
+        employeeData.hourlyRate = String(hourlyRate);
       }
 
       if (calendarType) {
-        contractorData.payFrequency = mapPayFrequency(calendarType);
+        employeeData.payFrequency = mapPayFrequency(calendarType);
       }
 
       if (address) {
-        if (address.AddressLine1) contractorData.addressLine1 = address.AddressLine1;
-        if (address.City) contractorData.suburb = address.City;
-        if (address.Region) contractorData.state = address.Region.substring(0, 3).toUpperCase();
-        if (address.PostalCode) contractorData.postcode = address.PostalCode;
+        if (address.AddressLine1) employeeData.addressLine1 = address.AddressLine1;
+        if (address.City) employeeData.suburb = address.City;
+        if (address.Region) employeeData.state = address.Region.substring(0, 3).toUpperCase();
+        if (address.PostalCode) employeeData.postcode = address.PostalCode;
       }
 
       let existing = xeroId
-        ? await storage.getContractorByXeroId(xeroId)
+        ? await storage.getEmployeeByXeroId(xeroId)
         : null;
 
       if (!existing && email) {
-        existing = await storage.getContractorByEmail(email);
+        existing = await storage.getEmployeeByEmail(email);
       }
 
       if (existing) {
-        await storage.updateContractor(existing.id, contractorData);
+        await storage.updateEmployee(existing.id, employeeData);
         updated++;
       } else {
-        await storage.createContractor(contractorData as any);
+        await storage.createEmployee(employeeData as any);
         created++;
       }
     } catch (err: any) {
@@ -470,10 +470,10 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
   let lineCount = 0;
   for (const slip of detail.Payslips) {
     try {
-      const contractor = slip.EmployeeID
-        ? await storage.getContractorByXeroId(slip.EmployeeID)
+      const employee = slip.EmployeeID
+        ? await storage.getEmployeeByXeroId(slip.EmployeeID)
         : null;
-      if (!contractor) continue;
+      if (!employee) continue;
 
       let hoursWorked = "0";
       let ratePerHour = "0";
@@ -490,7 +490,7 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
 
       await storage.createPayRunLine({
         payRunId: localPayRunId,
-        contractorId: contractor.id,
+        employeeId: employee.id,
         hoursWorked,
         ratePerHour,
         grossEarnings,
@@ -662,10 +662,10 @@ export async function syncTimesheets(): Promise<{
 
   for (const ts of xeroTimesheets) {
     try {
-      const contractor = ts.EmployeeID
-        ? await storage.getContractorByXeroId(ts.EmployeeID)
+      const employee = ts.EmployeeID
+        ? await storage.getEmployeeByXeroId(ts.EmployeeID)
         : null;
-      if (!contractor) {
+      if (!employee) {
         errors.push(`Skipped timesheet — employee ${ts.EmployeeID} not found locally`);
         continue;
       }
@@ -691,10 +691,10 @@ export async function syncTimesheets(): Promise<{
       else if (xeroStatus === "SUBMITTED" || xeroStatus === "PENDING") localStatus = "SUBMITTED";
       else if (xeroStatus === "REJECTED") localStatus = "REJECTED";
 
-      const rate = contractor.hourlyRate ? parseFloat(contractor.hourlyRate) : 0;
+      const rate = employee.hourlyRate ? parseFloat(employee.hourlyRate) : 0;
       const grossValue = totalHours * rate;
 
-      const existingTimesheets = await storage.getTimesheetsByContractor(contractor.id);
+      const existingTimesheets = await storage.getTimesheetsByEmployee(employee.id);
       const existing = existingTimesheets.find(
         et => et.year === year && et.month === month
       );
@@ -708,7 +708,7 @@ export async function syncTimesheets(): Promise<{
         updated++;
       } else {
         await storage.createTimesheet({
-          contractorId: contractor.id,
+          employeeId: employee.id,
           year,
           month,
           totalHours: String(totalHours.toFixed(2)),
@@ -853,10 +853,10 @@ export async function syncInvoices(): Promise<{
   let updated = 0;
   const errors: string[] = [];
 
-  const allContractors = await storage.getContractors();
-  const contractorByEmail = new Map(allContractors.map(c => [c.email.toLowerCase(), c]));
-  const contractorByCompany = new Map(
-    allContractors.filter(c => c.companyName).map(c => [c.companyName!.toLowerCase(), c])
+  const allEmployees = await storage.getEmployees();
+  const employeeByEmail = new Map(allEmployees.map(c => [c.email.toLowerCase(), c]));
+  const employeeByCompany = new Map(
+    allEmployees.filter(c => c.companyName).map(c => [c.companyName!.toLowerCase(), c])
   );
 
   for (const inv of xeroInvoices) {
@@ -866,16 +866,16 @@ export async function syncInvoices(): Promise<{
       const contactEmail = inv.Contact?.EmailAddress?.toLowerCase();
       const contactName = inv.Contact?.Name || "";
 
-      let contractor = contactEmail ? contractorByEmail.get(contactEmail) : undefined;
+      let employee = contactEmail ? employeeByEmail.get(contactEmail) : undefined;
 
-      if (!contractor && contactName) {
-        contractor = contractorByCompany.get(contactName.toLowerCase());
+      if (!employee && contactName) {
+        employee = employeeByCompany.get(contactName.toLowerCase());
       }
 
-      if (!contractor && contactName) {
+      if (!employee && contactName) {
         const nameParts = contactName.split(" ");
         if (nameParts.length >= 2) {
-          contractor = allContractors.find(
+          employee = allEmployees.find(
             c => c.firstName.toLowerCase() === nameParts[0].toLowerCase() &&
                  c.lastName.toLowerCase() === nameParts[nameParts.length - 1].toLowerCase()
           );
@@ -914,7 +914,7 @@ export async function syncInvoices(): Promise<{
       if (existing) {
         await storage.updateInvoice(existing.id, {
           contactName: contactName || existing.contactName,
-          contractorId: contractor?.id || existing.contractorId,
+          employeeId: employee?.id || existing.employeeId,
           xeroInvoiceId: xeroInvoiceId || existing.xeroInvoiceId,
           status: localStatus,
           amountExclGst: String(amountExclGst),
@@ -932,7 +932,7 @@ export async function syncInvoices(): Promise<{
         }
 
         await storage.createInvoice({
-          contractorId: contractor?.id || null,
+          employeeId: employee?.id || null,
           contactName: contactName || null,
           xeroInvoiceId: xeroInvoiceId,
           year,

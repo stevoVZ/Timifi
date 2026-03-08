@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { LeaveRequest, Contractor } from "@shared/schema";
+import type { LeaveRequest, Employee } from "@shared/schema";
 import {
   CalendarDays,
   CheckCircle2,
@@ -72,7 +72,7 @@ export default function LeavePage() {
     queryKey: ["/api/leave"],
   });
 
-  const { data: contractors } = useQuery<Contractor[]>({
+  const { data: employees } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
   });
 
@@ -91,18 +91,18 @@ export default function LeavePage() {
     },
   });
 
-  const getContractorName = (id: string) => {
-    const c = contractors?.find((c) => c.id === id);
+  const getEmployeeName = (id: string) => {
+    const c = employees?.find((c) => c.id === id);
     return c ? `${c.firstName} ${c.lastName}` : "Unknown";
   };
 
-  const getContractorInitials = (id: string) => {
-    const c = contractors?.find((c) => c.id === id);
+  const getEmployeeInitials = (id: string) => {
+    const c = employees?.find((c) => c.id === id);
     return c ? `${c.firstName[0]}${c.lastName[0]}` : "??";
   };
 
-  const getContractorColor = (id: string) => {
-    const c = contractors?.find((c) => c.id === id);
+  const getEmployeeColor = (id: string) => {
+    const c = employees?.find((c) => c.id === id);
     return c?.accentColour || "#2563eb";
   };
 
@@ -127,10 +127,10 @@ export default function LeavePage() {
     (l) => l.status === "APPROVED" && new Date(l.startDate).getFullYear() === currentYear
   ) || [];
 
-  const activeContractors = contractors?.filter((c) => c.status === "ACTIVE") || [];
+  const activeEmployeesList = employees?.filter((c) => c.status === "ACTIVE") || [];
 
-  const contractorBalances = activeContractors.map((c) => {
-    const cLeave = approvedThisYear.filter((l) => l.contractorId === c.id);
+  const employeeBalances = activeEmployeesList.map((c) => {
+    const cLeave = approvedThisYear.filter((l) => l.employeeId === c.id);
     const annualUsed = cLeave.filter((l) => l.leaveType === "ANNUAL").reduce((s, l) => s + parseFloat(l.totalDays), 0);
     const sickUsed = cLeave.filter((l) => l.leaveType === "SICK").reduce((s, l) => s + parseFloat(l.totalDays), 0);
     return {
@@ -148,7 +148,7 @@ export default function LeavePage() {
   function LeaveCard({ leave }: { leave: LeaveRequest }) {
     const config = STATUS_CONFIG[leave.status] || STATUS_CONFIG.PENDING;
     const LeaveIcon = LEAVE_TYPE_ICON_COMPONENTS[leave.leaveType] || CalendarDays;
-    const color = getContractorColor(leave.contractorId);
+    const color = getEmployeeColor(leave.employeeId);
     return (
       <Card data-testid={`card-leave-${leave.id}`}>
         <CardContent className="p-5">
@@ -159,10 +159,10 @@ export default function LeavePage() {
                   className="w-8 h-8 rounded-md flex items-center justify-center text-[11px] font-bold flex-shrink-0"
                   style={{ backgroundColor: `${color}15`, color }}
                 >
-                  {getContractorInitials(leave.contractorId)}
+                  {getEmployeeInitials(leave.employeeId)}
                 </div>
                 <span className="font-medium text-sm" data-testid={`text-leave-employee-${leave.id}`}>
-                  {getContractorName(leave.contractorId)}
+                  {getEmployeeName(leave.employeeId)}
                 </span>
                 <LeaveIcon className="w-4 h-4 text-muted-foreground" />
               </div>
@@ -309,14 +309,14 @@ export default function LeavePage() {
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
                 Leave Balances — {currentYear}
               </h3>
-              {contractorBalances.length === 0 ? (
+              {employeeBalances.length === 0 ? (
                 <Card>
                   <CardContent className="p-6 text-center text-sm text-muted-foreground">
                     No active employees
                   </CardContent>
                 </Card>
               ) : (
-                contractorBalances.map((cb) => {
+                employeeBalances.map((cb) => {
                   const annualPercent = Math.min((cb.annualUsed / ANNUAL_ENTITLEMENT) * 100, 100);
                   const sickPercent = Math.min((cb.sickUsed / SICK_ENTITLEMENT) * 100, 100);
                   return (
@@ -400,7 +400,7 @@ export default function LeavePage() {
           {reviewDialog && (
             <div className="space-y-4">
               <div className="text-sm space-y-1">
-                <p><strong>Employee:</strong> {getContractorName(reviewDialog.leave.contractorId)}</p>
+                <p><strong>Employee:</strong> {getEmployeeName(reviewDialog.leave.employeeId)}</p>
                 <p><strong>Type:</strong> {LEAVE_TYPE_LABELS[reviewDialog.leave.leaveType]}</p>
                 <p><strong>Dates:</strong> {formatDate(reviewDialog.leave.startDate)} — {formatDate(reviewDialog.leave.endDate)}</p>
                 <p><strong>Days:</strong> {reviewDialog.leave.totalDays}</p>

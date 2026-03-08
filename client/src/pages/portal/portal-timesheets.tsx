@@ -40,12 +40,12 @@ interface WeeklyBreakdown {
   weeks: WeekEntry[];
 }
 
-function getContractorId(): string | null {
-  return localStorage.getItem("portal_contractor_id");
+function getEmployeeId(): string | null {
+  return localStorage.getItem("portal_employee_id");
 }
 
-function getContractorName(): string {
-  return localStorage.getItem("portal_contractor_name") || "Employee";
+function getEmployeeName(): string {
+  return localStorage.getItem("portal_employee_name") || "Employee";
 }
 
 function getWeeksForMonth(year: number, month: number): string[] {
@@ -93,13 +93,13 @@ function parseBreakdown(notes: string | null): WeeklyBreakdown | null {
 }
 
 function TimesheetSubmitForm({
-  contractorId,
+  employeeId,
   onSuccess,
   isPending,
   onSubmit,
   initialData,
 }: {
-  contractorId: string;
+  employeeId: string;
   onSuccess?: () => void;
   isPending: boolean;
   onSubmit: (data: Record<string, any>) => void;
@@ -152,7 +152,7 @@ function TimesheetSubmitForm({
     e.preventDefault();
     const breakdown: WeeklyBreakdown = { weeks: weekEntries };
     onSubmit({
-      contractorId,
+      employeeId,
       year,
       month,
       totalHours: String(totals.total.toFixed(2)),
@@ -376,18 +376,18 @@ function TimesheetCard({ ts, onResubmit }: { ts: Timesheet; onResubmit?: (ts: Ti
 
 export default function PortalTimesheetsPage() {
   const [, setLocation] = useLocation();
-  const contractorId = getContractorId();
+  const employeeId = getEmployeeId();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [resubmitTs, setResubmitTs] = useState<Timesheet | null>(null);
   const { toast } = useToast();
 
-  if (!contractorId) {
+  if (!employeeId) {
     setLocation("/portal/login");
     return null;
   }
 
   const { data: timesheetsList, isLoading } = useQuery<Timesheet[]>({
-    queryKey: ["/api/timesheets/employee", contractorId],
+    queryKey: ["/api/timesheets/employee", employeeId],
   });
 
   const createMutation = useMutation({
@@ -396,8 +396,8 @@ export default function PortalTimesheetsPage() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/timesheets/employee", contractorId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", contractorId, "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets/employee", employeeId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", employeeId, "stats"] });
       setDialogOpen(false);
       setResubmitTs(null);
       toast({ title: "Timesheet submitted", description: "Your timesheet has been submitted for review." });
@@ -425,7 +425,7 @@ export default function PortalTimesheetsPage() {
   };
 
   return (
-    <PortalShell contractorName={getContractorName()}>
+    <PortalShell employeeName={getEmployeeName()}>
       <div className="p-6 bg-muted/30 min-h-full">
         <div className="max-w-5xl mx-auto space-y-6">
           <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -449,7 +449,7 @@ export default function PortalTimesheetsPage() {
                   <DialogTitle>{resubmitTs ? "Resubmit Timesheet" : "Submit Timesheet"}</DialogTitle>
                 </DialogHeader>
                 <TimesheetSubmitForm
-                  contractorId={contractorId}
+                  employeeId={employeeId}
                   isPending={createMutation.isPending}
                   onSubmit={(data) => createMutation.mutate(data)}
                   initialData={resubmitTs}

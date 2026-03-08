@@ -34,9 +34,9 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { Plus, Search, Users, DollarSign, Clock, ArrowUpDown, ArrowUp, ArrowDown, ArrowRight } from "lucide-react";
-import type { Contractor } from "@shared/schema";
+import type { Employee } from "@shared/schema";
 
-type ContractorWithStats = Contractor & {
+type EmployeeWithStats = Employee & {
   ytdHours: number;
   ytdBillings: number;
 };
@@ -91,7 +91,7 @@ export default function EmployeesPage() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const { toast } = useToast();
 
-  const { data: contractorsWithStats, isLoading } = useQuery<ContractorWithStats[]>({
+  const { data: employeesWithStats, isLoading } = useQuery<EmployeeWithStats[]>({
     queryKey: ["/api/employees/stats"],
   });
 
@@ -122,20 +122,20 @@ export default function EmployeesPage() {
   };
 
   const kpis = useMemo(() => {
-    if (!contractorsWithStats) return { active: 0, pending: 0, ytdBillings: 0, avgRate: 0 };
-    const active = contractorsWithStats.filter(c => c.status === "ACTIVE").length;
-    const pending = contractorsWithStats.filter(c => c.status === "PENDING_SETUP").length;
-    const ytdBillings = contractorsWithStats.reduce((sum, c) => sum + c.ytdBillings, 0);
-    const withRate = contractorsWithStats.filter(c => c.hourlyRate && parseFloat(c.hourlyRate) > 0);
+    if (!employeesWithStats) return { active: 0, pending: 0, ytdBillings: 0, avgRate: 0 };
+    const active = employeesWithStats.filter(c => c.status === "ACTIVE").length;
+    const pending = employeesWithStats.filter(c => c.status === "PENDING_SETUP").length;
+    const ytdBillings = employeesWithStats.reduce((sum, c) => sum + c.ytdBillings, 0);
+    const withRate = employeesWithStats.filter(c => c.hourlyRate && parseFloat(c.hourlyRate) > 0);
     const avgRate = withRate.length > 0
       ? withRate.reduce((sum, c) => sum + parseFloat(c.hourlyRate!), 0) / withRate.length
       : 0;
     return { active, pending, ytdBillings, avgRate };
-  }, [contractorsWithStats]);
+  }, [employeesWithStats]);
 
   const filtered = useMemo(() => {
-    if (!contractorsWithStats) return [];
-    let list = contractorsWithStats.filter((c) => {
+    if (!employeesWithStats) return [];
+    let list = employeesWithStats.filter((c) => {
       const matchSearch = `${c.firstName} ${c.lastName} ${c.email} ${c.clientName || ""}`
         .toLowerCase()
         .includes(search.toLowerCase());
@@ -163,7 +163,7 @@ export default function EmployeesPage() {
     });
 
     return list;
-  }, [contractorsWithStats, search, filterStatus, sortField, sortDir]);
+  }, [employeesWithStats, search, filterStatus, sortField, sortDir]);
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -177,7 +177,7 @@ export default function EmployeesPage() {
     <div className="flex flex-col h-full">
       <TopBar
         title="Employees"
-        subtitle={`${contractorsWithStats?.length || 0} total`}
+        subtitle={`${employeesWithStats?.length || 0} total`}
         actions={
           <>
             <Link href="/employees/new">

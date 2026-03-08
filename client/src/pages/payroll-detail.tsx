@@ -25,7 +25,7 @@ import {
   Users,
   Calendar,
 } from "lucide-react";
-import type { PayRun, Contractor, PayRunLine } from "@shared/schema";
+import type { PayRun, Employee, PayRunLine } from "@shared/schema";
 
 const MONTHS = [
   "",
@@ -52,13 +52,13 @@ function formatCurrency(amount: string | number) {
   }).format(num);
 }
 
-type EnrichedLine = PayRunLine & { contractor: Contractor | null };
+type EnrichedLine = PayRunLine & { employee: Employee | null };
 
 export default function PayrollDetailPage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const [expandedLine, setExpandedLine] = useState<string | null>(null);
-  const [sortField, setSortField] = useState<string>("contractor");
+  const [sortField, setSortField] = useState<string>("employee");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const { data: allPayRuns, isLoading: loadingPayRuns } = useQuery<PayRun[]>({
@@ -84,9 +84,9 @@ export default function PayrollDetailPage() {
   const sortedLines = [...(payRunLines || [])].sort((a, b) => {
     const dir = sortDir === "asc" ? 1 : -1;
     switch (sortField) {
-      case "contractor": {
-        const nameA = a.contractor ? `${a.contractor.firstName} ${a.contractor.lastName}` : "";
-        const nameB = b.contractor ? `${b.contractor.firstName} ${b.contractor.lastName}` : "";
+      case "employee": {
+        const nameA = a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : "";
+        const nameB = b.employee ? `${b.employee.firstName} ${b.employee.lastName}` : "";
         return nameA.localeCompare(nameB) * dir;
       }
       case "hours": return (Number(a.hoursWorked) - Number(b.hoursWorked)) * dir;
@@ -216,7 +216,7 @@ export default function PayrollDetailPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-8" />
-                        <SortableHeader field="contractor" label="Employee" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                        <SortableHeader field="employee" label="Employee" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
                         <SortableHeader field="hours" label="Hours" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="right" />
                         <SortableHeader field="rate" label="Rate" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="right" />
                         <SortableHeader field="gross" label="Gross" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="right" />
@@ -229,8 +229,8 @@ export default function PayrollDetailPage() {
                     <TableBody>
                       {sortedLines.map((line) => {
                         const isExpanded = expandedLine === line.id;
-                        const contractorName = line.contractor
-                          ? `${line.contractor.firstName} ${line.contractor.lastName}`
+                        const employeeName = line.employee
+                          ? `${line.employee.firstName} ${line.employee.lastName}`
                           : "Unknown";
                         return (
                           <Fragment key={line.id}>
@@ -244,7 +244,7 @@ export default function PayrollDetailPage() {
                               </TableCell>
                               <TableCell>
                                 <span className="font-medium text-foreground" data-testid={`text-employee-name-${line.id}`}>
-                                  {contractorName}
+                                  {employeeName}
                                 </span>
                               </TableCell>
                               <TableCell className="text-right font-mono">{Number(line.hoursWorked).toFixed(1)}</TableCell>
@@ -286,9 +286,9 @@ export default function PayrollDetailPage() {
                                       <span className="text-xs text-muted-foreground">
                                         Status: <StatusBadge status={line.status} />
                                       </span>
-                                      {line.contractor && (
+                                      {line.employee && (
                                         <Link
-                                          href={`/employees/${line.contractor.id}`}
+                                          href={`/employees/${line.employee.id}`}
                                           className="text-xs text-primary hover:underline"
                                           data-testid={`link-employee-${line.id}`}
                                           onClick={(e) => e.stopPropagation()}

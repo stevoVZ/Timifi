@@ -87,7 +87,7 @@ function buildTotalRecord(entries: ABAEntry[]): string {
 export function buildABAFromPayRun(opts: {
   header: ABAHeader;
   lines: {
-    contractorName: string;
+    employeeName: string;
     bsb: string;
     accountNumber: string;
     netPay: number;
@@ -100,7 +100,7 @@ export function buildABAFromPayRun(opts: {
   const entries: ABAEntry[] = lines.map((l) => ({
     bsb: l.bsb,
     accountNumber: l.accountNumber,
-    accountName: l.contractorName.toUpperCase(),
+    accountName: l.employeeName.toUpperCase(),
     transactionCode: "50" as const,
     amount: l.netPay,
     lodgementRef: l.payslipNumber,

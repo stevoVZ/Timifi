@@ -1,5 +1,11 @@
 import OpenAI from "openai";
-import { readFile } from "fs/promises";
+import { writeFile, readFile, unlink, readdir, mkdtemp } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -32,10 +38,10 @@ export interface ScanResult {
   monthBoundaryWarning: string | null;
 }
 
-const SYSTEM_PROMPT = `You are a timesheet data extraction assistant. You will receive an image of a PDF timesheet and must extract structured data from it.
+const SYSTEM_PROMPT = `You are a timesheet data extraction assistant. You will receive one or more page images from a PDF timesheet and must extract structured data from them.
 
 Extract the following information:
-1. Employee/contractor name (the person who worked the hours)
+1. Employee name (the person who worked the hours)
 2. Client/company name (the organisation approving the timesheet)
 3. Period dates (start and end date of the timesheet period)
 4. Total hours worked
@@ -80,17 +86,62 @@ Return your response as a JSON object with this exact structure:
 
 Be precise with numbers. If you cannot read a value clearly, set confidence lower and add a warning. Always return valid JSON.`;
 
+async function pdfToImages(pdfBuffer: Buffer): Promise<Buffer[]> {
+  const tempDir = await mkdtemp(join(tmpdir(), "ocr-"));
+  const pdfPath = join(tempDir, "input.pdf");
+  const outputPrefix = join(tempDir, "page");
+
+  try {
+    await writeFile(pdfPath, pdfBuffer);
+    await execFileAsync("pdftoppm", ["-png", "-r", "200", pdfPath, outputPrefix]);
+
+    const files = await readdir(tempDir);
+    const pngFiles = files.filter((f) => f.startsWith("page") && f.endsWith(".png")).sort();
+
+    const images: Buffer[] = [];
+    for (const png of pngFiles) {
+      images.push(await readFile(join(tempDir, png)));
+    }
+
+    return images;
+  } finally {
+    try {
+      const files = await readdir(tempDir);
+      for (const f of files) {
+        await unlink(join(tempDir, f)).catch(() => {});
+      }
+      await unlink(tempDir).catch(() => {});
+      const { rmdir } = await import("fs/promises");
+      await rmdir(tempDir).catch(() => {});
+    } catch {}
+  }
+}
+
 export async function scanTimesheetPdf(
   fileBuffer: Buffer,
   fileName: string,
   targetMonth: number,
   targetYear: number
 ): Promise<ScanResult> {
-  const base64 = fileBuffer.toString("base64");
-  const mimeType = "application/pdf";
   const fileSizeKB = (fileBuffer.length / 1024).toFixed(0);
 
   try {
+    const pageImages = await pdfToImages(fileBuffer);
+
+    if (pageImages.length === 0) {
+      throw new Error("Failed to convert PDF to images — no pages extracted");
+    }
+
+    const imageContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] = pageImages.map(
+      (img) => ({
+        type: "image_url" as const,
+        image_url: {
+          url: `data:image/png;base64,${img.toString("base64")}`,
+          detail: "high" as const,
+        },
+      })
+    );
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
@@ -100,15 +151,9 @@ export async function scanTimesheetPdf(
           content: [
             {
               type: "text",
-              text: `Extract timesheet data from this PDF. The expected period is ${getMonthName(targetMonth)} ${targetYear}. If the timesheet covers a different period, note that in warnings. Parse all hours carefully.`,
+              text: `Extract timesheet data from these ${pageImages.length} page image(s) of a PDF timesheet. The expected period is ${getMonthName(targetMonth)} ${targetYear}. If the timesheet covers a different period, note that in warnings. Parse all hours carefully.`,
             },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mimeType};base64,${base64}`,
-                detail: "high",
-              },
-            },
+            ...imageContent,
           ],
         },
       ],

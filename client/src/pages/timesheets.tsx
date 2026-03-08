@@ -32,7 +32,7 @@ import {
   Mail, Upload, UserCheck, Monitor, Paperclip, ChevronDown, ChevronUp,
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus,
 } from "lucide-react";
-import type { Timesheet, Contractor } from "@shared/schema";
+import type { Timesheet, Employee } from "@shared/schema";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -121,7 +121,7 @@ function UploadView() {
   const currentMonth = now.getMonth() + 1;
   const currentYear = now.getFullYear();
 
-  const [selectedContractorId, setSelectedContractorId] = useState<string | null>(null);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [selectedYear] = useState(currentYear);
 
@@ -139,7 +139,7 @@ function UploadView() {
   const fileRef = useRef<HTMLInputElement>(null);
   const queueCountRef = useRef(0);
 
-  const { data: contractors } = useQuery<Contractor[]>({
+  const { data: employees } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
   });
 
@@ -147,11 +147,11 @@ function UploadView() {
     queryKey: ["/api/timesheets"],
   });
 
-  const activeContractors = contractors?.filter((c) => c.status === "ACTIVE") || [];
-  const selectedContractor = contractors?.find((c) => c.id === selectedContractorId) || null;
+  const activeEmployees = employees?.filter((c) => c.status === "ACTIVE") || [];
+  const selectedEmployee = employees?.find((c) => c.id === selectedEmployeeId) || null;
 
   const existingForPeriod = (timesheetsList?.filter(
-    (ts) => ts.contractorId === selectedContractorId && ts.month === selectedMonth && ts.year === selectedYear
+    (ts) => ts.employeeId === selectedEmployeeId && ts.month === selectedMonth && ts.year === selectedYear
   ) || []).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   const latestExisting = existingForPeriod.length > 0 ? existingForPeriod[0] : null;
 
@@ -240,13 +240,13 @@ function UploadView() {
   const batchWarnings = doneActive.flatMap((i) => i.result?.warnings || []);
   const confAvg = doneActive.length > 0 ? Math.round(doneActive.reduce((s, i) => s + (i.result?.confidence || 0), 0) / doneActive.length) : 0;
 
-  const rate = selectedContractor ? parseFloat(selectedContractor.hourlyRate || "0") : 0;
+  const rate = selectedEmployee ? parseFloat(selectedEmployee.hourlyRate || "0") : 0;
   const batchValue = batchHours * rate;
   const isApprovedPeriod = latestExisting?.status === "APPROVED";
-  const canSubmit = allDone && doneActive.length > 0 && !!selectedContractorId && !anyScanning && !isApprovedPeriod;
+  const canSubmit = allDone && doneActive.length > 0 && !!selectedEmployeeId && !anyScanning && !isApprovedPeriod;
 
   const handleSubmit = async () => {
-    if (!canSubmit || !selectedContractor) return;
+    if (!canSubmit || !selectedEmployee) return;
     setSubmitting(true);
     await new Promise((r) => setTimeout(r, 600));
 
@@ -256,7 +256,7 @@ function UploadView() {
     if (receivedDate) notesObj.receivedDate = receivedDate;
 
     const payload = {
-      contractorId: selectedContractorId,
+      employeeId: selectedEmployeeId,
       year: selectedYear,
       month: selectedMonth,
       totalHours: String(batchHours),
@@ -303,7 +303,7 @@ function UploadView() {
             {doneActive.length > 1 ? `${doneActive.length} timesheets submitted` : "Timesheet submitted"}
           </h2>
           <p className="text-sm text-muted-foreground mb-6">
-            {selectedContractor ? `${selectedContractor.firstName} ${selectedContractor.lastName}` : ""} · {MONTHS[selectedMonth]} {selectedYear}
+            {selectedEmployee ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}` : ""} · {MONTHS[selectedMonth]} {selectedYear}
           </p>
 
           <div className="text-left space-y-2 mb-6">
@@ -352,12 +352,12 @@ function UploadView() {
         <div>
           <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 block">Employee</Label>
           <div className="flex gap-1.5 flex-wrap" data-testid="picker-employee">
-            {activeContractors.map((c) => (
+            {activeEmployees.map((c) => (
               <button
                 key={c.id}
-                onClick={() => { setSelectedContractorId(c.id); setSenderEmail(c.email || ""); }}
+                onClick={() => { setSelectedEmployeeId(c.id); setSenderEmail(c.email || ""); }}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${
-                  selectedContractorId === c.id
+                  selectedEmployeeId === c.id
                     ? "border-primary/40 bg-primary/5 font-semibold text-primary"
                     : "border-border bg-card text-muted-foreground hover:border-primary/30"
                 }`}
@@ -567,7 +567,7 @@ function UploadView() {
                     </>
                   )}
 
-                  {!selectedContractorId && (
+                  {!selectedEmployeeId && (
                     <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted text-xs text-muted-foreground">
                       <Info className="w-3.5 h-3.5 flex-shrink-0" />
                       Select an employee before submitting
@@ -899,11 +899,11 @@ function SubmissionsView() {
     queryKey: ["/api/timesheets"],
   });
 
-  const { data: contractors } = useQuery<Contractor[]>({
+  const { data: employees } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
   });
 
-  const contractorMap = new Map(contractors?.map((c) => [c.id, c]) || []);
+  const employeeMap = new Map(employees?.map((c) => [c.id, c]) || []);
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -955,7 +955,7 @@ function SubmissionsView() {
     if (raw.intakeSource) notesObj.intakeSource = raw.intakeSource;
 
     const payload: Record<string, any> = {
-      contractorId: raw.contractorId,
+      employeeId: raw.employeeId,
       year: parseInt(raw.year),
       month: parseInt(raw.month),
       totalHours: raw.totalHours || "0",
@@ -988,7 +988,7 @@ function SubmissionsView() {
   }
 
   const filtered = timesheetsList?.filter((ts) => {
-    const c = contractorMap.get(ts.contractorId);
+    const c = employeeMap.get(ts.employeeId);
     const name = c ? `${c.firstName} ${c.lastName}` : "";
     return `${name} ${MONTHS[ts.month]} ${ts.year}`.toLowerCase().includes(search.toLowerCase());
   });
@@ -1028,12 +1028,12 @@ function SubmissionsView() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label>Employee</Label>
-                <Select name="contractorId" required>
+                <Select name="employeeId" required>
                   <SelectTrigger data-testid="select-employee">
                     <SelectValue placeholder="Select employee" />
                   </SelectTrigger>
                   <SelectContent>
-                    {contractors?.map((c) => (
+                    {employees?.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.firstName} {c.lastName}
                       </SelectItem>
@@ -1187,13 +1187,13 @@ function SubmissionsView() {
               ) : (
                 <div className="space-y-2">
                   {items.map((ts) => {
-                    const c = contractorMap.get(ts.contractorId);
+                    const c = employeeMap.get(ts.employeeId);
                     const intakeSource = getIntakeSource(ts.notes);
                     return (
                       <TimesheetRow
                         key={ts.id}
                         timesheet={ts}
-                        contractor={c}
+                        employee={c}
                         intakeSource={intakeSource}
                         onApprove={() => updateMutation.mutate({ id: ts.id, data: { status: "APPROVED", reviewedAt: new Date().toISOString() } })}
                         onReject={() => updateMutation.mutate({ id: ts.id, data: { status: "REJECTED", reviewedAt: new Date().toISOString() } })}
@@ -1213,14 +1213,14 @@ function SubmissionsView() {
 
 function TimesheetRow({
   timesheet: ts,
-  contractor: c,
+  employee: c,
   intakeSource,
   onApprove,
   onReject,
   onSubmit,
 }: {
   timesheet: Timesheet;
-  contractor: Contractor | undefined;
+  employee: Employee | undefined;
   intakeSource: string | null;
   onApprove: () => void;
   onReject: () => void;

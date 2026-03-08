@@ -20,12 +20,12 @@ type PayslipEntry = PayRunLine & { payRun: PayRun };
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-function getContractorId(): string | null {
-  return localStorage.getItem("portal_contractor_id");
+function getEmployeeId(): string | null {
+  return localStorage.getItem("portal_employee_id");
 }
 
-function getContractorName(): string {
-  return localStorage.getItem("portal_contractor_name") || "Contractor";
+function getEmployeeName(): string {
+  return localStorage.getItem("portal_employee_name") || "Employee";
 }
 
 function formatCurrency(amount: string | number) {
@@ -64,17 +64,17 @@ function isInCurrentFY(payRun: PayRun): boolean {
 
 export default function PortalPayslipsPage() {
   const [, setLocation] = useLocation();
-  const contractorId = getContractorId();
+  const employeeId = getEmployeeId();
 
-  if (!contractorId) {
+  if (!employeeId) {
     setLocation("/portal/login");
     return null;
   }
 
   const { data, isLoading } = useQuery<{ payslips: PayslipEntry[] }>({
-    queryKey: ["/api/payslips", contractorId],
+    queryKey: ["/api/payslips", employeeId],
     queryFn: async () => {
-      const res = await fetch(`/api/payslips?contractorId=${contractorId}`, { credentials: "include" });
+      const res = await fetch(`/api/payslips?employeeId=${employeeId}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch payslips");
       return res.json();
     },
@@ -105,7 +105,7 @@ export default function PortalPayslipsPage() {
   ];
 
   return (
-    <PortalShell contractorName={getContractorName()}>
+    <PortalShell employeeName={getEmployeeName()}>
       <div className="p-6 bg-muted/30 min-h-full">
         <div className="max-w-5xl mx-auto space-y-6">
           <div>

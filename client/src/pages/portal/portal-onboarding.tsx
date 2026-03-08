@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Contractor } from "@shared/schema";
+import type { Employee } from "@shared/schema";
 import {
   CheckCircle2,
   Circle,
@@ -42,8 +42,8 @@ const STEPS = [
 ];
 
 export default function PortalOnboardingPage() {
-  const contractorId = localStorage.getItem("portal_contractor_id") || "";
-  const contractorName = localStorage.getItem("portal_contractor_name") || "";
+  const employeeId = localStorage.getItem("portal_employee_id") || "";
+  const employeeName = localStorage.getItem("portal_employee_name") || "";
   const { toast } = useToast();
   const [step, setStep] = useState(0);
 
@@ -53,11 +53,11 @@ export default function PortalOnboardingPage() {
     bank: boolean;
     super: boolean;
   }>({
-    queryKey: ["/api/onboarding", contractorId],
+    queryKey: ["/api/onboarding", employeeId],
   });
 
-  const { data: contractor } = useQuery<Contractor>({
-    queryKey: ["/api/employees", contractorId],
+  const { data: employee } = useQuery<Employee>({
+    queryKey: ["/api/employees", employeeId],
   });
 
   const [personalForm, setPersonalForm] = useState({
@@ -96,31 +96,31 @@ export default function PortalOnboardingPage() {
   });
 
   useEffect(() => {
-    if (contractor) {
+    if (employee) {
       setPersonalForm({
-        dateOfBirth: contractor.dateOfBirth || "",
-        gender: contractor.gender || "",
-        phone: contractor.phone || "",
+        dateOfBirth: employee.dateOfBirth || "",
+        gender: employee.gender || "",
+        phone: employee.phone || "",
       });
       setAddressForm({
-        addressLine1: contractor.addressLine1 || "",
-        suburb: contractor.suburb || "",
-        state: contractor.state || "",
-        postcode: contractor.postcode || "",
+        addressLine1: employee.addressLine1 || "",
+        suburb: employee.suburb || "",
+        state: employee.state || "",
+        postcode: employee.postcode || "",
       });
     }
-  }, [contractor]);
+  }, [employee]);
 
   const personalMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("POST", "/api/onboarding/personal", {
-        contractorId,
+        employeeId,
         ...personalForm,
         ...addressForm,
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/onboarding", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/onboarding", employeeId] });
       toast({ title: "Personal details saved" });
       setStep(3);
     },
@@ -131,10 +131,10 @@ export default function PortalOnboardingPage() {
 
   const taxMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/onboarding/tax", { contractorId, ...taxForm });
+      await apiRequest("POST", "/api/onboarding/tax", { employeeId, ...taxForm });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/onboarding", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/onboarding", employeeId] });
       toast({ title: "Tax declaration saved" });
       setStep(4);
     },
@@ -145,10 +145,10 @@ export default function PortalOnboardingPage() {
 
   const bankMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/onboarding/bank", { contractorId, ...bankForm });
+      await apiRequest("POST", "/api/onboarding/bank", { employeeId, ...bankForm });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/onboarding", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/onboarding", employeeId] });
       toast({ title: "Bank details saved" });
       setStep(5);
     },
@@ -159,10 +159,10 @@ export default function PortalOnboardingPage() {
 
   const superMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/onboarding/super", { contractorId, ...superForm });
+      await apiRequest("POST", "/api/onboarding/super", { employeeId, ...superForm });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/onboarding", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/onboarding", employeeId] });
       toast({ title: "Super details saved" });
       setStep(6);
     },
@@ -178,7 +178,7 @@ export default function PortalOnboardingPage() {
 
   if (statusLoading) {
     return (
-      <PortalShell contractorName={contractorName}>
+      <PortalShell employeeName={employeeName}>
         <div className="p-6 space-y-4">
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-64 w-full" />
@@ -188,7 +188,7 @@ export default function PortalOnboardingPage() {
   }
 
   return (
-    <PortalShell contractorName={contractorName}>
+    <PortalShell employeeName={employeeName}>
       <div className="p-6 space-y-6 max-w-3xl mx-auto">
         <div>
           <h1 className="text-xl font-semibold" data-testid="text-onboarding-title">Onboarding</h1>
@@ -227,7 +227,7 @@ export default function PortalOnboardingPage() {
           <Card>
             <CardContent className="p-8 text-center space-y-4">
               <PartyPopper className="w-12 h-12 text-primary mx-auto" />
-              <h2 className="text-lg font-semibold">Welcome, {contractorName}!</h2>
+              <h2 className="text-lg font-semibold">Welcome, {employeeName}!</h2>
               <p className="text-muted-foreground max-w-md mx-auto">
                 Let's get you set up. We'll need your personal details, tax file number,
                 bank account, and superannuation information. This should take about 5 minutes.
