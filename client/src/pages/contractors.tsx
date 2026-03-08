@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -405,8 +406,15 @@ export default function ContractorsPage() {
                                 {getInitials(c.firstName, c.lastName)}
                               </div>
                               <div className="min-w-0">
-                                <div className="text-sm font-medium text-foreground truncate" data-testid={`text-contractor-name-${c.id}`}>
-                                  {c.firstName} {c.lastName}
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-sm font-medium text-foreground truncate" data-testid={`text-contractor-name-${c.id}`}>
+                                    {c.firstName} {c.lastName}
+                                  </span>
+                                  {c.xeroEmployeeId && (
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 shrink-0" data-testid={`badge-xero-${c.id}`}>
+                                      Xero
+                                    </Badge>
+                                  )}
                                 </div>
                                 <div className="text-xs text-muted-foreground truncate">{c.jobTitle || c.email}</div>
                               </div>

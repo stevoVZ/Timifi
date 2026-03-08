@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
-import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog } from "lucide-react";
+import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
 import type { Setting } from "@shared/schema";
 
 function useSettings() {
@@ -272,68 +272,255 @@ function PayrollTab({ settings }: { settings: Setting[] | undefined }) {
 
 function XeroTab({ settings }: { settings: Setting[] | undefined }) {
   const { toast } = useToast();
-  const [xeroEnabled, setXeroEnabled] = useState(false);
   const [xeroClientId, setXeroClientId] = useState("");
-  const [xeroTenantId, setXeroTenantId] = useState("");
-  const [autoSyncInvoices, setAutoSyncInvoices] = useState(false);
+  const [xeroClientSecret, setXeroClientSecret] = useState("");
+  const [autoSyncEmployees, setAutoSyncEmployees] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ total: number; created: number; updated: number; errors: string[] } | null>(null);
+
+  const statusQuery = useQuery<{ connected: boolean; tenantName: string; lastSyncAt: string }>({
+    queryKey: ["/api/xero/status"],
+    queryFn: async () => {
+      const res = await fetch("/api/xero/status");
+      if (!res.ok) throw new Error("Failed to fetch status");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
 
   useEffect(() => {
     if (settings) {
-      setXeroEnabled(useSettingValue(settings, "xero.enabled", "false") === "true");
       setXeroClientId(useSettingValue(settings, "xero.clientId", ""));
-      setXeroTenantId(useSettingValue(settings, "xero.tenantId", ""));
-      setAutoSyncInvoices(useSettingValue(settings, "xero.autoSyncInvoices", "false") === "true");
+      setXeroClientSecret(useSettingValue(settings, "xero.clientSecret", ""));
+      setAutoSyncEmployees(useSettingValue(settings, "xero.autoSyncEmployees", "false") === "true");
     }
   }, [settings]);
 
-  const saveMutation = useMutation({
+  const saveCredentialsMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("PUT", "/api/settings/xero.enabled", { value: String(xeroEnabled) });
       await apiRequest("PUT", "/api/settings/xero.clientId", { value: xeroClientId });
-      await apiRequest("PUT", "/api/settings/xero.tenantId", { value: xeroTenantId });
-      await apiRequest("PUT", "/api/settings/xero.autoSyncInvoices", { value: String(autoSyncInvoices) });
+      await apiRequest("PUT", "/api/settings/xero.clientSecret", { value: xeroClientSecret });
+      await apiRequest("PUT", "/api/settings/xero.autoSyncEmployees", { value: String(autoSyncEmployees) });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
-      toast({ title: "Xero settings saved" });
+      toast({ title: "Xero credentials saved" });
     },
     onError: () => {
-      toast({ title: "Failed to save settings", variant: "destructive" });
+      toast({ title: "Failed to save credentials", variant: "destructive" });
     },
   });
 
+  const connectMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PUT", "/api/settings/xero.clientId", { value: xeroClientId });
+      await apiRequest("PUT", "/api/settings/xero.clientSecret", { value: xeroClientSecret });
+      const res = await fetch("/api/xero/connect");
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Failed to connect");
+      }
+      const data = await res.json();
+      return data.url;
+    },
+    onSuccess: (url: string) => {
+      window.location.href = url;
+    },
+    onError: (err: Error) => {
+      toast({ title: err.message, variant: "destructive" });
+    },
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/xero/disconnect");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Disconnected from Xero" });
+    },
+    onError: () => {
+      toast({ title: "Failed to disconnect", variant: "destructive" });
+    },
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/xero/sync");
+      return res.json();
+    },
+    onSuccess: (data: { total: number; created: number; updated: number; errors: string[] }) => {
+      setSyncResult(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/contractors"] });
+      toast({ title: `Synced ${data.total} employees (${data.created} new, ${data.updated} updated)` });
+    },
+    onError: (err: Error) => {
+      toast({ title: err.message || "Sync failed", variant: "destructive" });
+    },
+  });
+
+  const isConnected = statusQuery.data?.connected || false;
+  const tenantName = statusQuery.data?.tenantName || "";
+  const lastSyncAt = statusQuery.data?.lastSyncAt || "";
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <Label data-testid="label-xero-enabled">Enable Xero Integration</Label>
-          <p className="text-xs text-muted-foreground mt-0.5">Connect your Xero account for accounting sync</p>
+      <div className={`p-4 rounded-lg border ${isConnected ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800" : "bg-muted/50 border-border"}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {isConnected ? (
+              <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <XCircle className="w-5 h-5 text-muted-foreground" />
+            )}
+            <div>
+              <div className="font-medium text-sm" data-testid="text-xero-status">
+                {isConnected ? "Connected to Xero" : "Not connected"}
+              </div>
+              {isConnected && tenantName && (
+                <div className="text-xs text-muted-foreground" data-testid="text-xero-tenant">
+                  Organisation: {tenantName}
+                </div>
+              )}
+              {isConnected && lastSyncAt && (
+                <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5" data-testid="text-xero-last-sync">
+                  <Clock className="w-3 h-3" />
+                  Last synced: {new Date(lastSyncAt).toLocaleString("en-AU")}
+                </div>
+              )}
+            </div>
+          </div>
+          {isConnected && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => disconnectMutation.mutate()}
+              disabled={disconnectMutation.isPending}
+              data-testid="button-xero-disconnect"
+            >
+              <Unlink className="w-4 h-4" />
+              Disconnect
+            </Button>
+          )}
         </div>
-        <Switch checked={xeroEnabled} onCheckedChange={setXeroEnabled} data-testid="switch-xero-enabled" />
       </div>
-      {xeroEnabled && (
-        <>
-          <div className="space-y-2">
-            <Label htmlFor="xero-client-id" data-testid="label-xero-client-id">Client ID</Label>
-            <Input id="xero-client-id" value={xeroClientId} onChange={(e) => setXeroClientId(e.target.value)} data-testid="input-xero-client-id" />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="xero-tenant-id" data-testid="label-xero-tenant-id">Tenant ID</Label>
-            <Input id="xero-tenant-id" value={xeroTenantId} onChange={(e) => setXeroTenantId(e.target.value)} data-testid="input-xero-tenant-id" />
-          </div>
+
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="xero-client-id" data-testid="label-xero-client-id">Client ID</Label>
+          <Input
+            id="xero-client-id"
+            value={xeroClientId}
+            onChange={(e) => setXeroClientId(e.target.value)}
+            placeholder="Enter your Xero app Client ID"
+            data-testid="input-xero-client-id"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="xero-client-secret" data-testid="label-xero-client-secret">Client Secret</Label>
+          <Input
+            id="xero-client-secret"
+            type="password"
+            value={xeroClientSecret}
+            onChange={(e) => setXeroClientSecret(e.target.value)}
+            placeholder="Enter your Xero app Client Secret"
+            data-testid="input-xero-client-secret"
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Create an app at developer.xero.com/myapps. Set the redirect URI to your app URL + /api/xero/callback
+        </p>
+      </div>
+
+      {!isConnected ? (
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={() => {
+              if (!xeroClientId || !xeroClientSecret) {
+                toast({ title: "Enter Client ID and Client Secret first", variant: "destructive" });
+                return;
+              }
+              connectMutation.mutate();
+            }}
+            disabled={connectMutation.isPending || !xeroClientId || !xeroClientSecret}
+            data-testid="button-xero-connect"
+          >
+            {connectMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Link2 className="w-4 h-4" />
+            )}
+            {connectMutation.isPending ? "Connecting..." : "Connect to Xero"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => saveCredentialsMutation.mutate()}
+            disabled={saveCredentialsMutation.isPending}
+            data-testid="button-save-xero-credentials"
+          >
+            <Save className="w-4 h-4" />
+            {saveCredentialsMutation.isPending ? "Saving..." : "Save Credentials"}
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <Label data-testid="label-auto-sync">Auto-sync Invoices</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">Automatically push invoices to Xero when created</p>
+              <Label data-testid="label-auto-sync-employees">Auto-sync Employees</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Automatically sync employee data from Xero on a schedule</p>
             </div>
-            <Switch checked={autoSyncInvoices} onCheckedChange={setAutoSyncInvoices} data-testid="switch-auto-sync" />
+            <Switch
+              checked={autoSyncEmployees}
+              onCheckedChange={(val) => {
+                setAutoSyncEmployees(val);
+                saveCredentialsMutation.mutate();
+              }}
+              data-testid="switch-auto-sync-employees"
+            />
           </div>
-        </>
+
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+              data-testid="button-xero-sync"
+            >
+              {syncMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              {syncMutation.isPending ? "Syncing..." : "Sync Employees Now"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => saveCredentialsMutation.mutate()}
+              disabled={saveCredentialsMutation.isPending}
+              data-testid="button-save-xero-settings"
+            >
+              <Save className="w-4 h-4" />
+              Save Settings
+            </Button>
+          </div>
+
+          {syncResult && (
+            <div className="p-3 rounded-lg bg-muted/50 border text-sm space-y-1" data-testid="text-sync-result">
+              <div className="font-medium">Sync Complete</div>
+              <div className="text-muted-foreground">
+                Total: {syncResult.total} employees | {syncResult.created} created | {syncResult.updated} updated
+              </div>
+              {syncResult.errors.length > 0 && (
+                <div className="text-destructive text-xs mt-1">
+                  {syncResult.errors.map((e, i) => (
+                    <div key={i}>{e}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
-      <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save-xero">
-        <Save className="w-4 h-4" />
-        {saveMutation.isPending ? "Saving..." : "Save Xero Settings"}
-      </Button>
     </div>
   );
 }

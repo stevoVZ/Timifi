@@ -21,6 +21,7 @@ Labour hire agency management portal for contractors, timesheets, invoicing, and
 - **Pay Items**: Pay code management with type, rate, multiplier, taxable/superable flags, active toggle
 - **Notifications**: Priority-based notification center with filtering by type/priority, mark read/unread
 - **Settings**: Tabbed settings page (Branding, Company, Payroll, Xero, Portal, Users)
+- **Xero Integration**: OAuth2 connection to Xero Payroll AU API, employee sync (Xero as source of truth), connection status display, sync results, Xero-synced contractors show badge and locked fields
 
 ### Contractor Portal (/portal/*)
 - **Portal Login**: Email-based login for contractors
@@ -70,6 +71,7 @@ server/
   seed.ts                     - Seed data for development
   payslip.ts                  - Payslip generation (jsPDF server-side PDF + HTML fallback)
   aba.ts                      - ABA direct entry file generation
+  xero.ts                     - Xero Payroll AU API integration (OAuth2, employee sync)
 
 shared/
   schema.ts                   - Drizzle schema with all tables and types
@@ -77,7 +79,7 @@ shared/
 
 ## Database Tables
 
-- `contractors` - Contractor profiles with clearance, rates, employment, personal details
+- `contractors` - Contractor profiles with clearance, rates, employment, personal details, optional `xero_employee_id` for Xero sync
 - `timesheets` - Monthly timesheet records with hours and status workflow
 - `invoices` - Invoice records with GST calculations and status tracking
 - `pay_runs` - Payroll run records with PAYG/super breakdowns, period dates, payment date

@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
+import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees } from "./xero";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -71,9 +72,21 @@ export async function registerRoutes(
 
   app.patch("/api/contractors/:id", async (req, res) => {
     try {
-      const contractor = await storage.updateContractor(req.params.id, req.body);
-      if (!contractor) return res.status(404).json({ message: "Contractor not found" });
-      res.json(contractor);
+      const existing = await storage.getContractor(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Contractor not found" });
+
+      if (existing.xeroEmployeeId) {
+        const xeroLockedFields = ["firstName", "lastName", "email", "phone", "jobTitle", "hourlyRate", "startDate", "endDate", "dateOfBirth", "gender", "addressLine1", "suburb", "state", "postcode", "payFrequency"];
+        const body = { ...req.body };
+        for (const field of xeroLockedFields) {
+          delete body[field];
+        }
+        const contractor = await storage.updateContractor(req.params.id, body);
+        res.json(contractor);
+      } else {
+        const contractor = await storage.updateContractor(req.params.id, req.body);
+        res.json(contractor!);
+      }
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to update contractor" });
     }
@@ -863,6 +876,53 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to delete document" });
+    }
+  });
+
+  app.get("/api/xero/connect", async (_req, res) => {
+    try {
+      const url = await getConsentUrl();
+      res.json({ url });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to build Xero consent URL" });
+    }
+  });
+
+  app.get("/api/xero/callback", async (req, res) => {
+    try {
+      const fullUrl = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+      await handleCallback(fullUrl);
+      res.redirect("/settings?tab=xero&connected=true");
+    } catch (err: any) {
+      console.error("Xero callback error:", err);
+      res.redirect("/settings?tab=xero&error=" + encodeURIComponent(err.message || "Connection failed"));
+    }
+  });
+
+  app.get("/api/xero/status", async (_req, res) => {
+    try {
+      const status = await isConnected();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to check Xero status" });
+    }
+  });
+
+  app.post("/api/xero/sync", async (_req, res) => {
+    try {
+      const result = await syncEmployees();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to sync employees from Xero" });
+    }
+  });
+
+  app.post("/api/xero/disconnect", async (_req, res) => {
+    try {
+      await disconnect();
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to disconnect Xero" });
     }
   });
 

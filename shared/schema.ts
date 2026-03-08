@@ -41,6 +41,7 @@ export const contractors = pgTable("contractors", {
   gender: text("gender"),
   addressLine1: text("address_line1"),
   postcode: text("postcode"),
+  xeroEmployeeId: text("xero_employee_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

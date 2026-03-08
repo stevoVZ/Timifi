@@ -17,7 +17,7 @@ import {
   ArrowLeft, Shield, MapPin, Briefcase, Mail, Phone, Calendar,
   DollarSign, Clock, Pencil, Check, X, AlertTriangle, FileText,
   Receipt, User, Upload, CloudUpload, Trash2, Eye, FileBadge,
-  Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File
+  Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File, Lock, RefreshCw
 } from "lucide-react";
 import type { Contractor, Timesheet, Invoice, Document } from "@shared/schema";
 
@@ -172,6 +172,11 @@ export default function ContractorDetailPage() {
                       {contractor.firstName} {contractor.lastName}
                     </h2>
                     <StatusBadge status={contractor.status} />
+                    {contractor.xeroEmployeeId && (
+                      <Badge variant="outline" className="text-xs bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800" data-testid="badge-xero-synced">
+                        Xero Synced
+                      </Badge>
+                    )}
                     {contractor.clearanceLevel && contractor.clearanceLevel !== "NONE" && (
                       <span className="text-xs font-semibold flex items-center gap-1">
                         <Shield className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
@@ -247,6 +252,7 @@ export default function ContractorDetailPage() {
                       onCancel={cancelEdit}
                       isPending={updateMutation.isPending}
                       testId="text-email"
+                      locked={!!contractor.xeroEmployeeId}
                     />
                     <EditableField
                       icon={Phone}
@@ -261,6 +267,7 @@ export default function ContractorDetailPage() {
                       onCancel={cancelEdit}
                       isPending={updateMutation.isPending}
                       testId="text-phone"
+                      locked={!!contractor.xeroEmployeeId}
                     />
                     <EditableField
                       icon={Briefcase}
@@ -275,6 +282,7 @@ export default function ContractorDetailPage() {
                       onCancel={cancelEdit}
                       isPending={updateMutation.isPending}
                       testId="text-job-title"
+                      locked={!!contractor.xeroEmployeeId}
                     />
                     <EditableField
                       icon={MapPin}
@@ -302,12 +310,22 @@ export default function ContractorDetailPage() {
                       onStartEdit={startEdit}
                       onSave={saveEdit}
                       onCancel={cancelEdit}
+                      locked={!!contractor.xeroEmployeeId}
                       isPending={updateMutation.isPending}
                       testId="text-rate"
                     />
                     <InfoRow icon={Calendar} label="Start Date" value={contractor.startDate ? new Date(contractor.startDate).toLocaleDateString("en-AU") : "Not set"} testId="text-start-date" />
                     <InfoRow icon={Clock} label="Contract Hours" value={`${contractor.contractHoursPA?.toLocaleString()} h/yr (${Math.round(monthlyAllocation)} h/mo)`} testId="text-contract-hours" />
                     <InfoRow icon={MapPin} label="Location" value={[contractor.suburb, contractor.state].filter(Boolean).join(", ") || "Not set"} testId="text-location" />
+                    {contractor.xeroEmployeeId && (
+                      <div className="flex items-center gap-2 col-span-full pt-2 border-t">
+                        <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
+                        <span className="text-xs text-muted-foreground">Synced from Xero</span>
+                        <span className="text-xs font-mono text-muted-foreground/70" data-testid="text-xero-employee-id">
+                          ID: {contractor.xeroEmployeeId}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -763,11 +781,12 @@ interface EditableFieldProps {
   onCancel: () => void;
   isPending: boolean;
   testId: string;
+  locked?: boolean;
 }
 
 function EditableField({
   icon: Icon, label, field, value, rawValue, editingField, editValues,
-  setEditValues, onStartEdit, onSave, onCancel, isPending, testId
+  setEditValues, onStartEdit, onSave, onCancel, isPending, testId, locked
 }: EditableFieldProps) {
   const isEditing = editingField === field;
 
@@ -802,15 +821,19 @@ function EditableField({
       <Icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
       <span className="text-xs text-muted-foreground">{label}:</span>
       <span className="text-sm text-foreground truncate" data-testid={testId}>{value}</span>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="invisible group-hover:visible"
-        onClick={() => onStartEdit(field, rawValue !== undefined ? rawValue : value)}
-        data-testid={`button-edit-${field}`}
-      >
-        <Pencil className="w-3 h-3" />
-      </Button>
+      {locked ? (
+        <Lock className="w-3 h-3 text-muted-foreground/50" data-testid={`icon-locked-${field}`} />
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="invisible group-hover:visible"
+          onClick={() => onStartEdit(field, rawValue !== undefined ? rawValue : value)}
+          data-testid={`button-edit-${field}`}
+        >
+          <Pencil className="w-3 h-3" />
+        </Button>
+      )}
     </div>
   );
 }

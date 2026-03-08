@@ -24,6 +24,7 @@ export interface IStorage {
   getContractors(): Promise<Contractor[]>;
   getContractor(id: string): Promise<Contractor | undefined>;
   getContractorByEmail(email: string): Promise<Contractor | undefined>;
+  getContractorByXeroId(xeroEmployeeId: string): Promise<Contractor | undefined>;
   createContractor(data: InsertContractor): Promise<Contractor>;
   updateContractor(id: string, data: Partial<InsertContractor>): Promise<Contractor | undefined>;
 
@@ -120,6 +121,11 @@ export class DatabaseStorage implements IStorage {
 
   async getContractorByEmail(email: string): Promise<Contractor | undefined> {
     const [contractor] = await db.select().from(contractors).where(eq(contractors.email, email));
+    return contractor;
+  }
+
+  async getContractorByXeroId(xeroEmployeeId: string): Promise<Contractor | undefined> {
+    const [contractor] = await db.select().from(contractors).where(eq(contractors.xeroEmployeeId, xeroEmployeeId));
     return contractor;
   }
 
