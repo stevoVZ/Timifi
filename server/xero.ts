@@ -1,5 +1,6 @@
 import { XeroClient } from "xero-node";
 import { storage } from "./storage";
+import crypto from "crypto";
 
 let xeroClient: XeroClient | null = null;
 let cachedClientId: string | null = null;
@@ -22,12 +23,125 @@ function getRedirectUri(): string {
   return `${baseUrl}/api/xero/callback`;
 }
 
-export async function getXeroClient(): Promise<XeroClient> {
+export function getCallbackUri(): string {
+  return getRedirectUri();
+}
+
+export async function getConsentUrl(): Promise<string> {
+  const clientId = await getSettingValue("xero.clientId");
+  if (!clientId) {
+    throw new Error("Xero Client ID is required. Configure it in Settings.");
+  }
+
+  const state = crypto.randomBytes(32).toString("hex");
+  await saveSetting("xero.oauthState", state);
+
+  const redirectUri = getRedirectUri();
+  const scopes = [
+    "openid",
+    "profile",
+    "email",
+    "payroll.employees",
+    "payroll.employees.read",
+    "payroll.payruns",
+    "payroll.payruns.read",
+    "payroll.payslip",
+    "payroll.payslip.read",
+    "payroll.settings",
+    "payroll.settings.read",
+    "payroll.timesheets",
+    "payroll.timesheets.read",
+    "offline_access",
+  ];
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    scope: scopes.join(" "),
+    state: state,
+  });
+
+  return `https://login.xero.com/identity/connect/authorize?${params.toString()}`;
+}
+
+export async function handleCallback(url: string): Promise<void> {
+  const parsedUrl = new URL(url, "https://placeholder.com");
+  const code = parsedUrl.searchParams.get("code");
+  const returnedState = parsedUrl.searchParams.get("state");
+
+  if (!code) {
+    const error = parsedUrl.searchParams.get("error");
+    const errorDesc = parsedUrl.searchParams.get("error_description");
+    throw new Error(`Xero authorization failed: ${error || "no code returned"}. ${errorDesc || ""}`);
+  }
+
+  const savedState = await getSettingValue("xero.oauthState");
+  if (savedState && returnedState !== savedState) {
+    throw new Error("OAuth state mismatch. Please try connecting again.");
+  }
+
+  const clientId = await getSettingValue("xero.clientId");
+  const clientSecret = await getSettingValue("xero.clientSecret");
+  const redirectUri = getRedirectUri();
+
+  const tokenResponse = await fetch("https://identity.xero.com/connect/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Authorization": "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64"),
+    },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code: code,
+      redirect_uri: redirectUri,
+    }).toString(),
+  });
+
+  if (!tokenResponse.ok) {
+    const errorBody = await tokenResponse.text();
+    console.error("Xero token exchange failed:", tokenResponse.status, errorBody);
+    throw new Error(`Token exchange failed (${tokenResponse.status}): ${errorBody}`);
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+    token_type: string;
+    id_token?: string;
+  };
+
+  const expiresAt = Math.floor(Date.now() / 1000) + tokenData.expires_in;
+
+  await saveSetting("xero.accessToken", tokenData.access_token);
+  await saveSetting("xero.refreshToken", tokenData.refresh_token);
+  await saveSetting("xero.tokenExpiry", String(expiresAt));
+
+  const tenantsResponse = await fetch("https://api.xero.com/connections", {
+    headers: {
+      "Authorization": `Bearer ${tokenData.access_token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (tenantsResponse.ok) {
+    const tenants = await tenantsResponse.json() as Array<{ tenantId: string; tenantName: string; tenantType: string }>;
+    if (tenants.length > 0) {
+      await saveSetting("xero.tenantId", tenants[0].tenantId);
+      await saveSetting("xero.tenantName", tenants[0].tenantName || "");
+    }
+  }
+
+  await saveSetting("xero.connected", "true");
+}
+
+async function getXeroClientForApi(): Promise<XeroClient> {
   const clientId = await getSettingValue("xero.clientId");
   const clientSecret = await getSettingValue("xero.clientSecret");
 
   if (!clientId || !clientSecret) {
-    throw new Error("Xero Client ID and Client Secret are required. Configure them in Settings.");
+    throw new Error("Xero Client ID and Client Secret are required.");
   }
 
   if (xeroClient && cachedClientId === clientId) {
@@ -35,114 +149,70 @@ export async function getXeroClient(): Promise<XeroClient> {
   }
 
   const redirectUri = getRedirectUri();
-
   xeroClient = new XeroClient({
     clientId,
     clientSecret,
     redirectUris: [redirectUri],
-    scopes: [
-      "openid",
-      "profile",
-      "email",
-      "payroll.employees.read",
-      "payroll.payruns.read",
-      "payroll.payslip.read",
-      "payroll.settings.read",
-      "offline_access",
-    ],
+    scopes: ["openid", "profile", "email", "offline_access"],
   });
 
   cachedClientId = clientId;
   return xeroClient;
 }
 
-export function getCallbackUri(): string {
-  return getRedirectUri();
-}
-
-export async function getConsentUrl(): Promise<string> {
-  xeroClient = null;
-  cachedClientId = null;
-  const client = await getXeroClient();
-  const url = await client.buildConsentUrl();
-  return url;
-}
-
-export async function handleCallback(callbackUrl: string): Promise<void> {
-  if (!xeroClient) {
-    await getXeroClient();
-  }
-  const client = xeroClient!;
-  const tokenSet = await client.apiCallback(callbackUrl);
-  await client.updateTenants();
-
-  if (tokenSet.access_token) {
-    await saveSetting("xero.accessToken", tokenSet.access_token);
-  }
-  if (tokenSet.refresh_token) {
-    await saveSetting("xero.refreshToken", tokenSet.refresh_token);
-  }
-  if (tokenSet.expires_at) {
-    await saveSetting("xero.tokenExpiry", String(tokenSet.expires_at));
-  }
-
-  if (client.tenants && client.tenants.length > 0) {
-    const tenant = client.tenants[0];
-    await saveSetting("xero.tenantId", tenant.tenantId);
-    await saveSetting("xero.tenantName", tenant.tenantName || "");
-  }
-
-  await saveSetting("xero.connected", "true");
-}
-
-export async function refreshTokenIfNeeded(): Promise<XeroClient> {
-  const client = await getXeroClient();
-
+export async function refreshTokenIfNeeded(): Promise<{ accessToken: string; tenantId: string }> {
   const accessToken = await getSettingValue("xero.accessToken");
   const refreshToken = await getSettingValue("xero.refreshToken");
   const tokenExpiry = await getSettingValue("xero.tokenExpiry");
+  const tenantId = await getSettingValue("xero.tenantId");
 
   if (!accessToken || !refreshToken) {
     throw new Error("Xero is not connected. Please connect via Settings.");
   }
 
-  const clientId = await getSettingValue("xero.clientId");
-  const clientSecret = await getSettingValue("xero.clientSecret");
+  if (!tenantId) {
+    throw new Error("Xero Tenant ID not found. Please reconnect to Xero.");
+  }
 
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = parseInt(tokenExpiry, 10) || 0;
 
   if (now >= expiresAt - 60) {
-    const newTokenSet = await client.refreshWithRefreshToken(
-      clientId,
-      clientSecret,
-      refreshToken
-    );
+    const clientId = await getSettingValue("xero.clientId");
+    const clientSecret = await getSettingValue("xero.clientSecret");
 
-    if (newTokenSet.access_token) {
-      await saveSetting("xero.accessToken", newTokenSet.access_token);
-    }
-    if (newTokenSet.refresh_token) {
-      await saveSetting("xero.refreshToken", newTokenSet.refresh_token);
-    }
-    if (newTokenSet.expires_at) {
-      await saveSetting("xero.tokenExpiry", String(newTokenSet.expires_at));
-    }
-  } else {
-    client.setTokenSet({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      expires_at: expiresAt,
-      token_type: "Bearer",
+    const tokenResponse = await fetch("https://identity.xero.com/connect/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64"),
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }).toString(),
     });
+
+    if (!tokenResponse.ok) {
+      const errorBody = await tokenResponse.text();
+      throw new Error(`Token refresh failed: ${errorBody}`);
+    }
+
+    const tokenData = await tokenResponse.json() as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
+
+    const newExpiresAt = Math.floor(Date.now() / 1000) + tokenData.expires_in;
+    await saveSetting("xero.accessToken", tokenData.access_token);
+    await saveSetting("xero.refreshToken", tokenData.refresh_token);
+    await saveSetting("xero.tokenExpiry", String(newExpiresAt));
+
+    return { accessToken: tokenData.access_token, tenantId };
   }
 
-  const tenantId = await getSettingValue("xero.tenantId");
-  if (tenantId && (!client.tenants || client.tenants.length === 0)) {
-    (client as any).tenants = [{ tenantId, tenantName: await getSettingValue("xero.tenantName") }];
-  }
-
-  return client;
+  return { accessToken, tenantId };
 }
 
 export async function isConnected(): Promise<{
@@ -166,6 +236,7 @@ export async function disconnect(): Promise<void> {
     "xero.tenantId",
     "xero.tenantName",
     "xero.connected",
+    "xero.oauthState",
   ];
   for (const key of keys) {
     await saveSetting(key, "");
@@ -209,23 +280,40 @@ export async function syncEmployees(): Promise<{
   updated: number;
   errors: string[];
 }> {
-  const client = await refreshTokenIfNeeded();
-  const tenantId = await getSettingValue("xero.tenantId");
+  const { accessToken, tenantId } = await refreshTokenIfNeeded();
 
-  if (!tenantId) {
-    throw new Error("Xero Tenant ID not found. Please reconnect to Xero.");
+  const empResponse = await fetch("https://api.xero.com/payroll.xro/1.0/Employees", {
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Accept": "application/json",
+    },
+  });
+
+  if (!empResponse.ok) {
+    const errorBody = await empResponse.text();
+    throw new Error(`Failed to fetch employees from Xero (${empResponse.status}): ${errorBody}`);
   }
 
-  const response = await client.payrollAUApi.getEmployees(tenantId);
-  const employees = (response.body as any)?.employees || [];
+  const empData = await empResponse.json() as { Employees?: any[] };
+  const employees = empData.Employees || [];
 
   let calendarsMap: Record<string, string> = {};
   try {
-    const calResponse = await client.payrollAUApi.getPayrollCalendars(tenantId);
-    const calendars = (calResponse.body as any)?.payrollCalendars || [];
-    for (const cal of calendars) {
-      if (cal.payrollCalendarID && cal.calendarType) {
-        calendarsMap[cal.payrollCalendarID] = cal.calendarType;
+    const calResponse = await fetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+    if (calResponse.ok) {
+      const calData = await calResponse.json() as { PayrollCalendars?: any[] };
+      const calendars = calData.PayrollCalendars || [];
+      for (const cal of calendars) {
+        if (cal.PayrollCalendarID && cal.CalendarType) {
+          calendarsMap[cal.PayrollCalendarID] = cal.CalendarType;
+        }
       }
     }
   } catch {}
@@ -236,32 +324,32 @@ export async function syncEmployees(): Promise<{
 
   for (const emp of employees) {
     try {
-      const email = emp.email;
-      const xeroId = emp.employeeID;
+      const email = emp.Email;
+      const xeroId = emp.EmployeeID;
 
       if (!email && !xeroId) {
-        errors.push(`Skipped employee without email or ID: ${emp.firstName} ${emp.lastName}`);
+        errors.push(`Skipped employee without email or ID: ${emp.FirstName} ${emp.LastName}`);
         continue;
       }
 
-      const hourlyRate = emp.payTemplate?.earningsLines?.[0]?.ratePerUnit;
-      const calendarType = emp.payrollCalendarID
-        ? calendarsMap[emp.payrollCalendarID]
+      const hourlyRate = emp.PayTemplate?.EarningsLines?.[0]?.RatePerUnit;
+      const calendarType = emp.PayrollCalendarID
+        ? calendarsMap[emp.PayrollCalendarID]
         : undefined;
 
-      const address = emp.homeAddress;
+      const address = emp.HomeAddress;
 
       const contractorData: Record<string, any> = {
-        firstName: emp.firstName || "Unknown",
-        lastName: emp.lastName || "Unknown",
+        firstName: emp.FirstName || "Unknown",
+        lastName: emp.LastName || "Unknown",
         email: email || `${xeroId}@xero-sync.local`,
-        phone: emp.phone || emp.mobile || null,
-        jobTitle: emp.jobTitle || emp.title || null,
-        status: mapXeroStatus(emp.status),
-        startDate: parseXeroDate(emp.startDate),
-        endDate: parseXeroDate(emp.terminationDate),
-        dateOfBirth: parseXeroDate(emp.dateOfBirth),
-        gender: emp.gender || null,
+        phone: emp.Phone || emp.Mobile || null,
+        jobTitle: emp.JobTitle || emp.Title || null,
+        status: mapXeroStatus(emp.Status),
+        startDate: parseXeroDate(emp.StartDate),
+        endDate: parseXeroDate(emp.TerminationDate),
+        dateOfBirth: parseXeroDate(emp.DateOfBirth),
+        gender: emp.Gender || null,
         xeroEmployeeId: xeroId,
         employmentType: "LABOURHIRE" as const,
       };
@@ -275,10 +363,10 @@ export async function syncEmployees(): Promise<{
       }
 
       if (address) {
-        if (address.addressLine1) contractorData.addressLine1 = address.addressLine1;
-        if (address.city) contractorData.suburb = address.city;
-        if (address.region) contractorData.state = address.region.substring(0, 3).toUpperCase();
-        if (address.postalCode) contractorData.postcode = address.postalCode;
+        if (address.AddressLine1) contractorData.addressLine1 = address.AddressLine1;
+        if (address.City) contractorData.suburb = address.City;
+        if (address.Region) contractorData.state = address.Region.substring(0, 3).toUpperCase();
+        if (address.PostalCode) contractorData.postcode = address.PostalCode;
       }
 
       let existing = xeroId
@@ -297,7 +385,7 @@ export async function syncEmployees(): Promise<{
         created++;
       }
     } catch (err: any) {
-      errors.push(`Error syncing ${emp.firstName} ${emp.lastName}: ${err.message}`);
+      errors.push(`Error syncing ${emp.FirstName} ${emp.LastName}: ${err.message}`);
     }
   }
 
