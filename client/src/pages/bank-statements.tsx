@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,6 +54,24 @@ export default function BankStatementsPage() {
   const [search, setSearch] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedAccount, setSelectedAccount] = useState<string>("all");
+  const [initialPeriodSet, setInitialPeriodSet] = useState(false);
+
+  const { data: latestPeriod } = useQuery<{ month: number; year: number }>({
+    queryKey: ["/api/bank-transactions/latest-period"],
+    queryFn: async () => {
+      const res = await fetch("/api/bank-transactions/latest-period", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+  });
+
+  useEffect(() => {
+    if (latestPeriod && !initialPeriodSet) {
+      setMonth(latestPeriod.month);
+      setYear(latestPeriod.year);
+      setInitialPeriodSet(true);
+    }
+  }, [latestPeriod, initialPeriodSet]);
 
   const { data, isLoading } = useQuery<BankTransaction[]>({
     queryKey: ["/api/bank-transactions", month, year],

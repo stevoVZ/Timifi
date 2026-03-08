@@ -1419,6 +1419,28 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/bank-transactions/latest-period", async (_req, res) => {
+    try {
+      const data = await storage.getBankTransactions();
+      if (data.length === 0) {
+        const now = new Date();
+        res.json({ month: now.getMonth() + 1, year: now.getFullYear() });
+        return;
+      }
+      let latestYear = 0;
+      let latestMonth = 0;
+      for (const t of data) {
+        if (t.year > latestYear || (t.year === latestYear && t.month > latestMonth)) {
+          latestYear = t.year;
+          latestMonth = t.month;
+        }
+      }
+      res.json({ month: latestMonth, year: latestYear });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch latest period" });
+    }
+  });
+
   app.get("/api/bank-transactions", async (req, res) => {
     try {
       const month = req.query.month ? parseInt(req.query.month as string) : undefined;
