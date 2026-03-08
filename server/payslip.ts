@@ -1,3 +1,5 @@
+import { jsPDF } from "jspdf";
+
 export interface PayslipData {
   agencyName: string;
   agencyABN: string;
@@ -214,6 +216,324 @@ export function generatePayslipHTML(d: PayslipData): string {
   </div>
 </body>
 </html>`;
+}
+
+export function generatePayslipPDF(d: PayslipData): Buffer {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 20;
+  const contentW = pageW - margin * 2;
+  let y = 0;
+
+  const accent = "#2563eb";
+  const darkText = "#111827";
+  const grayText = "#6b7280";
+  const lightGray = "#9ca3af";
+  const bgGray = "#f4f5f7";
+  const greenText = "#16a34a";
+  const greenBg = "#f0fdf4";
+  const purpleText = "#7c3aed";
+  const purpleBg = "#f5f3ff";
+  const redText = "#dc2626";
+
+  function hexToRgb(hex: string): [number, number, number] {
+    const h = hex.replace("#", "");
+    return [parseInt(h.substring(0, 2), 16), parseInt(h.substring(2, 4), 16), parseInt(h.substring(4, 6), 16)];
+  }
+
+  function setColor(hex: string) {
+    const [r, g, b] = hexToRgb(hex);
+    doc.setTextColor(r, g, b);
+  }
+
+  function setFillColor(hex: string) {
+    const [r, g, b] = hexToRgb(hex);
+    doc.setFillColor(r, g, b);
+  }
+
+  function setDrawColor(hex: string) {
+    const [r, g, b] = hexToRgb(hex);
+    doc.setDrawColor(r, g, b);
+  }
+
+  doc.setFillColor(...hexToRgb(accent));
+  doc.rect(0, 0, pageW, 28, "F");
+
+  setColor("#ffffff");
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  y = 8;
+  doc.text("PAY ADVICE / PAYSLIP", margin, y);
+
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  y = 15;
+  doc.text(d.agencyName, margin, y);
+
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  y = 21;
+  const abnLine = `ABN ${d.agencyABN}${d.agencyAddress ? " - " + d.agencyAddress : ""}`;
+  doc.text(abnLine, margin, y);
+
+  doc.setFontSize(7);
+  doc.setFont("helvetica", "bold");
+  setFillColor("#ffffff");
+  const badgeText = d.payPeriodLabel.toUpperCase();
+  const badgeW = doc.getTextWidth(badgeText) + 8;
+  doc.roundedRect(margin, 23, badgeW, 4, 2, 2, "F");
+  setColor(accent);
+  doc.text(badgeText, margin + 4, 26);
+
+  setColor(darkText);
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  y = 10;
+  const nameW = doc.getTextWidth(d.contractorName);
+  doc.text(d.contractorName, pageW - margin - nameW, y);
+
+  setColor(grayText);
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  y = 15;
+  const addrParts = (d.contractorAddress || "").split(",").map(s => s.trim()).filter(Boolean);
+  for (const part of addrParts) {
+    const w = doc.getTextWidth(part);
+    doc.text(part, pageW - margin - w, y);
+    y += 3.5;
+  }
+
+  setColor(lightGray);
+  doc.setFontSize(7);
+  const psNumW = doc.getTextWidth(d.payslipNumber);
+  doc.text(d.payslipNumber, pageW - margin - psNumW, y + 1);
+
+  y = 34;
+
+  const halfW = (contentW - 4) / 2;
+  setFillColor(bgGray);
+  doc.roundedRect(margin, y, halfW, 14, 2, 2, "F");
+  doc.roundedRect(margin + halfW + 4, y, halfW, 14, 2, 2, "F");
+
+  setColor(lightGray);
+  doc.setFontSize(6.5);
+  doc.setFont("helvetica", "bold");
+  doc.text("PAY PERIOD", margin + 4, y + 5);
+  doc.text("PAYMENT DATE", margin + halfW + 8, y + 5);
+
+  setColor(darkText);
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.text(`${d.periodStart} - ${d.periodEnd}`, margin + 4, y + 11);
+  setColor(accent);
+  doc.setFont("helvetica", "bold");
+  doc.text(d.paymentDate, margin + halfW + 8, y + 11);
+
+  y += 20;
+
+  function drawSectionHeader(title: string, yPos: number): number {
+    setColor(grayText);
+    doc.setFontSize(7);
+    doc.setFont("helvetica", "bold");
+    doc.text(title.toUpperCase(), margin, yPos);
+    return yPos + 5;
+  }
+
+  function drawTableHeader(cols: { label: string; x: number; align?: string }[], yPos: number): number {
+    setFillColor(bgGray);
+    doc.roundedRect(margin, yPos - 3, contentW, 6, 1, 1, "F");
+    setColor(grayText);
+    doc.setFontSize(6.5);
+    doc.setFont("helvetica", "bold");
+    for (const col of cols) {
+      if (col.align === "right") {
+        const w = doc.getTextWidth(col.label);
+        doc.text(col.label, col.x - w, yPos);
+      } else {
+        doc.text(col.label, col.x, yPos);
+      }
+    }
+    return yPos + 6;
+  }
+
+  const earningsCols = [
+    { label: "DESCRIPTION", x: margin + 3 },
+    { label: "UNITS", x: margin + contentW * 0.55, align: "right" },
+    { label: "RATE", x: margin + contentW * 0.75, align: "right" },
+    { label: "AMOUNT", x: margin + contentW - 3, align: "right" },
+  ];
+
+  y = drawSectionHeader("Earnings", y);
+  y = drawTableHeader(earningsCols, y);
+
+  doc.setFontSize(8);
+  for (const e of d.earnings) {
+    setColor(darkText);
+    doc.setFont("helvetica", "normal");
+    doc.text(e.description, margin + 3, y);
+
+    setColor(grayText);
+    if (e.units != null) {
+      const unitsStr = e.units.toFixed(2);
+      const uw = doc.getTextWidth(unitsStr);
+      doc.text(unitsStr, margin + contentW * 0.55 - uw, y);
+    }
+    if (e.rate != null) {
+      const rateStr = fmt(e.rate);
+      const rw = doc.getTextWidth(rateStr);
+      doc.text(rateStr, margin + contentW * 0.75 - rw, y);
+    }
+    const amtStr = fmt(e.amount);
+    const aw = doc.getTextWidth(amtStr);
+    doc.text(amtStr, margin + contentW - 3 - aw, y);
+    y += 5;
+  }
+
+  setDrawColor("#e5e7eb");
+  doc.setLineWidth(0.3);
+  doc.line(margin, y, margin + contentW, y);
+  y += 4;
+
+  setColor(darkText);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("Total earnings", margin + 3, y);
+  const totalEarnStr = fmt(d.grossEarnings);
+  const teW = doc.getTextWidth(totalEarnStr);
+  doc.text(totalEarnStr, margin + contentW - 3 - teW, y);
+  y += 8;
+
+  const deductionsCols = [
+    { label: "DESCRIPTION", x: margin + 3 },
+    { label: "AMOUNT", x: margin + contentW - 3, align: "right" },
+  ];
+
+  y = drawSectionHeader("Deductions", y);
+  y = drawTableHeader([
+    { label: "DESCRIPTION", x: margin + 3 },
+    { label: "", x: margin + contentW * 0.55, align: "right" },
+    { label: "", x: margin + contentW * 0.75, align: "right" },
+    { label: "AMOUNT", x: margin + contentW - 3, align: "right" },
+  ], y);
+
+  doc.setFontSize(8);
+  for (const dd of d.deductions) {
+    setColor(darkText);
+    doc.setFont("helvetica", "normal");
+    doc.text(dd.description, margin + 3, y);
+
+    setColor(redText);
+    const dedStr = `(${fmt(dd.amount)})`;
+    const dw = doc.getTextWidth(dedStr);
+    doc.text(dedStr, margin + contentW - 3 - dw, y);
+    y += 5;
+  }
+
+  setDrawColor("#e5e7eb");
+  doc.line(margin, y, margin + contentW, y);
+  y += 4;
+
+  setColor(darkText);
+  doc.setFont("helvetica", "bold");
+  doc.text("Total deductions", margin + 3, y);
+  setColor(redText);
+  const totalDedStr = `(${fmt(d.totalDeductions)})`;
+  const tdW = doc.getTextWidth(totalDedStr);
+  doc.text(totalDedStr, margin + contentW - 3 - tdW, y);
+  y += 8;
+
+  setFillColor(greenBg);
+  doc.roundedRect(margin, y - 3, contentW, 10, 2, 2, "F");
+  setColor(greenText);
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "bold");
+  doc.text("Net pay", margin + 4, y + 3);
+  const netStr = fmt(d.netPay);
+  const nw = doc.getTextWidth(netStr);
+  doc.text(netStr, margin + contentW - 4 - nw, y + 3);
+  y += 14;
+
+  setFillColor(purpleBg);
+  setDrawColor("#ddd6fe");
+  doc.setLineWidth(0.3);
+  doc.roundedRect(margin, y - 3, contentW, 12, 2, 2, "FD");
+  setColor(purpleText);
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "bold");
+  doc.text(`Superannuation (${(d.superRate * 100).toFixed(1)}% SGC)`, margin + 4, y + 1);
+  doc.setFontSize(7);
+  doc.setFont("helvetica", "normal");
+  doc.text("Paid directly to your super fund - not included in net pay", margin + 4, y + 5.5);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  const superStr = fmt(d.superAmount);
+  const sw = doc.getTextWidth(superStr);
+  doc.text(superStr, margin + contentW - 4 - sw, y + 3);
+  y += 16;
+
+  const fyYear = new Date().getFullYear();
+  y = drawSectionHeader(`Year to date (FY${fyYear}-${String(fyYear + 1).slice(2)})`, y);
+
+  const ytdCardW = (contentW - 8) / 3;
+  const ytdCards = [
+    { label: "GROSS EARNINGS", value: fmt(d.ytdGross), color: darkText },
+    { label: "PAYG WITHHELD", value: fmt(d.ytdPayg), color: redText },
+    { label: "SUPER CONTRIBUTIONS", value: fmt(d.ytdSuper), color: purpleText },
+  ];
+
+  for (let i = 0; i < ytdCards.length; i++) {
+    const card = ytdCards[i];
+    const cx = margin + i * (ytdCardW + 4);
+    setFillColor(bgGray);
+    doc.roundedRect(cx, y, ytdCardW, 14, 2, 2, "F");
+
+    setColor(lightGray);
+    doc.setFontSize(6);
+    doc.setFont("helvetica", "bold");
+    const lblW = doc.getTextWidth(card.label);
+    doc.text(card.label, cx + (ytdCardW - lblW) / 2, y + 5);
+
+    setColor(card.color);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    const vW = doc.getTextWidth(card.value);
+    doc.text(card.value, cx + (ytdCardW - vW) / 2, y + 11);
+  }
+  y += 20;
+
+  if (d.bsb) {
+    y = drawSectionHeader("Payment details", y);
+    setFillColor(bgGray);
+    doc.roundedRect(margin, y, contentW, 8, 2, 2, "F");
+    setColor(grayText);
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "normal");
+    const bankInfo = `Deposited to: ${d.bankName ? d.bankName + " - " : ""}BSB ${d.bsb.slice(0, 3)}-${d.bsb.slice(3)} - Account ending ...${d.accountSuffix ?? "???"}`;
+    doc.text(bankInfo, margin + 4, y + 5);
+    y += 14;
+  }
+
+  setDrawColor("#e5e7eb");
+  doc.setLineWidth(0.2);
+  doc.line(margin, y, margin + contentW, y);
+  y += 4;
+
+  setColor(lightGray);
+  doc.setFontSize(6.5);
+  doc.setFont("helvetica", "normal");
+  const footerLines = [
+    "This is a computer-generated payslip. Please retain for tax purposes.",
+    `${d.agencyName} - ABN ${d.agencyABN} - Labour Hire Arrangement under STP Phase 2`,
+    "Any queries: contact your agency directly.",
+  ];
+  for (const line of footerLines) {
+    const lw = doc.getTextWidth(line);
+    doc.text(line, (pageW - lw) / 2, y);
+    y += 3.5;
+  }
+
+  const arrayBuffer = doc.output("arraybuffer");
+  return Buffer.from(arrayBuffer);
 }
 
 const MONTHS = [

@@ -27,7 +27,7 @@ Labour hire agency management portal for contractors, timesheets, invoicing, and
 - **Portal Dashboard**: 3 KPI cards (This month hours, YTD earnings, Next pay date), contract utilisation progress bar, quick action links, recent timesheets/payslips mini-tables
 - **Portal Timesheets**: Weekly hour breakdown entry (auto-generated week labels per month), auto-calculated totals, expandable history with week-by-week detail, resubmit rejected timesheets
 - **Portal Leave**: Tab-based layout (History/New Request tabs), 2 balance cards (Annual/Sick) with progress bars, inline leave request form with 2x2 leave type grid buttons
-- **Portal Payslips**: Expandable payslip cards with earnings breakdown, YTD summary (Gross, PAYG, Super), download/view HTML payslip
+- **Portal Payslips**: 4-card YTD summary strip (Gross/Tax/Super/Net YTD with Australian FY calculation), table layout with columns (Pay Date, Period, Gross, Tax, Super, Net, Status, Download), per-row PDF download button
 - **Portal Messages**: Split-pane inbox with message list sidebar, conversation detail view, reply functionality, compose new message
 - **Portal Onboarding**: 7-step wizard (Welcome, Personal, Address, Tax, Bank, Super, Complete)
 
@@ -68,7 +68,7 @@ server/
   storage.ts                  - Database storage layer with Drizzle
   db.ts                       - Database connection
   seed.ts                     - Seed data for development
-  payslip.ts                  - HTML payslip generation (browser print-to-PDF)
+  payslip.ts                  - Payslip generation (jsPDF server-side PDF + HTML fallback)
   aba.ts                      - ABA direct entry file generation
 
 shared/
@@ -82,7 +82,7 @@ shared/
 - `invoices` - Invoice records with GST calculations and status tracking
 - `pay_runs` - Payroll run records with PAYG/super breakdowns, period dates, payment date
 - `pay_run_lines` - Contractor-level pay run detail lines (hours, rate, gross, PAYG, super, net)
-- `documents` - Contractor documents (payslips, contracts, clearances)
+- `documents` - Contractor documents with categories (Contract, TFN Declaration, Super Choice, ID Verification, Police Check, WWVP, Qualification, Other), file size tracking, drag-drop upload
 - `notifications` - Admin notification center with type/priority/read status
 - `messages` - Messaging between admin and contractors
 - `settings` - Key-value application settings

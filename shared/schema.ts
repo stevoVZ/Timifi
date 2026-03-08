@@ -124,8 +124,10 @@ export const documents = pgTable("documents", {
   contractorId: varchar("contractor_id").notNull().references(() => contractors.id),
   type: documentTypeEnum("type").notNull().default("OTHER"),
   name: text("name").notNull(),
+  category: text("category").notNull().default("Other"),
   fileUrl: text("file_url"),
   fileType: text("file_type"),
+  fileSize: integer("file_size"),
   metadata: text("metadata"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

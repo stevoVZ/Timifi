@@ -52,6 +52,7 @@ export interface IStorage {
 
   getDocuments(contractorId: string): Promise<Document[]>;
   createDocument(data: InsertDocument): Promise<Document>;
+  deleteDocument(id: string): Promise<void>;
 
   getDashboardStats(): Promise<{
     activeContractors: number;
@@ -253,6 +254,10 @@ export class DatabaseStorage implements IStorage {
   async createDocument(data: InsertDocument): Promise<Document> {
     const [doc] = await db.insert(documents).values(data).returning();
     return doc;
+  }
+
+  async deleteDocument(id: string): Promise<void> {
+    await db.delete(documents).where(eq(documents.id, id));
   }
 
   async getDashboardStats() {

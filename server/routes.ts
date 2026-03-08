@@ -1,8 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema } from "@shared/schema";
-import { generatePayslipHTML, buildPayslipData } from "./payslip";
+import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema } from "@shared/schema";
+import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
 
 export async function registerRoutes(
@@ -739,11 +739,12 @@ export async function registerRoutes(
         payslipNum,
       });
 
-      const html = generatePayslipHTML(payslipData);
+      const pdfBuffer = generatePayslipPDF(payslipData);
 
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Content-Disposition", `inline; filename="${payslipNum}.html"`);
-      res.send(html);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${payslipNum}.pdf"`);
+      res.setHeader("Content-Length", pdfBuffer.length);
+      res.send(pdfBuffer);
     } catch (err) {
       res.status(500).json({ message: "Failed to generate payslip" });
     }
@@ -836,6 +837,32 @@ export async function registerRoutes(
       res.json(docs);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch documents" });
+    }
+  });
+
+  app.post("/api/documents/:contractorId", async (req, res) => {
+    try {
+      const parsed = insertDocumentSchema.safeParse({
+        ...req.body,
+        contractorId: req.params.contractorId,
+        type: "OTHER",
+      });
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid document data", errors: parsed.error.flatten().fieldErrors });
+      }
+      const doc = await storage.createDocument(parsed.data);
+      res.status(201).json(doc);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to upload document" });
+    }
+  });
+
+  app.delete("/api/documents/doc/:docId", async (req, res) => {
+    try {
+      await storage.deleteDocument(req.params.docId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete document" });
     }
   });
 
