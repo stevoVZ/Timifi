@@ -515,6 +515,25 @@ export async function syncPayRuns(): Promise<{
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
 
+  let calendarNamesMap: Record<string, string> = {};
+  try {
+    const calResponse = await fetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+    if (calResponse.ok) {
+      const calData = await calResponse.json() as { PayrollCalendars?: any[] };
+      for (const cal of calData.PayrollCalendars || []) {
+        if (cal.PayrollCalendarID && cal.Name) {
+          calendarNamesMap[cal.PayrollCalendarID] = cal.Name;
+        }
+      }
+    }
+  } catch {}
+
   const response = await fetch("https://api.xero.com/payroll.xro/1.0/PayRuns", {
     headers: {
       "Authorization": `Bearer ${accessToken}`,
@@ -554,6 +573,7 @@ export async function syncPayRuns(): Promise<{
 
       const payRunRef = `XERO-${pr.PayRunID?.substring(0, 8) || year + "-" + month}`;
       const employeeCount = pr.Payslips?.length || 0;
+      const calendarName = pr.PayrollCalendarID ? calendarNamesMap[pr.PayrollCalendarID] || null : null;
 
       const existing = existingPayRuns.find(
         epr => epr.payRunRef === payRunRef
@@ -567,6 +587,7 @@ export async function syncPayRuns(): Promise<{
           totalSuper: String(pr.Super || 0),
           totalNet: String(pr.NetPay || 0),
           employeeCount,
+          calendarName,
         });
 
         if (pr.PayRunID) {
@@ -589,6 +610,7 @@ export async function syncPayRuns(): Promise<{
           totalSuper: String(pr.Super || 0),
           totalNet: String(pr.NetPay || 0),
           employeeCount,
+          calendarName,
           status: localStatus,
         });
 

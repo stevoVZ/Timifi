@@ -12,6 +12,7 @@ import ContractorsPage from "@/pages/contractors";
 import ContractorDetailPage from "@/pages/contractor-detail";
 import TimesheetsPage from "@/pages/timesheets";
 import PayrollPage from "@/pages/payroll";
+import PayrollDetailPage from "@/pages/payroll-detail";
 import InvoicesPage from "@/pages/invoices";
 import NotificationsPage from "@/pages/notifications";
 import SettingsPage from "@/pages/settings";
@@ -40,6 +41,7 @@ function AdminRouter() {
       <Route path="/contractors" component={ContractorsPage} />
       <Route path="/contractors/:id" component={ContractorDetailPage} />
       <Route path="/timesheets" component={TimesheetsPage} />
+      <Route path="/payroll/:id" component={PayrollDetailPage} />
       <Route path="/payroll" component={PayrollPage} />
       <Route path="/invoices" component={InvoicesPage} />
       <Route path="/notifications" component={NotificationsPage} />

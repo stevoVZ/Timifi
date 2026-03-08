@@ -106,6 +106,7 @@ export const payRuns = pgTable("pay_runs", {
   totalSuper: numeric("total_super", { precision: 12, scale: 2 }).notNull().default("0"),
   totalNet: numeric("total_net", { precision: 12, scale: 2 }).notNull().default("0"),
   employeeCount: smallint("employee_count").notNull().default(0),
+  calendarName: text("calendar_name"),
   status: text("status").notNull().default("DRAFT"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
