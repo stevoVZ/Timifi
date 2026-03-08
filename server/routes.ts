@@ -1722,6 +1722,44 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/rctis/eligible-clients", async (_req, res) => {
+    try {
+      const [allClients, allBankTxns] = await Promise.all([
+        storage.getClients(),
+        storage.getBankTransactions(),
+      ]);
+      const receiveTxns = allBankTxns.filter(t => t.type === "RECEIVE" && t.contactName);
+      const receiveByContact = new Map<string, { count: number; total: number }>();
+      for (const txn of receiveTxns) {
+        const key = (txn.contactName || "").toLowerCase().trim();
+        const existing = receiveByContact.get(key) || { count: 0, total: 0 };
+        existing.count++;
+        existing.total += parseFloat(txn.amount || "0");
+        receiveByContact.set(key, existing);
+      }
+      const eligible = allClients
+        .filter(c => {
+          if (!c.isCustomer) return false;
+          const stats = receiveByContact.get(c.name.toLowerCase().trim());
+          return stats && stats.count > 0;
+        })
+        .map(c => {
+          const stats = receiveByContact.get(c.name.toLowerCase().trim()) || { count: 0, total: 0 };
+          return {
+            id: c.id,
+            name: c.name,
+            isRcti: c.isRcti,
+            receiveCount: stats.count,
+            receiveTotal: Math.round(stats.total * 100) / 100,
+          };
+        })
+        .sort((a, b) => b.receiveTotal - a.receiveTotal);
+      res.json(eligible);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch eligible clients" });
+    }
+  });
+
   app.get("/api/rctis", async (_req, res) => {
     try {
       const [allRctis, allClients, allEmployees] = await Promise.all([

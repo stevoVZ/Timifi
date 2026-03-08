@@ -77,6 +77,14 @@ type ClientRecord = {
   isRcti: boolean;
 };
 
+type EligibleClient = {
+  id: string;
+  name: string;
+  isRcti: boolean;
+  receiveCount: number;
+  receiveTotal: number;
+};
+
 type SortField = "period" | "client" | "employee" | "hours" | "amountExclGst" | "amountInclGst" | "status";
 type SortDir = "asc" | "desc";
 
@@ -97,6 +105,10 @@ export default function RctisPage() {
     queryKey: ["/api/clients"],
   });
 
+  const { data: eligibleClients = [] } = useQuery<EligibleClient[]>({
+    queryKey: ["/api/rctis/eligible-clients"],
+  });
+
   const { data: employeeList = [] } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
   });
@@ -110,6 +122,7 @@ export default function RctisPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/rctis/eligible-clients"] });
     },
   });
 
@@ -249,21 +262,26 @@ export default function RctisPage() {
 
         <div className="mb-4 space-y-3">
           <div className="text-sm font-medium text-muted-foreground">RCTI Clients</div>
+          <p className="text-xs text-muted-foreground">Toggle clients that pay via RCTI (showing customers with bank receipts)</p>
           <div className="flex flex-wrap gap-2">
-            {clientList.map(c => (
+            {eligibleClients.map(c => (
               <Button
                 key={c.id}
                 variant={c.isRcti ? "default" : "outline"}
                 size="sm"
                 onClick={() => toggleRctiMutation.mutate({ clientId: c.id, isRcti: !c.isRcti })}
                 data-testid={`button-toggle-rcti-${c.id}`}
+                title={`${c.receiveCount} receipts · ${formatCurrency(c.receiveTotal)}`}
               >
                 {c.name}
               </Button>
             ))}
           </div>
-          {rctiClients.length === 0 && (
-            <p className="text-sm text-muted-foreground">Click a client above to mark them as an RCTI client, then use Auto-Match to create records from bank transactions.</p>
+          {eligibleClients.length === 0 && (
+            <p className="text-sm text-muted-foreground">No eligible clients found. Clients must be marked as customers in Xero and have bank RECEIVE transactions.</p>
+          )}
+          {eligibleClients.length > 0 && rctiClients.length === 0 && (
+            <p className="text-sm text-muted-foreground">Click a client above to mark them as RCTI, then use Auto-Match to create records from bank transactions.</p>
           )}
         </div>
 
