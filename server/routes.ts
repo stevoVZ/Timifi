@@ -388,7 +388,17 @@ export async function registerRoutes(
   app.get("/api/invoices", async (_req, res) => {
     try {
       const data = await storage.getInvoices();
-      res.json(data);
+      const allLinks = await storage.getInvoiceEmployeesByInvoice(data.map(i => i.id));
+      const linkMap: Record<string, string[]> = {};
+      for (const link of allLinks) {
+        if (!linkMap[link.invoiceId]) linkMap[link.invoiceId] = [];
+        linkMap[link.invoiceId].push(link.employeeId);
+      }
+      const enriched = data.map(inv => ({
+        ...inv,
+        linkedEmployeeIds: linkMap[inv.id] || (inv.employeeId ? [inv.employeeId] : []),
+      }));
+      res.json(enriched);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch invoices" });
     }
@@ -396,9 +406,13 @@ export async function registerRoutes(
 
   app.post("/api/invoices", async (req, res) => {
     try {
-      const parsed = insertInvoiceSchema.parse(req.body);
+      const { linkedEmployeeIds, ...invoiceData } = req.body;
+      const parsed = insertInvoiceSchema.parse(invoiceData);
       const invoice = await storage.createInvoice(parsed);
-      res.status(201).json(invoice);
+      if (Array.isArray(linkedEmployeeIds) && linkedEmployeeIds.length > 0) {
+        await storage.setInvoiceEmployees(invoice.id, linkedEmployeeIds);
+      }
+      res.status(201).json({ ...invoice, linkedEmployeeIds: linkedEmployeeIds || [] });
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Invalid invoice data" });
     }
@@ -406,9 +420,14 @@ export async function registerRoutes(
 
   app.patch("/api/invoices/:id", async (req, res) => {
     try {
-      const invoice = await storage.updateInvoice(req.params.id, req.body);
+      const { linkedEmployeeIds, ...updateData } = req.body;
+      const invoice = await storage.updateInvoice(req.params.id, updateData);
       if (!invoice) return res.status(404).json({ message: "Invoice not found" });
-      res.json(invoice);
+      if (Array.isArray(linkedEmployeeIds)) {
+        await storage.setInvoiceEmployees(invoice.id, linkedEmployeeIds);
+      }
+      const links = await storage.getInvoiceEmployees(invoice.id);
+      res.json({ ...invoice, linkedEmployeeIds: links.map(l => l.employeeId) });
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to update invoice" });
     }
@@ -550,8 +569,20 @@ export async function registerRoutes(
 
   app.get("/api/invoices/employee/:employeeId", async (req, res) => {
     try {
-      const data = await storage.getInvoicesByEmployee(req.params.employeeId);
-      res.json(data);
+      const employeeId = req.params.employeeId;
+      const [directInvoices, junctionInvoiceIds] = await Promise.all([
+        storage.getInvoicesByEmployee(employeeId),
+        storage.getInvoiceIdsByEmployee(employeeId),
+      ]);
+      const directIds = new Set(directInvoices.map(i => i.id));
+      const extraIds = junctionInvoiceIds.filter(id => !directIds.has(id));
+      let allInvoices = [...directInvoices];
+      if (extraIds.length > 0) {
+        const allStoredInvoices = await storage.getInvoices();
+        const extraInvoices = allStoredInvoices.filter(i => extraIds.includes(i.id));
+        allInvoices = [...allInvoices, ...extraInvoices];
+      }
+      res.json(allInvoices);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch invoices" });
     }
@@ -560,10 +591,18 @@ export async function registerRoutes(
   app.get("/api/employees/:id/reconciliation", async (req, res) => {
     try {
       const employeeId = req.params.id;
-      const [tsList, invList] = await Promise.all([
+      const [tsList, directInvList, junctionInvIds] = await Promise.all([
         storage.getTimesheetsByEmployee(employeeId),
         storage.getInvoicesByEmployee(employeeId),
+        storage.getInvoiceIdsByEmployee(employeeId),
       ]);
+      const directIds = new Set(directInvList.map(i => i.id));
+      const extraIds = junctionInvIds.filter(id => !directIds.has(id));
+      let invList = directInvList;
+      if (extraIds.length > 0) {
+        const allInvoices = await storage.getInvoices();
+        invList = [...directInvList, ...allInvoices.filter(i => extraIds.includes(i.id))];
+      }
 
       const periodMap: Record<string, {
         month: number;

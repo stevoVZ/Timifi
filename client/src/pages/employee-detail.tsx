@@ -998,6 +998,8 @@ function DocumentsTab({ employeeId, documents }: { employeeId: string; documents
 function PlacementsCard({ employeeId, placements, clients }: { employeeId: string; placements: Placement[]; clients: Client[] }) {
   const { toast } = useToast();
   const [showForm, setShowForm] = useState(false);
+  const [endingPlacementId, setEndingPlacementId] = useState<string | null>(null);
+  const [endDateValue, setEndDateValue] = useState(new Date().toISOString().split("T")[0]);
   const [formData, setFormData] = useState({
     clientId: "",
     clientName: "",
@@ -1041,12 +1043,20 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
   const endedPlacements = placements.filter(p => p.status === "ENDED");
 
   const handleSubmit = () => {
+    if (formData.status === "ENDED" && !formData.endDate) {
+      toast({ title: "End date required", description: "Please provide an end date for an ended placement.", variant: "destructive" });
+      return;
+    }
+    if (formData.status === "ENDED" && formData.startDate && formData.endDate && formData.endDate < formData.startDate) {
+      toast({ title: "Invalid dates", description: "End date cannot be before start date.", variant: "destructive" });
+      return;
+    }
     const client = clients.find(c => c.id === formData.clientId);
     createMutation.mutate({
       clientId: formData.clientId || null,
       clientName: client?.name || formData.clientName || null,
       startDate: formData.startDate || null,
-      endDate: formData.endDate || null,
+      endDate: formData.status === "ACTIVE" ? null : formData.endDate || null,
       chargeOutRate: formData.chargeOutRate || null,
       payRate: formData.payRate || null,
       notes: formData.notes || null,
@@ -1102,10 +1112,12 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                 <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
                 <Input type="date" className="h-8 text-sm" value={formData.startDate} onChange={(e) => setFormData(prev => ({ ...prev, startDate: e.target.value }))} data-testid="input-placement-start" />
               </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">End Date</label>
-                <Input type="date" className="h-8 text-sm" value={formData.endDate} onChange={(e) => setFormData(prev => ({ ...prev, endDate: e.target.value }))} data-testid="input-placement-end" />
-              </div>
+              {formData.status === "ENDED" && (
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">End Date</label>
+                  <Input type="date" className="h-8 text-sm" value={formData.endDate} onChange={(e) => setFormData(prev => ({ ...prev, endDate: e.target.value }))} data-testid="input-placement-end" />
+                </div>
+              )}
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Charge Out Rate</label>
                 <Input type="number" className="h-8 text-sm" placeholder="$/hr" value={formData.chargeOutRate} onChange={(e) => setFormData(prev => ({ ...prev, chargeOutRate: e.target.value }))} data-testid="input-placement-charge-rate" />
@@ -1133,16 +1145,53 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                 <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-[10px]">Active</Badge>
                 <span className="text-sm font-semibold">{p.clientName || "Unknown Client"}</span>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => endMutation.mutate({ placementId: p.id, endDate: new Date().toISOString().split("T")[0] })}
-                disabled={endMutation.isPending}
-                data-testid={`button-end-placement-${p.id}`}
-              >
-                End Placement
-              </Button>
+              {endingPlacementId === p.id ? (
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="date"
+                    className="h-7 text-xs w-36"
+                    value={endDateValue}
+                    onChange={(e) => setEndDateValue(e.target.value)}
+                    data-testid={`input-end-date-${p.id}`}
+                  />
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      endMutation.mutate({ placementId: p.id, endDate: endDateValue });
+                      setEndingPlacementId(null);
+                    }}
+                    disabled={endMutation.isPending || !endDateValue}
+                    data-testid={`button-confirm-end-${p.id}`}
+                  >
+                    Confirm
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => setEndingPlacementId(null)}
+                    data-testid={`button-cancel-end-${p.id}`}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    setEndDateValue(new Date().toISOString().split("T")[0]);
+                    setEndingPlacementId(p.id);
+                  }}
+                  disabled={endMutation.isPending}
+                  data-testid={`button-end-placement-${p.id}`}
+                >
+                  End Placement
+                </Button>
+              )}
             </div>
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
               <span>From: {p.startDate || "N/A"}</span>

@@ -5,6 +5,7 @@ import {
   notifications, messages, settings, users,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
   clients, placements, bankTransactions, payslipLines, rateHistory, timesheetAuditLog,
+  invoiceEmployees,
   type Employee, type InsertEmployee,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
@@ -26,6 +27,7 @@ import {
   type PayslipLine, type InsertPayslipLine,
   type RateHistory, type InsertRateHistory,
   type TimesheetAuditLog, type InsertTimesheetAuditLog,
+  type InvoiceEmployee,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -155,6 +157,11 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(data: InsertUser): Promise<User>;
+
+  getInvoiceEmployees(invoiceId: string): Promise<InvoiceEmployee[]>;
+  getInvoiceEmployeesByInvoice(invoiceIds: string[]): Promise<InvoiceEmployee[]>;
+  setInvoiceEmployees(invoiceId: string, employeeIds: string[]): Promise<InvoiceEmployee[]>;
+  getInvoiceIdsByEmployee(employeeId: string): Promise<string[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -754,6 +761,30 @@ export class DatabaseStorage implements IStorage {
   async createRateHistory(data: InsertRateHistory): Promise<RateHistory> {
     const [record] = await db.insert(rateHistory).values(data).returning();
     return record;
+  }
+
+  async getInvoiceEmployees(invoiceId: string): Promise<InvoiceEmployee[]> {
+    return db.select().from(invoiceEmployees).where(eq(invoiceEmployees.invoiceId, invoiceId));
+  }
+
+  async getInvoiceEmployeesByInvoice(invoiceIds: string[]): Promise<InvoiceEmployee[]> {
+    if (invoiceIds.length === 0) return [];
+    return db.select().from(invoiceEmployees).where(inArray(invoiceEmployees.invoiceId, invoiceIds));
+  }
+
+  async setInvoiceEmployees(invoiceId: string, employeeIds: string[]): Promise<InvoiceEmployee[]> {
+    await db.delete(invoiceEmployees).where(eq(invoiceEmployees.invoiceId, invoiceId));
+    if (employeeIds.length === 0) return [];
+    return db.insert(invoiceEmployees)
+      .values(employeeIds.map(employeeId => ({ invoiceId, employeeId })))
+      .returning();
+  }
+
+  async getInvoiceIdsByEmployee(employeeId: string): Promise<string[]> {
+    const rows = await db.select({ invoiceId: invoiceEmployees.invoiceId })
+      .from(invoiceEmployees)
+      .where(eq(invoiceEmployees.employeeId, employeeId));
+    return rows.map(r => r.invoiceId);
   }
 }
 

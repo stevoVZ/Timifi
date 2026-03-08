@@ -496,3 +496,14 @@ export type RateHistory = typeof rateHistory.$inferSelect;
 export type InsertRateHistory = z.infer<typeof insertRateHistorySchema>;
 export type TimesheetAuditLog = typeof timesheetAuditLog.$inferSelect;
 export type InsertTimesheetAuditLog = z.infer<typeof insertTimesheetAuditLogSchema>;
+
+export const invoiceEmployees = pgTable("invoice_employees", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id").notNull(),
+  employeeId: varchar("employee_id").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertInvoiceEmployeeSchema = createInsertSchema(invoiceEmployees).omit({ id: true, createdAt: true });
+export type InvoiceEmployee = typeof invoiceEmployees.$inferSelect;
+export type InsertInvoiceEmployee = z.infer<typeof insertInvoiceEmployeeSchema>;

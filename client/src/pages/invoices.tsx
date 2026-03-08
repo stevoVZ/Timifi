@@ -119,10 +119,13 @@ export default function InvoicesPage() {
   });
 
   const filtered = invoicesList?.filter((inv) => {
-    const c = inv.employeeId ? employeeMap.get(inv.employeeId) : undefined;
-    const name = c ? `${c.firstName} ${c.lastName}` : "";
+    const linkedIds: string[] = (inv as any).linkedEmployeeIds || (inv.employeeId ? [inv.employeeId] : []);
+    const names = linkedIds.map(id => {
+      const emp = employeeMap.get(id);
+      return emp ? `${emp.firstName} ${emp.lastName}` : "";
+    }).join(" ");
     const contact = inv.contactName || "";
-    return `${name} ${contact} ${inv.invoiceNumber || ""} ${inv.description || ""}`.toLowerCase().includes(search.toLowerCase());
+    return `${names} ${contact} ${inv.invoiceNumber || ""} ${inv.description || ""}`.toLowerCase().includes(search.toLowerCase());
   });
 
   const outstanding = filtered?.filter((i) => ["AUTHORISED", "SENT", "OVERDUE"].includes(i.status)) || [];
@@ -462,8 +465,12 @@ export default function InvoicesPage() {
                           </TableHeader>
                           <TableBody>
                             {sortedInvoices.map((inv) => {
-                              const c = inv.employeeId ? employeeMap.get(inv.employeeId) : undefined;
-                              const displayName = inv.contactName || (c ? `${c.firstName} ${c.lastName}` : "Unknown");
+                              const linkedIds: string[] = (inv as any).linkedEmployeeIds || (inv.employeeId ? [inv.employeeId] : []);
+                              const linkedNames = linkedIds.map(id => {
+                                const emp = employeeMap.get(id);
+                                return emp ? `${emp.firstName} ${emp.lastName}` : null;
+                              }).filter(Boolean);
+                              const displayName = inv.contactName || linkedNames.join(", ") || "Unknown";
                               const isPaid = inv.status === "PAID";
                               const isOutstanding = ["AUTHORISED", "SENT", "OVERDUE"].includes(inv.status);
                               return (
@@ -550,15 +557,36 @@ function InvoiceDetailDialog({
   onSave,
   isPending,
 }: {
-  invoice: Invoice;
+  invoice: Invoice & { linkedEmployeeIds?: string[] };
   employees: Employee[];
   onClose: () => void;
   onSave: (id: string, data: Record<string, any>) => void;
   isPending: boolean;
 }) {
-  const linkedEmployee = invoice.employeeId ? employees.find(e => e.id === invoice.employeeId) : null;
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState(invoice.employeeId || "none");
-  const hasChanged = selectedEmployeeId !== (invoice.employeeId || "none");
+  const initialIds = (invoice as any).linkedEmployeeIds?.length
+    ? (invoice as any).linkedEmployeeIds as string[]
+    : invoice.employeeId ? [invoice.employeeId] : [];
+  const [selectedIds, setSelectedIds] = useState<string[]>(initialIds);
+  const [empSearch, setEmpSearch] = useState("");
+
+  const hasChanged = (() => {
+    const origSet = new Set(initialIds);
+    const newSet = new Set(selectedIds);
+    if (origSet.size !== newSet.size) return true;
+    for (const id of origSet) if (!newSet.has(id)) return true;
+    return false;
+  })();
+
+  const toggleEmployee = (empId: string) => {
+    setSelectedIds(prev =>
+      prev.includes(empId) ? prev.filter(id => id !== empId) : [...prev, empId]
+    );
+  };
+
+  const filteredEmps = employees.filter(e => {
+    if (!empSearch) return true;
+    return `${e.firstName} ${e.lastName}`.toLowerCase().includes(empSearch.toLowerCase());
+  });
 
   return (
     <Dialog open onOpenChange={() => onClose()}>
@@ -614,41 +642,71 @@ function InvoiceDetailDialog({
           )}
 
           <div className="border-t pt-4">
-            <Label className="text-sm font-semibold mb-2 block">Linked Employee</Label>
-            {linkedEmployee && (
-              <div className="text-xs text-muted-foreground mb-2 p-2 rounded bg-muted/50" data-testid="text-link-reason">
-                Currently linked to <span className="font-semibold text-foreground">{linkedEmployee.firstName} {linkedEmployee.lastName}</span>
-                {linkedEmployee.chargeOutRate && invoice.hourlyRate && (
-                  <span> (charge-out rate: {formatCurrency(linkedEmployee.chargeOutRate)}, invoice rate: {formatCurrency(invoice.hourlyRate)})</span>
-                )}
+            <Label className="text-sm font-semibold mb-2 block">Linked Employees</Label>
+            {selectedIds.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2" data-testid="linked-employees-chips">
+                {selectedIds.map(id => {
+                  const emp = employees.find(e => e.id === id);
+                  return emp ? (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-primary/10 text-primary font-medium"
+                      data-testid={`chip-employee-${id}`}
+                    >
+                      {emp.firstName} {emp.lastName}
+                      <button
+                        onClick={() => toggleEmployee(id)}
+                        className="ml-0.5 hover:text-destructive"
+                        data-testid={`button-remove-employee-${id}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ) : null;
+                })}
               </div>
             )}
-            {!linkedEmployee && invoice.employeeId === null && (
+            {selectedIds.length === 0 && (
               <div className="text-xs text-muted-foreground mb-2 p-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                Not linked to any employee. Select one below to link this invoice.
+                Not linked to any employee. Select employees below to link this invoice.
               </div>
             )}
-            <Select value={selectedEmployeeId} onValueChange={setSelectedEmployeeId}>
-              <SelectTrigger data-testid="select-detail-employee">
-                <SelectValue placeholder="Select employee" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No employee (unlink)</SelectItem>
-                {employees.map((e) => (
-                  <SelectItem key={e.id} value={e.id}>
-                    {e.firstName} {e.lastName}
-                    {e.chargeOutRate ? ` — $${parseFloat(e.chargeOutRate).toFixed(0)}/hr` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Input
+              placeholder="Search employees..."
+              value={empSearch}
+              onChange={(e) => setEmpSearch(e.target.value)}
+              className="mb-2 h-8 text-sm"
+              data-testid="input-search-link-employee"
+            />
+            <div className="max-h-36 overflow-y-auto border rounded-md divide-y">
+              {filteredEmps.map((e) => (
+                <label
+                  key={e.id}
+                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/50 cursor-pointer text-sm"
+                  data-testid={`label-employee-${e.id}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(e.id)}
+                    onChange={() => toggleEmployee(e.id)}
+                    className="rounded border-border"
+                    data-testid={`checkbox-employee-${e.id}`}
+                  />
+                  <span>{e.firstName} {e.lastName}</span>
+                  {e.chargeOutRate && <span className="text-xs text-muted-foreground ml-auto">${parseFloat(e.chargeOutRate).toFixed(0)}/hr</span>}
+                </label>
+              ))}
+            </div>
           </div>
 
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={onClose} data-testid="button-detail-cancel">Cancel</Button>
             <Button
               disabled={!hasChanged || isPending}
-              onClick={() => onSave(invoice.id, { employeeId: selectedEmployeeId === "none" ? null : selectedEmployeeId })}
+              onClick={() => onSave(invoice.id, {
+                employeeId: selectedIds.length === 1 ? selectedIds[0] : selectedIds.length === 0 ? null : selectedIds[0],
+                linkedEmployeeIds: selectedIds,
+              })}
               data-testid="button-detail-save"
             >
               {isPending ? "Saving..." : "Save Changes"}
