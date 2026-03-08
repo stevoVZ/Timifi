@@ -901,10 +901,11 @@ export async function registerRoutes(
       const proto = req.get("x-forwarded-proto") || req.protocol;
       const fullUrl = `${proto}://${req.get("host")}${req.originalUrl}`;
       await handleCallback(fullUrl);
-      res.redirect("/settings?tab=xero&connected=true");
+      res.send(`<!DOCTYPE html><html><head><title>Xero Connected</title><style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f8faf8;color:#1a1a1a}.card{text-align:center;padding:2rem;border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:400px}.icon{font-size:3rem;margin-bottom:1rem}h1{font-size:1.25rem;margin:0 0 .5rem}p{color:#666;font-size:.875rem;margin:0}</style></head><body><div class="card"><div class="icon">&#10004;</div><h1>Connected to Xero</h1><p>You can close this tab and return to the portal.</p></div></body></html>`);
     } catch (err: any) {
       console.error("Xero callback error:", err);
-      res.redirect("/settings?tab=xero&error=" + encodeURIComponent(err.message || "Connection failed"));
+      const errorMsg = err.message || "Connection failed";
+      res.send(`<!DOCTYPE html><html><head><title>Xero Connection Failed</title><style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#fef2f2;color:#1a1a1a}.card{text-align:center;padding:2rem;border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:400px}.icon{font-size:3rem;margin-bottom:1rem}h1{font-size:1.25rem;margin:0 0 .5rem;color:#dc2626}p{color:#666;font-size:.875rem;margin:0}</style></head><body><div class="card"><div class="icon">&#10060;</div><h1>Connection Failed</h1><p>${errorMsg.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p></div></body></html>`);
     }
   });
 

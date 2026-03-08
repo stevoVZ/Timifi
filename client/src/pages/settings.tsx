@@ -339,7 +339,8 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
       if (!res.ok) throw new Error("Failed to fetch status");
       return res.json();
     },
-    refetchInterval: 30000,
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
   });
 
   const tenantsQuery = useQuery<Array<{ tenantId: string; tenantName: string; tenantType: string; selected: boolean }>>({
@@ -388,7 +389,8 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
       return data.url;
     },
     onSuccess: (url: string) => {
-      window.location.href = url;
+      window.open(url, "_blank");
+      toast({ title: "Xero login opened in a new tab. Complete authorization there, then return here." });
     },
     onError: (err: Error) => {
       toast({ title: err.message, variant: "destructive" });
