@@ -178,6 +178,67 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/timesheets/batch", async (req, res) => {
+    try {
+      const { items } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "No timesheet items provided" });
+      }
+
+      const allTimesheets = await storage.getTimesheets();
+      const results: { index: number; success: boolean; timesheet?: any; error?: string }[] = [];
+
+      for (let i = 0; i < items.length; i++) {
+        try {
+          const { files: filesList, ...timesheetData } = items[i];
+          const parsed = insertTimesheetSchema.parse(timesheetData);
+
+          const existing = allTimesheets.filter(
+            (ts) => ts.employeeId === parsed.employeeId && ts.month === parsed.month && ts.year === parsed.year
+          );
+          const hasApproved = existing.some((ts) => ts.status === "APPROVED");
+          if (hasApproved) {
+            results.push({ index: i, success: false, error: `Period ${parsed.month}/${parsed.year} is already approved for this employee` });
+            continue;
+          }
+
+          const timesheet = await storage.createTimesheet(parsed);
+
+          if (filesList && Array.isArray(filesList) && parsed.employeeId) {
+            for (const f of filesList) {
+              if (f.data && f.name) {
+                await storage.createDocument({
+                  employeeId: parsed.employeeId,
+                  timesheetId: timesheet.id,
+                  type: "TIMESHEET",
+                  name: f.name,
+                  fileUrl: f.data,
+                  fileType: f.type || "application/pdf",
+                  fileSize: f.size || null,
+                });
+              }
+            }
+          }
+
+          results.push({ index: i, success: true, timesheet });
+        } catch (itemErr: any) {
+          results.push({ index: i, success: false, error: itemErr.message || "Validation failed" });
+        }
+      }
+
+      const created = results.filter((r) => r.success).map((r) => r.timesheet);
+      const failed = results.filter((r) => !r.success);
+
+      if (failed.length > 0 && created.length === 0) {
+        return res.status(400).json({ message: failed.map((f) => f.error).join("; "), results });
+      }
+
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Invalid batch data" });
+    }
+  });
+
   app.post("/api/timesheets/scan", upload.array("files", 20), async (req, res) => {
     try {
       const files = req.files as Express.Multer.File[];

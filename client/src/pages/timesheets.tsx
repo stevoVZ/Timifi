@@ -6,7 +6,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
@@ -30,7 +29,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Plus, Search, Clock, FileText, CheckCircle, AlertTriangle, XCircle,
   Mail, Upload, UserCheck, Monitor, Paperclip, ChevronDown, ChevronUp,
-  X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus,
+  X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus, Users,
 } from "lucide-react";
 import type { Timesheet, Employee, Document as DocType } from "@shared/schema";
 
@@ -59,6 +58,9 @@ interface QueueItem {
   status: "scanning" | "done" | "error";
   result: ScanResult | null;
   excluded: boolean;
+  assignedEmployeeId: string | null;
+  assignedMonth: number;
+  assignedYear: number;
 }
 
 interface ScanResult {
@@ -79,14 +81,28 @@ interface ScanResult {
   monthBoundaryWarning?: string | null;
 }
 
+function parseMonthFromPeriod(period: string): { month: number; year: number } | null {
+  if (!period) return null;
+  const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const lower = period.toLowerCase();
+  for (let i = 0; i < monthNames.length; i++) {
+    if (lower.includes(monthNames[i])) {
+      const yearMatch = period.match(/20\d{2}/);
+      const year = yearMatch ? parseInt(yearMatch[0]) : new Date().getFullYear();
+      return { month: i + 1, year };
+    }
+  }
+  return null;
+}
+
 export default function TimesheetsPage() {
   const [mainTab, setMainTab] = useState("upload");
 
   return (
     <div className="flex flex-col h-full">
       <TopBar
-        title="Timesheet Uploads"
-        subtitle="AI scanning · duplicate detection · version history"
+        title="Timesheets"
+        subtitle="Upload, review and manage employee timesheets"
       />
       <main className="flex-1 overflow-auto p-6 bg-muted/30">
         <div className="max-w-6xl mx-auto">
@@ -122,57 +138,25 @@ function UploadView() {
   const currentMonth = now.getMonth() + 1;
   const currentYear = now.getFullYear();
 
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
-  const [selectedYear] = useState(currentYear);
-
-  const [intakeSource, setIntakeSource] = useState("EMAIL");
-  const [senderEmail, setSenderEmail] = useState("");
-  const [receivedDate, setReceivedDate] = useState(now.toISOString().slice(0, 10));
-  const [intakeNotes, setIntakeNotes] = useState("");
-
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [showIntake, setShowIntake] = useState(false);
+
+  const [intakeSource, setIntakeSource] = useState("ADMIN_ENTRY");
+  const [senderEmail, setSenderEmail] = useState("");
+  const [receivedDate, setReceivedDate] = useState(now.toISOString().slice(0, 10));
+  const [intakeNotes, setIntakeNotes] = useState("");
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const queueCountRef = useRef(0);
 
   const { data: employees } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
   });
 
-  const { data: timesheetsList } = useQuery<Timesheet[]>({
-    queryKey: ["/api/timesheets"],
-  });
-
   const activeEmployees = employees?.filter((c) => c.status === "ACTIVE") || [];
-  const selectedEmployee = employees?.find((c) => c.id === selectedEmployeeId) || null;
-
-  const existingForPeriod = (timesheetsList?.filter(
-    (ts) => ts.employeeId === selectedEmployeeId && ts.month === selectedMonth && ts.year === selectedYear
-  ) || []).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  const latestExisting = existingForPeriod.length > 0 ? existingForPeriod[0] : null;
-
-  const createMutation = useMutation({
-    mutationFn: async (data: Record<string, any>) => {
-      const res = await apiRequest("POST", "/api/timesheets", data);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const updItem = useCallback((id: string, patch: Partial<QueueItem>) => {
-    setQueue((q) => q.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-  }, []);
 
   const readFileBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -183,11 +167,25 @@ function UploadView() {
     });
   };
 
+  const updItem = useCallback((id: string, patch: Partial<QueueItem>) => {
+    setQueue((q) => q.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }, []);
+
+  const matchEmployee = useCallback((name: string | null | undefined): string | null => {
+    if (!name || activeEmployees.length === 0) return null;
+    const lower = name.toLowerCase();
+    const match = activeEmployees.find((e) => {
+      const full = `${e.firstName} ${e.lastName}`.toLowerCase();
+      return full === lower || (lower.includes(e.firstName.toLowerCase()) && lower.includes(e.lastName.toLowerCase()));
+    });
+    return match?.id || null;
+  }, [activeEmployees]);
+
   const addFiles = useCallback(async (files: FileList | null) => {
     if (!files) return;
     const pdfs = Array.from(files).filter((f) => f.type === "application/pdf");
     if (pdfs.length < files.length) {
-      toast({ title: "Non-PDF files skipped", description: "Only PDF files are supported for scanning.", variant: "destructive" });
+      toast({ title: "Non-PDF files skipped", description: "Only PDF files are supported.", variant: "destructive" });
     }
     if (!pdfs.length) return;
 
@@ -195,8 +193,10 @@ function UploadView() {
     pdfs.forEach((f) => {
       const id = uid();
       itemIds.push(id);
-      queueCountRef.current++;
-      setQueue((q) => [...q, { id, file: f, fileBase64: null, status: "scanning", result: null, excluded: false }]);
+      setQueue((q) => [...q, {
+        id, file: f, fileBase64: null, status: "scanning", result: null, excluded: false,
+        assignedEmployeeId: null, assignedMonth: currentMonth, assignedYear: currentYear,
+      }]);
     });
 
     const base64Promises = pdfs.map(async (f, idx) => {
@@ -207,8 +207,8 @@ function UploadView() {
 
     const formData = new FormData();
     pdfs.forEach((f) => formData.append("files", f));
-    formData.append("month", String(selectedMonth));
-    formData.append("year", String(selectedYear));
+    formData.append("month", String(currentMonth));
+    formData.append("year", String(currentYear));
 
     try {
       const [res] = await Promise.all([
@@ -225,7 +225,16 @@ function UploadView() {
       results.forEach((result: ScanResult, idx: number) => {
         const id = itemIds[idx];
         if (id) {
-          setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "done", result } : item)));
+          const empId = matchEmployee(result.employeeName);
+          const parsed = parseMonthFromPeriod(result.period);
+          setQueue((prev) => prev.map((item) => (item.id === id ? {
+            ...item,
+            status: "done",
+            result,
+            assignedEmployeeId: empId,
+            assignedMonth: parsed?.month || currentMonth,
+            assignedYear: parsed?.year || currentYear,
+          } : item)));
         }
       });
 
@@ -235,20 +244,9 @@ function UploadView() {
         }
       });
 
-      if (!selectedEmployeeId && results.length > 0) {
-        const detectedName = results[0].employeeName;
-        if (detectedName && activeEmployees.length > 0) {
-          const lower = detectedName.toLowerCase();
-          const match = activeEmployees.find((e) => {
-            const full = `${e.firstName} ${e.lastName}`.toLowerCase();
-            return full === lower || lower.includes(e.firstName.toLowerCase()) && lower.includes(e.lastName.toLowerCase());
-          });
-          if (match) {
-            setSelectedEmployeeId(match.id);
-            setSenderEmail(match.email || "");
-            toast({ title: "Employee detected", description: `Auto-selected ${match.firstName} ${match.lastName} from scanned timesheet.` });
-          }
-        }
+      const autoDetected = results.filter((r) => matchEmployee(r.employeeName));
+      if (autoDetected.length > 0) {
+        toast({ title: "Employees detected", description: `Auto-assigned ${autoDetected.length} file${autoDetected.length > 1 ? "s" : ""} from scanned data.` });
       }
     } catch (err: any) {
       toast({ title: "Scan failed", description: err.message || "AI extraction failed", variant: "destructive" });
@@ -256,7 +254,7 @@ function UploadView() {
         setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "error", result: null } : item)));
       });
     }
-  }, [selectedMonth, selectedYear, toast, selectedEmployeeId, activeEmployees]);
+  }, [currentMonth, currentYear, toast, matchEmployee]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -268,77 +266,87 @@ function UploadView() {
   const doneActive = activeQueue.filter((i) => i.status === "done" && i.result);
   const allDone = activeQueue.length > 0 && activeQueue.every((i) => i.status === "done" || i.status === "error");
   const anyScanning = queue.some((i) => i.status === "scanning");
+  const allAssigned = doneActive.every((i) => !!i.assignedEmployeeId);
+  const canSubmit = allDone && doneActive.length > 0 && !anyScanning && allAssigned;
 
-  const batchHours = doneActive.reduce((s, i) => s + (i.result?.totalHours || 0), 0);
-  const batchRegular = doneActive.reduce((s, i) => s + (i.result?.regularHours || 0), 0);
-  const batchOvertime = doneActive.reduce((s, i) => s + (i.result?.overtimeHours || 0), 0);
-  const batchWarnings = doneActive.flatMap((i) => i.result?.warnings || []);
-  const confAvg = doneActive.length > 0 ? Math.round(doneActive.reduce((s, i) => s + (i.result?.confidence || 0), 0) / doneActive.length) : 0;
+  const grouped = doneActive.reduce<Record<string, QueueItem[]>>((acc, item) => {
+    const key = `${item.assignedEmployeeId}__${item.assignedMonth}__${item.assignedYear}`;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(item);
+    return acc;
+  }, {});
 
-  const rate = selectedEmployee ? parseFloat(selectedEmployee.hourlyRate || "0") : 0;
-  const batchValue = batchHours * rate;
-  const isApprovedPeriod = latestExisting?.status === "APPROVED";
-  const canSubmit = allDone && doneActive.length > 0 && !!selectedEmployeeId && !anyScanning && !isApprovedPeriod;
+  const groupSummaries = Object.entries(grouped).map(([key, items]) => {
+    const [empId, monthStr, yearStr] = key.split("__");
+    const emp = activeEmployees.find((e) => e.id === empId);
+    const month = parseInt(monthStr);
+    const year = parseInt(yearStr);
+    const totalHours = items.reduce((s, i) => s + (i.result?.totalHours || 0), 0);
+    const regularHours = items.reduce((s, i) => s + (i.result?.regularHours || 0), 0);
+    const overtimeHours = items.reduce((s, i) => s + (i.result?.overtimeHours || 0), 0);
+    const rate = emp ? parseFloat(emp.hourlyRate || "0") : 0;
+    return { empId, emp, month, year, items, totalHours, regularHours, overtimeHours, grossValue: totalHours * rate };
+  });
+
+  const batchTotalHours = doneActive.reduce((s, i) => s + (i.result?.totalHours || 0), 0);
 
   const handleSubmit = async () => {
-    if (!canSubmit || !selectedEmployee) return;
+    if (!canSubmit) return;
     setSubmitting(true);
-    await new Promise((r) => setTimeout(r, 600));
 
     const notesObj: Record<string, any> = { intakeSource };
     if (senderEmail) notesObj.senderEmail = senderEmail;
     if (intakeNotes) notesObj.intakeNotes = intakeNotes;
     if (receivedDate) notesObj.receivedDate = receivedDate;
+    const notesStr = JSON.stringify(notesObj);
 
-    const filesPayload = doneActive
-      .filter((item) => item.fileBase64)
-      .map((item) => ({
-        name: item.result?.fileName || item.file.name,
-        data: item.fileBase64,
-        type: item.file.type || "application/pdf",
-        size: item.file.size,
-      }));
-
-    const payload: Record<string, any> = {
-      employeeId: selectedEmployeeId,
-      year: selectedYear,
-      month: selectedMonth,
-      totalHours: String(batchHours),
-      regularHours: String(batchRegular),
-      overtimeHours: String(batchOvertime),
-      grossValue: String(batchValue),
+    const items = groupSummaries.map((g) => ({
+      employeeId: g.empId,
+      year: g.year,
+      month: g.month,
+      totalHours: String(g.totalHours),
+      regularHours: String(g.regularHours),
+      overtimeHours: String(g.overtimeHours),
+      grossValue: String(g.grossValue),
       status: "SUBMITTED",
       submittedAt: new Date().toISOString(),
-      fileName: doneActive.length === 1
-        ? doneActive[0].result!.fileName
-        : `Batch (${doneActive.length} files)`,
-      notes: JSON.stringify(notesObj),
-    };
+      fileName: g.items.length === 1
+        ? g.items[0].result!.fileName
+        : `Batch (${g.items.length} files)`,
+      notes: notesStr,
+      files: g.items
+        .filter((item) => item.fileBase64)
+        .map((item) => ({
+          name: item.result?.fileName || item.file.name,
+          data: item.fileBase64,
+          type: item.file.type || "application/pdf",
+          size: item.file.size,
+        })),
+    }));
 
-    if (filesPayload.length > 0) {
-      payload.files = filesPayload;
+    try {
+      const res = await apiRequest("POST", "/api/timesheets/batch", { items });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Failed to submit" }));
+        throw new Error(err.message);
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      setSubmitting(false);
+      setSubmitted(true);
+      toast({ title: "Timesheets submitted", description: `${groupSummaries.length} timesheet${groupSummaries.length > 1 ? "s" : ""} created for review.` });
+    } catch (err: any) {
+      toast({ title: "Submission failed", description: err.message, variant: "destructive" });
+      setSubmitting(false);
     }
-
-    createMutation.mutate(payload, {
-      onSuccess: () => {
-        setSubmitting(false);
-        setSubmitted(true);
-        toast({ title: "Timesheets submitted", description: `${doneActive.length} file${doneActive.length > 1 ? "s" : ""} submitted for review.` });
-      },
-      onError: () => {
-        setSubmitting(false);
-      },
-    });
   };
 
   const resetAll = () => {
     setQueue([]);
     setSubmitted(false);
     setExpandedId(null);
-    queueCountRef.current = 0;
+    setShowIntake(false);
   };
-
-  const periodMonths = [currentMonth, currentMonth === 1 ? 12 : currentMonth - 1, currentMonth <= 2 ? currentMonth + 10 : currentMonth - 2];
 
   if (submitted) {
     return (
@@ -348,39 +356,27 @@ function UploadView() {
             <CheckCircle className="w-7 h-7 text-green-600" />
           </div>
           <h2 className="text-xl font-bold text-foreground mb-1" data-testid="text-submit-success">
-            {doneActive.length > 1 ? `${doneActive.length} timesheets submitted` : "Timesheet submitted"}
+            {groupSummaries.length > 1
+              ? `${groupSummaries.length} timesheets submitted`
+              : "Timesheet submitted"}
           </h2>
           <p className="text-sm text-muted-foreground mb-6">
-            {selectedEmployee ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}` : ""} · {MONTHS[selectedMonth]} {selectedYear}
+            {doneActive.length} file{doneActive.length !== 1 ? "s" : ""} processed
           </p>
 
-          <div className="text-left space-y-2 mb-6">
-            {doneActive.map((item) => (
-              <div key={item.id} className="flex items-center justify-between py-2 border-b border-border">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-muted-foreground" />
-                  <div>
-                    <div className="text-sm font-medium text-foreground">{item.result!.fileName}</div>
-                    <div className="text-xs text-muted-foreground">{item.result!.period}</div>
-                  </div>
+          <div className="text-left space-y-3 mb-6">
+            {groupSummaries.map((g) => (
+              <div key={`${g.empId}-${g.month}-${g.year}`} className="p-3 rounded-lg border border-border bg-card">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-semibold text-foreground">
+                    {g.emp ? `${g.emp.firstName} ${g.emp.lastName}` : "Unknown"}
+                  </span>
+                  <span className="font-mono text-sm font-bold text-primary">{g.totalHours}h</span>
                 </div>
-                <span className="font-mono text-sm font-semibold text-primary">{item.result!.totalHours}h</span>
-              </div>
-            ))}
-            <div className="flex justify-between pt-2">
-              <span className="font-semibold text-foreground">Total</span>
-              <span className="font-mono text-base font-bold text-primary">{batchHours}h · ${batchValue.toLocaleString()}</span>
-            </div>
-          </div>
-
-          <div className="bg-muted rounded-lg p-3 mb-6 flex justify-between text-left">
-            {[
-              ["Received via", INTAKE_SOURCES.find((s) => s.value === intakeSource)?.label || intakeSource],
-              ["Date", receivedDate],
-            ].map(([k, v]) => (
-              <div key={k}>
-                <div className="text-[11px] text-muted-foreground">{k}</div>
-                <div className="text-xs font-semibold text-foreground">{v}</div>
+                <div className="text-xs text-muted-foreground">
+                  {MONTHS[g.month]} {g.year} · {g.items.length} file{g.items.length !== 1 ? "s" : ""}
+                  {g.grossValue > 0 && ` · $${g.grossValue.toLocaleString()}`}
+                </div>
               </div>
             ))}
           </div>
@@ -394,102 +390,52 @@ function UploadView() {
     );
   }
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-start gap-4 flex-wrap">
-        <div>
-          <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 block">Employee</Label>
-          <div className="flex gap-1.5 flex-wrap" data-testid="picker-employee">
-            {activeEmployees.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => { setSelectedEmployeeId(c.id); setSenderEmail(c.email || ""); }}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${
-                  selectedEmployeeId === c.id
-                    ? "border-primary/40 bg-primary/5 font-semibold text-primary"
-                    : "border-border bg-card text-muted-foreground hover:border-primary/30"
-                }`}
-                data-testid={`button-pick-employee-${c.id}`}
-              >
-                <div
-                  className="w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold"
-                  style={{ backgroundColor: `${c.accentColour || "#2563eb"}15`, color: c.accentColour || "#2563eb" }}
-                >
-                  {c.firstName[0]}{c.lastName[0]}
-                </div>
-                <span>{c.firstName}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 block">Period</Label>
-          <div className="flex gap-1.5" data-testid="picker-period">
-            {periodMonths.map((m) => (
-              <button
-                key={m}
-                onClick={() => setSelectedMonth(m)}
-                className={`px-3.5 py-2 rounded-lg border text-sm transition-all ${
-                  selectedMonth === m
-                    ? "border-primary bg-primary text-primary-foreground font-semibold"
-                    : "border-border bg-card text-muted-foreground hover:border-primary/30"
-                }`}
-                data-testid={`button-pick-month-${m}`}
-              >
-                {MONTHS[m]?.slice(0, 3)} {selectedYear}
-              </button>
-            ))}
-          </div>
-        </div>
+  if (queue.length === 0) {
+    return (
+      <div className="max-w-2xl mx-auto space-y-4">
+        <DropZone
+          dragOver={dragOver}
+          setDragOver={setDragOver}
+          onDrop={handleDrop}
+          fileRef={fileRef}
+          addFiles={addFiles}
+          large
+        />
+        <p className="text-center text-xs text-muted-foreground">
+          Drop one or many PDFs — different employees and months are handled automatically
+        </p>
       </div>
+    );
+  }
 
-      {latestExisting && (
-        <div className={`flex items-start gap-3 p-3.5 rounded-lg border ${
-          latestExisting.status === "APPROVED"
-            ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800"
-            : latestExisting.status === "SUBMITTED"
-              ? "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800"
-              : "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
-        }`} data-testid="banner-duplicate">
-          <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
-            latestExisting.status === "APPROVED" ? "text-red-600" : latestExisting.status === "SUBMITTED" ? "text-amber-600" : "text-blue-600"
-          }`} />
-          <div className="text-sm">
-            <span className="font-semibold text-foreground">Existing timesheet found for this period</span>
-            <span className="text-muted-foreground"> · Status: </span>
-            <StatusBadge status={latestExisting.status} />
-            {latestExisting.status === "APPROVED" && (
-              <p className="text-xs text-red-700 dark:text-red-400 mt-1">
-                This period has been approved. Contact an admin to unlock before resubmitting.
-              </p>
-            )}
-            {latestExisting.status === "SUBMITTED" && (
-              <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                A timesheet is already pending review. Uploading will create a new version.
-              </p>
-            )}
-            {latestExisting.status === "REJECTED" && (
-              <p className="text-xs text-blue-700 dark:text-blue-400 mt-1">
-                Previous version was returned. Your new upload will become the next version.
-              </p>
-            )}
-          </div>
+  return (
+    <div className="space-y-4">
+      {anyScanning && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800">
+          <Loader2 className="w-4 h-4 text-violet-600 animate-spin" />
+          <span className="text-sm font-medium text-violet-700 dark:text-violet-400">
+            Scanning {queue.filter((i) => i.status === "scanning").length} file{queue.filter((i) => i.status === "scanning").length !== 1 ? "s" : ""}...
+          </span>
         </div>
       )}
 
-      {queue.length === 0 ? (
-        <div className="max-w-2xl mx-auto space-y-4">
-          <IntakeForm
-            intakeSource={intakeSource}
-            setIntakeSource={setIntakeSource}
-            senderEmail={senderEmail}
-            setSenderEmail={setSenderEmail}
-            receivedDate={receivedDate}
-            setReceivedDate={setReceivedDate}
-            intakeNotes={intakeNotes}
-            setIntakeNotes={setIntakeNotes}
-          />
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 items-start">
+        <div className="space-y-2">
+          {queue.map((item, idx) => (
+            <FileQueueCard
+              key={item.id}
+              item={item}
+              idx={idx}
+              expanded={expandedId === item.id}
+              onToggleExpand={() => setExpandedId(expandedId === item.id ? null : item.id)}
+              onExclude={() => updItem(item.id, { excluded: !item.excluded })}
+              onRemove={() => setQueue((q) => q.filter((i) => i.id !== item.id))}
+              onAssignEmployee={(empId) => updItem(item.id, { assignedEmployeeId: empId })}
+              onAssignMonth={(m) => updItem(item.id, { assignedMonth: m })}
+              onAssignYear={(y) => updItem(item.id, { assignedYear: y })}
+              employees={activeEmployees}
+            />
+          ))}
 
           <DropZone
             dragOver={dragOver}
@@ -497,224 +443,113 @@ function UploadView() {
             onDrop={handleDrop}
             fileRef={fileRef}
             addFiles={addFiles}
-            large
+            large={false}
           />
         </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-4 items-start">
-          <div className="space-y-3">
-            {queue.map((item, idx) => (
-              <FileQueueCard
-                key={item.id}
-                item={item}
-                idx={idx}
-                expanded={expandedId === item.id}
-                onToggleExpand={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                onExclude={() => updItem(item.id, { excluded: !item.excluded })}
-                onRemove={() => setQueue((q) => q.filter((i) => i.id !== item.id))}
-              />
-            ))}
 
-            <DropZone
-              dragOver={dragOver}
-              setDragOver={setDragOver}
-              onDrop={handleDrop}
-              fileRef={fileRef}
-              addFiles={addFiles}
-              large={false}
-            />
-          </div>
+        <div className="sticky top-6 space-y-3 z-10">
+          <Card>
+            <CardContent className="p-0">
+              <div className="p-3.5 border-b border-border bg-muted/50">
+                <div className="text-sm font-bold text-foreground">Batch Summary</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {doneActive.length} file{doneActive.length !== 1 ? "s" : ""} · {groupSummaries.length} timesheet{groupSummaries.length !== 1 ? "s" : ""}
+                </div>
+              </div>
 
-          <div className="sticky top-6 space-y-3 z-10">
-            <IntakeForm
-              intakeSource={intakeSource}
-              setIntakeSource={setIntakeSource}
-              senderEmail={senderEmail}
-              setSenderEmail={setSenderEmail}
-              receivedDate={receivedDate}
-              setReceivedDate={setReceivedDate}
-              intakeNotes={intakeNotes}
-              setIntakeNotes={setIntakeNotes}
-              compact
-            />
-
-            <Card>
-              <CardContent className="p-0">
-                <div className="p-3.5 border-b border-border bg-muted/50">
-                  <div className="text-sm font-bold text-foreground">Batch Summary</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    {doneActive.length} file{doneActive.length !== 1 ? "s" : ""} ready · {MONTHS[selectedMonth]} {selectedYear}
+              <div className="p-4 space-y-3">
+                {groupSummaries.length > 0 && (
+                  <div className="space-y-2">
+                    {groupSummaries.map((g) => (
+                      <div key={`${g.empId}-${g.month}-${g.year}`} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-foreground truncate max-w-[160px]">
+                            {g.emp ? `${g.emp.firstName} ${g.emp.lastName}` : "Unassigned"}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {MONTHS[g.month]?.slice(0, 3)} {g.year} · {g.items.length} file{g.items.length !== 1 ? "s" : ""}
+                          </div>
+                        </div>
+                        <span className="font-mono text-xs font-semibold text-primary flex-shrink-0">{g.totalHours}h</span>
+                      </div>
+                    ))}
                   </div>
-                </div>
+                )}
 
-                <div className="p-4 space-y-3">
-                  {anyScanning && (
-                    <div className="flex items-center gap-2 p-2.5 rounded-lg bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800">
-                      <Loader2 className="w-4 h-4 text-violet-600 animate-spin" />
-                      <span className="text-xs font-semibold text-violet-700 dark:text-violet-400">Scanning files...</span>
+                {batchTotalHours > 0 && (
+                  <div className="bg-muted rounded-lg p-3">
+                    <div className="flex justify-between text-sm">
+                      <span className="font-bold text-foreground">Total</span>
+                      <span className="font-mono font-bold text-foreground">{batchTotalHours}h</span>
                     </div>
-                  )}
+                  </div>
+                )}
 
-                  {doneActive.length > 0 && (
-                    <>
-                      <div className="space-y-1">
-                        <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Files in batch</Label>
-                        {doneActive.map((item) => (
-                          <div key={item.id} className="flex justify-between items-center py-1.5 border-b border-border last:border-0">
-                            <div className="min-w-0">
-                              <div className="text-xs font-medium text-foreground truncate max-w-[170px]">{item.result!.fileName}</div>
-                              <div className="text-[11px] text-muted-foreground">{item.result!.period}</div>
-                            </div>
-                            <span className="font-mono text-xs font-semibold text-primary flex-shrink-0">{item.result!.totalHours}h</span>
-                          </div>
-                        ))}
-                      </div>
+                {!allAssigned && doneActive.length > 0 && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
+                    <Users className="w-3.5 h-3.5 flex-shrink-0" />
+                    Assign an employee to each file before submitting
+                  </div>
+                )}
 
-                      <div className="bg-muted rounded-lg p-3 space-y-1.5">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-muted-foreground">Regular</span>
-                          <span className="font-mono text-green-600 dark:text-green-400">{batchRegular}h</span>
-                        </div>
-                        {batchOvertime > 0 && (
-                          <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground">Overtime</span>
-                            <span className="font-mono text-amber-600 dark:text-amber-400">{batchOvertime}h</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between text-sm pt-1.5 border-t border-border">
-                          <span className="font-bold text-foreground">Total hours</span>
-                          <span className="font-mono font-bold text-foreground">{batchHours}h</span>
-                        </div>
-                      </div>
-
-                      {rate > 0 && (
-                        <div className="flex justify-between items-center p-3 rounded-lg bg-primary/5 border border-primary/20">
-                          <div>
-                            <div className="text-[11px] text-muted-foreground">Estimated invoice</div>
-                            <div className="font-mono text-lg font-semibold text-primary">${batchValue.toLocaleString()}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-[11px] text-muted-foreground">Confidence</div>
-                            <div className={`font-mono text-sm font-semibold ${confAvg >= 90 ? "text-green-600" : confAvg >= 70 ? "text-amber-600" : "text-red-600"}`}>
-                              {confAvg}%
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {batchWarnings.length > 0 && (
-                        <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                          {batchWarnings.map((w, i) => (
-                            <div key={i} className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
-                              <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                              <span>{w}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {!selectedEmployeeId && (
-                    <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted text-xs text-muted-foreground">
-                      <Info className="w-3.5 h-3.5 flex-shrink-0" />
-                      Select an employee before submitting
-                    </div>
-                  )}
-
-                  <Button
-                    className="w-full"
-                    disabled={!canSubmit || submitting}
-                    onClick={handleSubmit}
-                    data-testid="button-submit-batch"
+                <div>
+                  <button
+                    onClick={() => setShowIntake(!showIntake)}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 mb-2"
+                    data-testid="button-toggle-intake"
                   >
-                    {submitting ? (
-                      <><Loader2 className="w-4 h-4 animate-spin" /> Submitting...</>
-                    ) : (
-                      <>Submit {doneActive.length} file{doneActive.length !== 1 ? "s" : ""} for review</>
-                    )}
-                  </Button>
+                    {showIntake ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    Intake details (optional)
+                  </button>
+                  {showIntake && (
+                    <div className="space-y-2 p-3 rounded-lg border border-border bg-muted/30">
+                      <div className="space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">Source</Label>
+                        <Select value={intakeSource} onValueChange={setIntakeSource}>
+                          <SelectTrigger className="h-7 text-xs" data-testid="select-intake-source">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {INTAKE_SOURCES.map((s) => (
+                              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">Sender email</Label>
+                        <Input className="h-7 text-xs" value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} placeholder="employee@email.com" data-testid="input-sender-email" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">Received</Label>
+                        <Input type="date" className="h-7 text-xs" value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} data-testid="input-received-date" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">Notes</Label>
+                        <Input className="h-7 text-xs" value={intakeNotes} onChange={(e) => setIntakeNotes(e.target.value)} placeholder="Optional..." data-testid="input-intake-notes" />
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+
+                <Button
+                  className="w-full"
+                  disabled={!canSubmit || submitting}
+                  onClick={handleSubmit}
+                  data-testid="button-submit-batch"
+                >
+                  {submitting ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Submitting...</>
+                  ) : (
+                    <>Submit {groupSummaries.length} timesheet{groupSummaries.length !== 1 ? "s" : ""}</>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
-      )}
+      </div>
     </div>
-  );
-}
-
-function IntakeForm({
-  intakeSource, setIntakeSource,
-  senderEmail, setSenderEmail,
-  receivedDate, setReceivedDate,
-  intakeNotes, setIntakeNotes,
-  compact = false,
-}: {
-  intakeSource: string;
-  setIntakeSource: (v: string) => void;
-  senderEmail: string;
-  setSenderEmail: (v: string) => void;
-  receivedDate: string;
-  setReceivedDate: (v: string) => void;
-  intakeNotes: string;
-  setIntakeNotes: (v: string) => void;
-  compact?: boolean;
-}) {
-  return (
-    <Card data-testid="form-intake">
-      <CardContent className={compact ? "p-3 space-y-2" : "p-4 space-y-3"}>
-        <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Intake details</Label>
-
-        <div className={compact ? "grid grid-cols-2 gap-2" : "grid grid-cols-4 gap-3"}>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Source</Label>
-            <Select value={intakeSource} onValueChange={setIntakeSource}>
-              <SelectTrigger className="h-8 text-xs" data-testid="select-intake-source">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {INTAKE_SOURCES.map((s) => (
-                  <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Sender email</Label>
-            <Input
-              className="h-8 text-xs"
-              value={senderEmail}
-              onChange={(e) => setSenderEmail(e.target.value)}
-              placeholder="employee@email.com"
-              data-testid="input-sender-email"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Received date</Label>
-            <Input
-              type="date"
-              className="h-8 text-xs"
-              value={receivedDate}
-              onChange={(e) => setReceivedDate(e.target.value)}
-              data-testid="input-received-date"
-            />
-          </div>
-          {!compact && (
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Notes</Label>
-              <Input
-                className="h-8 text-xs"
-                value={intakeNotes}
-                onChange={(e) => setIntakeNotes(e.target.value)}
-                placeholder="Optional notes..."
-                data-testid="input-intake-notes"
-              />
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -738,7 +573,7 @@ function DropZone({
         dragOver
           ? "border-primary bg-primary/5"
           : "border-border bg-card hover:border-primary/40"
-      } ${large ? "py-14 px-8" : "py-4 px-5"}`}
+      } ${large ? "py-16 px-8" : "py-4 px-5"}`}
       data-testid="dropzone"
     >
       <input
@@ -754,19 +589,19 @@ function DropZone({
       {large ? (
         <>
           <UploadCloud className={`w-12 h-12 mx-auto mb-4 ${dragOver ? "text-primary" : "text-muted-foreground"}`} />
-          <div className="text-base font-semibold text-foreground mb-1">Drop one or more PDF timesheets</div>
-          <div className="text-sm text-muted-foreground mb-5">Weekly · fortnightly · monthly · mix freely · click to browse</div>
-          <div className="flex justify-center gap-2 flex-wrap">
-            {["Weekly sheets", "Monthly summary", "Scanned docs"].map((f) => (
-              <span key={f} className="text-[11px] px-2.5 py-1 rounded bg-muted border border-border text-muted-foreground">{f}</span>
-            ))}
+          <div className="text-lg font-semibold text-foreground mb-1">Drop PDF timesheets here</div>
+          <div className="text-sm text-muted-foreground mb-5">
+            Multiple files, different employees and months — we'll sort it out
           </div>
+          <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }} data-testid="button-browse-files">
+            Browse files
+          </Button>
         </>
       ) : (
         <div className="flex items-center gap-3 justify-center">
           <FilePlus className={`w-5 h-5 ${dragOver ? "text-primary" : "text-muted-foreground"}`} />
           <div className="text-left">
-            <div className="text-sm font-semibold text-muted-foreground">Add more PDFs to this batch</div>
+            <div className="text-sm font-semibold text-muted-foreground">Add more PDFs</div>
             <div className="text-xs text-muted-foreground/70">Drop or click to browse</div>
           </div>
         </div>
@@ -813,6 +648,7 @@ function PdfViewerDialog({
 
 function FileQueueCard({
   item, idx, expanded, onToggleExpand, onExclude, onRemove,
+  onAssignEmployee, onAssignMonth, onAssignYear, employees,
 }: {
   item: QueueItem;
   idx: number;
@@ -820,174 +656,216 @@ function FileQueueCard({
   onToggleExpand: () => void;
   onExclude: () => void;
   onRemove: () => void;
+  onAssignEmployee: (id: string) => void;
+  onAssignMonth: (m: number) => void;
+  onAssignYear: (y: number) => void;
+  employees: Employee[];
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const r = item.result;
+  const assignedEmp = employees.find((e) => e.id === item.assignedEmployeeId);
   const confColor = !r ? "text-muted-foreground" : r.confidence >= 90 ? "text-green-600" : r.confidence >= 70 ? "text-amber-600" : "text-red-600";
 
   return (
     <>
-    <PdfViewerDialog
-      open={previewOpen}
-      onOpenChange={setPreviewOpen}
-      pdfData={item.fileBase64}
-      title={item.file.name}
-    />
-    <Card
-      className={`transition-all ${item.excluded ? "opacity-45" : ""}`}
-      style={{
-        borderColor: item.excluded ? undefined : item.status === "done" ? "rgb(187 247 208)" : undefined,
-      }}
-      data-testid={`card-queue-${item.id}`}
-    >
-      <CardContent className="p-0">
-        <div className="p-3.5 flex items-center gap-3">
-          <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-            item.status === "scanning"
-              ? "bg-violet-50 dark:bg-violet-900/30 text-violet-600 border border-violet-200 dark:border-violet-800"
-              : item.status === "done"
-                ? "bg-green-50 dark:bg-green-900/30 text-green-600 border border-green-200 dark:border-green-800"
-                : "bg-red-50 dark:bg-red-900/30 text-red-600 border border-red-200 dark:border-red-800"
-          }`}>
-            {item.status === "scanning" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : item.excluded ? "-" : idx + 1}
-          </div>
-
-          <div className="flex-1 min-w-0">
-            <div className={`text-sm font-semibold truncate ${item.excluded ? "line-through text-muted-foreground" : "text-foreground"}`}>
-              {item.file.name}
+      <PdfViewerDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        pdfData={item.fileBase64}
+        title={item.file.name}
+      />
+      <Card
+        className={`transition-all ${item.excluded ? "opacity-45" : ""}`}
+        data-testid={`card-queue-${item.id}`}
+      >
+        <CardContent className="p-0">
+          <div className="p-3 flex items-start gap-3">
+            <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
+              item.status === "scanning"
+                ? "bg-violet-50 dark:bg-violet-900/30 text-violet-600 border border-violet-200 dark:border-violet-800"
+                : item.status === "done"
+                  ? "bg-green-50 dark:bg-green-900/30 text-green-600 border border-green-200 dark:border-green-800"
+                  : "bg-red-50 dark:bg-red-900/30 text-red-600 border border-red-200 dark:border-red-800"
+            }`}>
+              {item.status === "scanning" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : item.excluded ? "-" : idx + 1}
             </div>
-            <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1 flex-wrap">
-              <span>{(item.file.size / 1024).toFixed(0)} KB</span>
-              {item.status === "scanning" && <span className="text-violet-600 dark:text-violet-400 font-semibold"> · Scanning...</span>}
-              {r && !item.excluded && (
-                <>
-                  <span> · </span>
-                  <span className="font-semibold text-foreground">{r.totalHours}h</span>
-                  <span> · {r.period}</span>
-                  {r.employeeName && (
-                    <>
-                      <span> · </span>
-                      <span className="text-primary font-medium">{r.employeeName}</span>
-                    </>
+
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2">
+                <div className={`text-sm font-semibold truncate ${item.excluded ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                  {item.file.name}
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {item.fileBase64 && !item.excluded && (
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setPreviewOpen(true)} data-testid={`button-preview-${item.id}`}>
+                      <Eye className="w-3.5 h-3.5" />
+                    </Button>
                   )}
-                </>
+                  {r && !item.excluded && (
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onToggleExpand} data-testid={`button-expand-${item.id}`}>
+                      {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </Button>
+                  )}
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-500" onClick={onRemove} data-testid={`button-remove-${item.id}`}>
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1 flex-wrap">
+                <span>{(item.file.size / 1024).toFixed(0)} KB</span>
+                {item.status === "scanning" && <span className="text-violet-600 dark:text-violet-400 font-semibold"> · Scanning...</span>}
+                {r && !item.excluded && (
+                  <>
+                    <span> · </span>
+                    <span className="font-semibold text-foreground">{r.totalHours}h</span>
+                    <span> · {r.period}</span>
+                    <span className={confColor}> · {r.confidence}%</span>
+                  </>
+                )}
+                {item.status === "error" && <span className="text-red-600"> · Scan failed</span>}
+              </div>
+
+              {r && !item.excluded && item.status === "done" && (
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <Select
+                    value={item.assignedEmployeeId || ""}
+                    onValueChange={(v) => onAssignEmployee(v)}
+                  >
+                    <SelectTrigger className={`h-7 text-xs w-[160px] ${!item.assignedEmployeeId ? "border-amber-300 dark:border-amber-700" : ""}`} data-testid={`select-employee-${item.id}`}>
+                      <SelectValue placeholder="Select employee" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {employees.map((e) => (
+                        <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select
+                    value={String(item.assignedMonth)}
+                    onValueChange={(v) => onAssignMonth(parseInt(v))}
+                  >
+                    <SelectTrigger className="h-7 text-xs w-[100px]" data-testid={`select-month-${item.id}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MONTHS.slice(1).map((m, i) => (
+                        <SelectItem key={i + 1} value={String(i + 1)}>{m.slice(0, 3)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select
+                    value={String(item.assignedYear)}
+                    onValueChange={(v) => onAssignYear(parseInt(v))}
+                  >
+                    <SelectTrigger className="h-7 text-xs w-[80px]" data-testid={`select-year-${item.id}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map((y) => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {item.excluded ? (
+                    <Button variant="outline" size="sm" className="h-7 px-2 text-xs border-green-200 text-green-700 dark:border-green-800 dark:text-green-400" onClick={onExclude} data-testid={`button-exclude-${item.id}`}>
+                      Include
+                    </Button>
+                  ) : (
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={onExclude} data-testid={`button-exclude-${item.id}`}>
+                      Skip
+                    </Button>
+                  )}
+                </div>
               )}
-              {item.status === "error" && <span className="text-red-600"> · Scan failed</span>}
-            </div>
-          </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            {item.fileBase64 && !item.excluded && (
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setPreviewOpen(true)} data-testid={`button-preview-${item.id}`}>
-                <Eye className="w-3.5 h-3.5" />
-              </Button>
-            )}
-            {r && !item.excluded && (
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onToggleExpand} data-testid={`button-expand-${item.id}`}>
-                {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              className={`h-7 px-2 text-xs ${
-                item.excluded
-                  ? "border-green-200 text-green-700 dark:border-green-800 dark:text-green-400"
-                  : "border-amber-200 text-amber-700 dark:border-amber-800 dark:text-amber-400"
-              }`}
-              onClick={onExclude}
-              data-testid={`button-exclude-${item.id}`}
-            >
-              {item.excluded ? "Include" : "Exclude"}
-            </Button>
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500" onClick={onRemove} data-testid={`button-remove-${item.id}`}>
-              <X className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-        </div>
-
-        {item.status === "scanning" && (
-          <div className="h-0.5 overflow-hidden">
-            <div className="h-full w-full bg-gradient-to-r from-violet-300 via-violet-500 to-violet-300 animate-pulse" />
-          </div>
-        )}
-
-        {r && !item.excluded && r.warnings.length > 0 && !expanded && (
-          <div className="px-3.5 pb-2.5">
-            {r.warnings.map((w, i) => (
-              <div key={i} className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                {w}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {expanded && r && !item.excluded && (
-          <div className="p-3.5 border-t border-border bg-muted/30 space-y-3">
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                ["Total", `${r.totalHours}h`, "text-primary"],
-                ["Regular", `${r.regularHours}h`, "text-green-600"],
-                ["Overtime", `${r.overtimeHours}h`, r.overtimeHours > 8 ? "text-red-600" : "text-amber-600"],
-              ].map(([label, val, color]) => (
-                <div key={label} className="p-2.5 rounded-lg bg-card border border-border text-center">
-                  <div className={`font-mono text-lg font-semibold ${color}`}>{val}</div>
-                  <div className="text-[11px] text-muted-foreground">{label}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-0">
-              {[
-                ["Period", r.period],
-                ["Format", r.format],
-                ["Confidence", `${r.confidence}%`],
-                ...(r.employeeName ? [["Employee Detected", r.employeeName]] : []),
-                ...(r.clientName ? [["Client", r.clientName]] : []),
-                ["Signature", r.signatureDetected ? "✓ Detected" : "Not detected"],
-                ...(r.notes ? [["Notes", r.notes]] : []),
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between py-1.5 border-b border-border last:border-0">
-                  <span className="text-xs text-muted-foreground">{k}</span>
-                  <span className={`text-xs font-medium text-foreground text-right max-w-[220px] ${k === "Confidence" ? confColor : k === "Signature" && r.signatureDetected ? "text-green-600" : ""}`}>{v}</span>
-                </div>
-              ))}
-            </div>
-
-            {r.weeks.length > 0 && (
-              <div>
-                <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-2 block">Weekly breakdown</Label>
-                {r.weeks.map((w, i) => {
-                  const maxH = Math.max(...r.weeks.map((x) => x.h));
-                  const pct = (w.h / maxH) * 100;
-                  return (
-                    <div key={i} className="mb-2">
-                      <div className="flex justify-between mb-0.5">
-                        <span className="text-xs text-muted-foreground">{w.wk}</span>
-                        <span className={`font-mono text-xs ${w.h > 44 ? "text-red-600" : w.h > 40 ? "text-amber-600" : "text-green-600"}`}>{w.h}h</span>
-                      </div>
-                      <Progress value={pct} className="h-1.5" />
+              {r && !item.excluded && r.warnings.length > 0 && !expanded && (
+                <div className="mt-1.5">
+                  {r.warnings.slice(0, 1).map((w, i) => (
+                    <div key={i} className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                      {w}
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
-            {r.warnings.length > 0 && (
-              <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                {r.warnings.map((w, i) => (
-                  <div key={i} className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
-                    <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                    <span>{w}</span>
+          {item.status === "scanning" && (
+            <div className="h-0.5 overflow-hidden">
+              <div className="h-full w-full bg-gradient-to-r from-violet-300 via-violet-500 to-violet-300 animate-pulse" />
+            </div>
+          )}
+
+          {expanded && r && !item.excluded && (
+            <div className="p-3 border-t border-border bg-muted/30 space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  ["Total", `${r.totalHours}h`, "text-primary"],
+                  ["Regular", `${r.regularHours}h`, "text-green-600"],
+                  ["Overtime", `${r.overtimeHours}h`, r.overtimeHours > 8 ? "text-red-600" : "text-amber-600"],
+                ].map(([label, val, color]) => (
+                  <div key={label} className="p-2 rounded-lg bg-card border border-border text-center">
+                    <div className={`font-mono text-base font-semibold ${color}`}>{val}</div>
+                    <div className="text-[11px] text-muted-foreground">{label}</div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+
+              <div className="space-y-0">
+                {[
+                  ["Period", r.period],
+                  ["Format", r.format],
+                  ["Confidence", `${r.confidence}%`],
+                  ...(r.employeeName ? [["Employee Detected", r.employeeName]] : []),
+                  ...(r.clientName ? [["Client", r.clientName]] : []),
+                  ["Signature", r.signatureDetected ? "Detected" : "Not detected"],
+                  ...(r.notes ? [["Notes", r.notes]] : []),
+                ].map(([k, v]) => (
+                  <div key={k} className="flex justify-between py-1.5 border-b border-border last:border-0">
+                    <span className="text-xs text-muted-foreground">{k}</span>
+                    <span className={`text-xs font-medium text-foreground text-right max-w-[220px] ${k === "Confidence" ? confColor : k === "Signature" && r.signatureDetected ? "text-green-600" : ""}`}>{v}</span>
+                  </div>
+                ))}
+              </div>
+
+              {r.weeks.length > 0 && (
+                <div>
+                  <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-2 block">Weekly breakdown</Label>
+                  {r.weeks.map((w, i) => {
+                    const maxH = Math.max(...r.weeks.map((x) => x.h));
+                    const pct = (w.h / maxH) * 100;
+                    return (
+                      <div key={i} className="mb-2">
+                        <div className="flex justify-between mb-0.5">
+                          <span className="text-xs text-muted-foreground">{w.wk}</span>
+                          <span className={`font-mono text-xs ${w.h > 44 ? "text-red-600" : w.h > 40 ? "text-amber-600" : "text-green-600"}`}>{w.h}h</span>
+                        </div>
+                        <Progress value={pct} className="h-1.5" />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {r.warnings.length > 0 && (
+                <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                  {r.warnings.map((w, i) => (
+                    <div key={i} className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+                      <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                      <span>{w}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </>
   );
 }
