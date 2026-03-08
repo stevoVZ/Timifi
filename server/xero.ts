@@ -15,12 +15,7 @@ async function saveSetting(key: string, value: string): Promise<void> {
 }
 
 function getRedirectUri(): string {
-  const baseUrl = process.env.REPLIT_DEV_DOMAIN
-    ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-    : process.env.REPL_SLUG
-      ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
-      : "http://localhost:5000";
-  return `${baseUrl}/api/xero/callback`;
+  return process.env.XERO_REDIRECT_URI || "http://localhost:5000/api/xero/callback";
 }
 
 export function getCallbackUri(): string {
