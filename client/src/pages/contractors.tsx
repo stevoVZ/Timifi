@@ -101,13 +101,19 @@ export default function ContractorsPage() {
         title="Contractors"
         subtitle={`${contractors?.length || 0} total`}
         actions={
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
+          <>
+            <Link href="/contractors/new">
               <Button data-testid="button-add-contractor">
                 <Plus className="w-4 h-4" />
                 Add Contractor
               </Button>
-            </DialogTrigger>
+            </Link>
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" data-testid="button-quick-add-contractor">
+                  Quick Add
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>New Contractor</DialogTitle>
@@ -153,6 +159,7 @@ export default function ContractorsPage() {
               </form>
             </DialogContent>
           </Dialog>
+          </>
         }
       />
       <main className="flex-1 overflow-auto p-6 bg-muted/30">

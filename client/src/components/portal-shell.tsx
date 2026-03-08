@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import type { ReactNode } from "react";
-import { LayoutDashboard, Clock, Receipt, MessageSquare, LogOut } from "lucide-react";
+import { LayoutDashboard, Clock, Receipt, MessageSquare, LogOut, CalendarDays, ClipboardCheck } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -19,8 +19,10 @@ import { Button } from "@/components/ui/button";
 const portalNavItems = [
   { title: "Dashboard", url: "/portal/dashboard", icon: LayoutDashboard },
   { title: "Timesheets", url: "/portal/timesheets", icon: Clock },
+  { title: "Leave", url: "/portal/leave", icon: CalendarDays },
   { title: "Payslips", url: "/portal/payslips", icon: Receipt },
   { title: "Messages", url: "/portal/messages", icon: MessageSquare },
+  { title: "Onboarding", url: "/portal/onboarding", icon: ClipboardCheck },
 ];
 
 interface PortalShellProps {

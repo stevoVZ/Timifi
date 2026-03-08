@@ -3,6 +3,7 @@ import { eq, desc, sql, and } from "drizzle-orm";
 import {
   contractors, timesheets, invoices, payRuns,
   notifications, messages, settings,
+  leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
   type Contractor, type InsertContractor,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
@@ -10,11 +11,17 @@ import {
   type Notification, type InsertNotification,
   type Message, type InsertMessage,
   type Setting, type InsertSetting,
+  type LeaveRequest, type InsertLeaveRequest,
+  type PayItem, type InsertPayItem,
+  type TaxDeclaration, type InsertTaxDeclaration,
+  type BankAccount, type InsertBankAccount,
+  type SuperMembership, type InsertSuperMembership,
 } from "@shared/schema";
 
 export interface IStorage {
   getContractors(): Promise<Contractor[]>;
   getContractor(id: string): Promise<Contractor | undefined>;
+  getContractorByEmail(email: string): Promise<Contractor | undefined>;
   createContractor(data: InsertContractor): Promise<Contractor>;
   updateContractor(id: string, data: Partial<InsertContractor>): Promise<Contractor | undefined>;
 
@@ -58,6 +65,31 @@ export interface IStorage {
   getSettings(): Promise<Setting[]>;
   getSetting(key: string): Promise<Setting | undefined>;
   upsertSetting(key: string, value: string): Promise<Setting>;
+
+  getLeaveRequests(): Promise<LeaveRequest[]>;
+  getLeaveRequestsByContractor(contractorId: string): Promise<LeaveRequest[]>;
+  createLeaveRequest(data: InsertLeaveRequest): Promise<LeaveRequest>;
+  updateLeaveRequest(id: string, data: Partial<InsertLeaveRequest>): Promise<LeaveRequest | undefined>;
+
+  getPayItems(): Promise<PayItem[]>;
+  createPayItem(data: InsertPayItem): Promise<PayItem>;
+  updatePayItem(id: string, data: Partial<InsertPayItem>): Promise<PayItem | undefined>;
+
+  getTaxDeclaration(contractorId: string): Promise<TaxDeclaration | undefined>;
+  upsertTaxDeclaration(data: InsertTaxDeclaration): Promise<TaxDeclaration>;
+
+  getBankAccount(contractorId: string): Promise<BankAccount | undefined>;
+  upsertBankAccount(data: InsertBankAccount): Promise<BankAccount>;
+
+  getSuperMembership(contractorId: string): Promise<SuperMembership | undefined>;
+  upsertSuperMembership(data: InsertSuperMembership): Promise<SuperMembership>;
+
+  getOnboardingStatus(contractorId: string): Promise<{
+    personal: boolean;
+    tax: boolean;
+    bank: boolean;
+    super: boolean;
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -67,6 +99,11 @@ export class DatabaseStorage implements IStorage {
 
   async getContractor(id: string): Promise<Contractor | undefined> {
     const [contractor] = await db.select().from(contractors).where(eq(contractors.id, id));
+    return contractor;
+  }
+
+  async getContractorByEmail(email: string): Promise<Contractor | undefined> {
+    const [contractor] = await db.select().from(contractors).where(eq(contractors.email, email));
     return contractor;
   }
 
@@ -282,6 +319,127 @@ export class DatabaseStorage implements IStorage {
     }
     const [created] = await db.insert(settings).values({ key, value }).returning();
     return created;
+  }
+
+  async getLeaveRequests(): Promise<LeaveRequest[]> {
+    return db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
+  }
+
+  async getLeaveRequestsByContractor(contractorId: string): Promise<LeaveRequest[]> {
+    return db.select().from(leaveRequests)
+      .where(eq(leaveRequests.contractorId, contractorId))
+      .orderBy(desc(leaveRequests.createdAt));
+  }
+
+  async createLeaveRequest(data: InsertLeaveRequest): Promise<LeaveRequest> {
+    const [leave] = await db.insert(leaveRequests).values(data).returning();
+    return leave;
+  }
+
+  async updateLeaveRequest(id: string, data: Partial<InsertLeaveRequest>): Promise<LeaveRequest | undefined> {
+    const [leave] = await db
+      .update(leaveRequests)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(leaveRequests.id, id))
+      .returning();
+    return leave;
+  }
+
+  async getPayItems(): Promise<PayItem[]> {
+    return db.select().from(payItems).orderBy(payItems.code);
+  }
+
+  async createPayItem(data: InsertPayItem): Promise<PayItem> {
+    const [item] = await db.insert(payItems).values(data).returning();
+    return item;
+  }
+
+  async updatePayItem(id: string, data: Partial<InsertPayItem>): Promise<PayItem | undefined> {
+    const [item] = await db
+      .update(payItems)
+      .set(data)
+      .where(eq(payItems.id, id))
+      .returning();
+    return item;
+  }
+
+  async getTaxDeclaration(contractorId: string): Promise<TaxDeclaration | undefined> {
+    const [dec] = await db.select().from(taxDeclarations)
+      .where(and(eq(taxDeclarations.contractorId, contractorId), eq(taxDeclarations.isCurrent, true)));
+    return dec;
+  }
+
+  async upsertTaxDeclaration(data: InsertTaxDeclaration): Promise<TaxDeclaration> {
+    const existing = await this.getTaxDeclaration(data.contractorId);
+    if (existing) {
+      const [updated] = await db
+        .update(taxDeclarations)
+        .set({ ...data })
+        .where(eq(taxDeclarations.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(taxDeclarations).values(data).returning();
+    return created;
+  }
+
+  async getBankAccount(contractorId: string): Promise<BankAccount | undefined> {
+    const [acc] = await db.select().from(bankAccounts)
+      .where(and(eq(bankAccounts.contractorId, contractorId), eq(bankAccounts.isPrimary, true)));
+    return acc;
+  }
+
+  async upsertBankAccount(data: InsertBankAccount): Promise<BankAccount> {
+    const existing = await this.getBankAccount(data.contractorId);
+    if (existing) {
+      const [updated] = await db
+        .update(bankAccounts)
+        .set({ ...data })
+        .where(eq(bankAccounts.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(bankAccounts).values(data).returning();
+    return created;
+  }
+
+  async getSuperMembership(contractorId: string): Promise<SuperMembership | undefined> {
+    const [mem] = await db.select().from(superMemberships)
+      .where(and(eq(superMemberships.contractorId, contractorId), eq(superMemberships.isDefault, true)));
+    return mem;
+  }
+
+  async upsertSuperMembership(data: InsertSuperMembership): Promise<SuperMembership> {
+    const existing = await this.getSuperMembership(data.contractorId);
+    if (existing) {
+      const [updated] = await db
+        .update(superMemberships)
+        .set({ ...data })
+        .where(eq(superMemberships.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(superMemberships).values(data).returning();
+    return created;
+  }
+
+  async getOnboardingStatus(contractorId: string): Promise<{
+    personal: boolean;
+    tax: boolean;
+    bank: boolean;
+    super: boolean;
+  }> {
+    const contractor = await this.getContractor(contractorId);
+    const tax = await this.getTaxDeclaration(contractorId);
+    const bank = await this.getBankAccount(contractorId);
+    const superMem = await this.getSuperMembership(contractorId);
+
+    return {
+      personal: !!(contractor?.dateOfBirth && contractor?.addressLine1),
+      tax: !!tax,
+      bank: !!bank,
+      super: !!superMem,
+    };
   }
 }
 

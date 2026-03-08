@@ -14,21 +14,29 @@ import PayrollPage from "@/pages/payroll";
 import InvoicesPage from "@/pages/invoices";
 import NotificationsPage from "@/pages/notifications";
 import SettingsPage from "@/pages/settings";
+import LeavePage from "@/pages/leave";
+import PayItemsPage from "@/pages/pay-items";
+import ContractorNewPage from "@/pages/contractor-new";
 import PortalLoginPage from "@/pages/portal/portal-login";
 import PortalDashboardPage from "@/pages/portal/portal-dashboard";
 import PortalTimesheetsPage from "@/pages/portal/portal-timesheets";
 import PortalPayslipsPage from "@/pages/portal/portal-payslips";
 import PortalMessagesPage from "@/pages/portal/portal-messages";
+import PortalLeavePage from "@/pages/portal/portal-leave";
+import PortalOnboardingPage from "@/pages/portal/portal-onboarding";
 
 function AdminRouter() {
   return (
     <Switch>
       <Route path="/" component={DashboardPage} />
+      <Route path="/contractors/new" component={ContractorNewPage} />
       <Route path="/contractors" component={ContractorsPage} />
       <Route path="/contractors/:id" component={ContractorDetailPage} />
       <Route path="/timesheets" component={TimesheetsPage} />
       <Route path="/payroll" component={PayrollPage} />
       <Route path="/invoices" component={InvoicesPage} />
+      <Route path="/leave" component={LeavePage} />
+      <Route path="/pay-items" component={PayItemsPage} />
       <Route path="/notifications" component={NotificationsPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
@@ -68,8 +76,10 @@ function PortalRouter() {
       <Route path="/portal/login" component={PortalLoginPage} />
       <Route path="/portal/dashboard">{() => <PortalGuard component={PortalDashboardPage} />}</Route>
       <Route path="/portal/timesheets">{() => <PortalGuard component={PortalTimesheetsPage} />}</Route>
+      <Route path="/portal/leave">{() => <PortalGuard component={PortalLeavePage} />}</Route>
       <Route path="/portal/payslips">{() => <PortalGuard component={PortalPayslipsPage} />}</Route>
       <Route path="/portal/messages">{() => <PortalGuard component={PortalMessagesPage} />}</Route>
+      <Route path="/portal/onboarding">{() => <PortalGuard component={PortalOnboardingPage} />}</Route>
       <Route path="/portal">{() => {
         const contractorId = localStorage.getItem("portal_contractor_id");
         return <Redirect to={contractorId ? "/portal/dashboard" : "/portal/login"} />;

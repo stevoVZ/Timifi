@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { contractors, timesheets, invoices, payRuns, notifications, messages, settings } from "@shared/schema";
+import { contractors, timesheets, invoices, payRuns, notifications, messages, settings, leaveRequests, payItems } from "@shared/schema";
 import { sql } from "drizzle-orm";
 
 export async function seedDatabase() {
@@ -359,6 +359,139 @@ export async function seedDatabase() {
     { key: "default_pay_day", value: "28" },
     { key: "portal_enabled", value: "true" },
     { key: "portal_self_service", value: "true" },
+  ]);
+
+  await db.insert(leaveRequests).values([
+    {
+      contractorId: c1.id,
+      leaveType: "ANNUAL",
+      startDate: "2026-04-14",
+      endDate: "2026-04-18",
+      totalDays: "5.0",
+      reason: "Family holiday planned for school break",
+      status: "PENDING",
+    },
+    {
+      contractorId: c2.id,
+      leaveType: "SICK",
+      startDate: "2026-03-03",
+      endDate: "2026-03-04",
+      totalDays: "2.0",
+      reason: "Unwell — flu symptoms",
+      status: "APPROVED",
+      reviewedBy: "Sarah Chen",
+      reviewNote: "Approved. Get well soon!",
+    },
+    {
+      contractorId: c3.id,
+      leaveType: "PERSONAL",
+      startDate: "2026-03-21",
+      endDate: "2026-03-21",
+      totalDays: "1.0",
+      reason: "Moving house",
+      status: "APPROVED",
+      reviewedBy: "Sarah Chen",
+    },
+    {
+      contractorId: c5.id,
+      leaveType: "ANNUAL",
+      startDate: "2026-05-01",
+      endDate: "2026-05-09",
+      totalDays: "7.0",
+      reason: "Overseas trip — previously discussed",
+      status: "PENDING",
+    },
+  ]);
+
+  await db.insert(payItems).values([
+    {
+      code: "ORD",
+      name: "Ordinary Hours",
+      description: "Standard hourly rate",
+      itemType: "EARNINGS",
+      multiplier: "1.00",
+      isTaxable: true,
+      isSuperable: true,
+      isDefault: true,
+      isActive: true,
+    },
+    {
+      code: "OT15",
+      name: "Overtime 1.5x",
+      description: "Time and a half overtime",
+      itemType: "EARNINGS",
+      multiplier: "1.50",
+      isTaxable: true,
+      isSuperable: true,
+      isDefault: false,
+      isActive: true,
+    },
+    {
+      code: "OT20",
+      name: "Overtime 2x",
+      description: "Double time overtime",
+      itemType: "EARNINGS",
+      multiplier: "2.00",
+      isTaxable: true,
+      isSuperable: true,
+      isDefault: false,
+      isActive: true,
+    },
+    {
+      code: "PEN",
+      name: "Penalty Rates",
+      description: "Weekend and public holiday penalty rates",
+      itemType: "EARNINGS",
+      multiplier: "1.25",
+      isTaxable: true,
+      isSuperable: true,
+      isDefault: false,
+      isActive: true,
+    },
+    {
+      code: "AL",
+      name: "Annual Leave",
+      description: "Paid annual leave",
+      itemType: "EARNINGS",
+      multiplier: "1.00",
+      isTaxable: true,
+      isSuperable: true,
+      isDefault: true,
+      isActive: true,
+    },
+    {
+      code: "SL",
+      name: "Sick Leave",
+      description: "Paid sick/personal leave",
+      itemType: "EARNINGS",
+      multiplier: "1.00",
+      isTaxable: true,
+      isSuperable: true,
+      isDefault: true,
+      isActive: true,
+    },
+    {
+      code: "ALLOW",
+      name: "Travel Allowance",
+      description: "Daily travel allowance",
+      itemType: "ALLOWANCE",
+      rate: "25.00",
+      isTaxable: false,
+      isSuperable: false,
+      isDefault: false,
+      isActive: true,
+    },
+    {
+      code: "DED-UNI",
+      name: "Union Fees",
+      description: "Monthly union membership deduction",
+      itemType: "DEDUCTION",
+      rate: "45.00",
+      isTaxable: false,
+      isSuperable: false,
+      isDefault: false,
+      isActive: false,
+    },
   ]);
 
   console.log("Database seeded successfully!");

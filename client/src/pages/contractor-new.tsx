@@ -1,0 +1,300 @@
+import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { TopBar } from "@/components/top-bar";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { ArrowLeft, Save, User, Briefcase, Shield, Building } from "lucide-react";
+import type { Contractor } from "@shared/schema";
+
+export default function ContractorNewPage() {
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+
+  const [form, setForm] = useState({
+    firstName: "",
+    lastName: "",
+    email: "",
+    phone: "",
+    dateOfBirth: "",
+    gender: "",
+    addressLine1: "",
+    suburb: "",
+    state: "",
+    postcode: "",
+    jobTitle: "",
+    clientName: "",
+    employmentType: "LABOURHIRE",
+    hourlyRate: "",
+    contractHoursPA: "2000",
+    payFrequency: "MONTHLY",
+    startDate: "",
+    endDate: "",
+    clearanceLevel: "NONE",
+    clearanceExpiry: "",
+    notes: "",
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const res = await apiRequest("POST", "/api/contractors", data);
+      return res.json() as Promise<Contractor>;
+    },
+    onSuccess: (contractor) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/contractors"] });
+      toast({ title: "Contractor created successfully" });
+      navigate(`/contractors/${contractor.id}`);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.firstName || !form.lastName || !form.email) {
+      toast({ title: "Required fields", description: "First name, last name, and email are required", variant: "destructive" });
+      return;
+    }
+    const payload: Record<string, unknown> = {
+      ...form,
+      hourlyRate: form.hourlyRate || null,
+      contractHoursPA: parseInt(form.contractHoursPA) || 2000,
+      clearanceExpiry: form.clearanceExpiry || null,
+      startDate: form.startDate || null,
+      endDate: form.endDate || null,
+      dateOfBirth: form.dateOfBirth || null,
+    };
+    createMutation.mutate(payload);
+  };
+
+  const update = (field: string, value: string) => setForm((prev) => ({ ...prev, [field]: value }));
+
+  return (
+    <>
+      <TopBar
+        title="New Contractor"
+        subtitle="Add a new contractor to the system"
+        actions={
+          <Button variant="outline" onClick={() => navigate("/contractors")} data-testid="button-back-contractors">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back
+          </Button>
+        }
+      />
+      <form onSubmit={handleSubmit} className="p-6 space-y-6 max-w-4xl">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <User className="w-4 h-4" />
+              Personal Details
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label>First Name *</Label>
+              <Input value={form.firstName} onChange={(e) => update("firstName", e.target.value)} data-testid="input-first-name" />
+            </div>
+            <div>
+              <Label>Last Name *</Label>
+              <Input value={form.lastName} onChange={(e) => update("lastName", e.target.value)} data-testid="input-last-name" />
+            </div>
+            <div>
+              <Label>Email *</Label>
+              <Input type="email" value={form.email} onChange={(e) => update("email", e.target.value)} data-testid="input-email" />
+            </div>
+            <div>
+              <Label>Phone</Label>
+              <Input value={form.phone} onChange={(e) => update("phone", e.target.value)} data-testid="input-phone" />
+            </div>
+            <div>
+              <Label>Date of Birth</Label>
+              <Input type="date" value={form.dateOfBirth} onChange={(e) => update("dateOfBirth", e.target.value)} data-testid="input-dob" />
+            </div>
+            <div>
+              <Label>Gender</Label>
+              <Select value={form.gender} onValueChange={(v) => update("gender", v)}>
+                <SelectTrigger data-testid="select-gender">
+                  <SelectValue placeholder="Select" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Male">Male</SelectItem>
+                  <SelectItem value="Female">Female</SelectItem>
+                  <SelectItem value="Non-binary">Non-binary</SelectItem>
+                  <SelectItem value="Prefer not to say">Prefer not to say</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="md:col-span-2">
+              <Label>Address</Label>
+              <Input value={form.addressLine1} onChange={(e) => update("addressLine1", e.target.value)} placeholder="Street address" data-testid="input-address" />
+            </div>
+            <div>
+              <Label>Suburb</Label>
+              <Input value={form.suburb} onChange={(e) => update("suburb", e.target.value)} data-testid="input-suburb" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>State</Label>
+                <Select value={form.state} onValueChange={(v) => update("state", v)}>
+                  <SelectTrigger data-testid="select-state">
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["ACT", "NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT"].map((s) => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Postcode</Label>
+                <Input value={form.postcode} onChange={(e) => update("postcode", e.target.value)} maxLength={4} data-testid="input-postcode" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Briefcase className="w-4 h-4" />
+              Employment Details
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label>Job Title</Label>
+              <Input value={form.jobTitle} onChange={(e) => update("jobTitle", e.target.value)} data-testid="input-job-title" />
+            </div>
+            <div>
+              <Label>Employment Type</Label>
+              <Select value={form.employmentType} onValueChange={(v) => update("employmentType", v)}>
+                <SelectTrigger data-testid="select-employment-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="FULLTIME">Full Time</SelectItem>
+                  <SelectItem value="PARTTIME">Part Time</SelectItem>
+                  <SelectItem value="CASUAL">Casual</SelectItem>
+                  <SelectItem value="LABOURHIRE">Labour Hire</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Hourly Rate ($)</Label>
+              <Input type="number" step="0.01" value={form.hourlyRate} onChange={(e) => update("hourlyRate", e.target.value)} data-testid="input-hourly-rate" />
+            </div>
+            <div>
+              <Label>Contract Hours p.a.</Label>
+              <Input type="number" value={form.contractHoursPA} onChange={(e) => update("contractHoursPA", e.target.value)} data-testid="input-contract-hours" />
+            </div>
+            <div>
+              <Label>Pay Frequency</Label>
+              <Select value={form.payFrequency} onValueChange={(v) => update("payFrequency", v)}>
+                <SelectTrigger data-testid="select-pay-frequency">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="WEEKLY">Weekly</SelectItem>
+                  <SelectItem value="FORTNIGHTLY">Fortnightly</SelectItem>
+                  <SelectItem value="MONTHLY">Monthly</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Start Date</Label>
+              <Input type="date" value={form.startDate} onChange={(e) => update("startDate", e.target.value)} data-testid="input-start-date" />
+            </div>
+            <div>
+              <Label>End Date</Label>
+              <Input type="date" value={form.endDate} onChange={(e) => update("endDate", e.target.value)} data-testid="input-end-date" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Building className="w-4 h-4" />
+              Client Placement
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div>
+              <Label>Client Name</Label>
+              <Input value={form.clientName} onChange={(e) => update("clientName", e.target.value)} placeholder="e.g. Department of Defence" data-testid="input-client-name" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Shield className="w-4 h-4" />
+              Security Clearance
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label>Clearance Level</Label>
+              <Select value={form.clearanceLevel} onValueChange={(v) => update("clearanceLevel", v)}>
+                <SelectTrigger data-testid="select-clearance-level">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="NONE">None</SelectItem>
+                  <SelectItem value="BASELINE">Baseline</SelectItem>
+                  <SelectItem value="NV1">NV1</SelectItem>
+                  <SelectItem value="NV2">NV2</SelectItem>
+                  <SelectItem value="PV">PV</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Clearance Expiry</Label>
+              <Input type="date" value={form.clearanceExpiry} onChange={(e) => update("clearanceExpiry", e.target.value)} data-testid="input-clearance-expiry" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Notes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              value={form.notes}
+              onChange={(e) => update("notes", e.target.value)}
+              placeholder="Any additional notes..."
+              rows={3}
+              data-testid="input-notes"
+            />
+          </CardContent>
+        </Card>
+
+        <div className="flex justify-end gap-3">
+          <Button type="button" variant="outline" onClick={() => navigate("/contractors")} data-testid="button-cancel-new">
+            Cancel
+          </Button>
+          <Button type="submit" disabled={createMutation.isPending} data-testid="button-save-contractor">
+            <Save className="w-4 h-4 mr-2" />
+            {createMutation.isPending ? "Creating..." : "Create Contractor"}
+          </Button>
+        </div>
+      </form>
+    </>
+  );
+}
