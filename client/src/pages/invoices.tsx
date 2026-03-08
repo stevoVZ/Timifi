@@ -69,7 +69,7 @@ export default function InvoicesPage() {
   });
 
   const { data: contractors } = useQuery<Contractor[]>({
-    queryKey: ["/api/contractors"],
+    queryKey: ["/api/employees"],
   });
 
   const { data: timesheets } = useQuery<Timesheet[]>({
@@ -235,10 +235,10 @@ export default function InvoicesPage() {
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label>Contractor</Label>
+                  <Label>Employee</Label>
                   <Select name="contractorId" required>
-                    <SelectTrigger data-testid="select-invoice-contractor">
-                      <SelectValue placeholder="Select contractor" />
+                    <SelectTrigger data-testid="select-invoice-employee">
+                      <SelectValue placeholder="Select employee" />
                     </SelectTrigger>
                     <SelectContent>
                       {contractors?.map((c) => (

@@ -73,7 +73,7 @@ export default function DashboardPage() {
   });
 
   const { data: contractors } = useQuery<Contractor[]>({
-    queryKey: ["/api/contractors"],
+    queryKey: ["/api/employees"],
   });
 
   const { data: notifications } = useQuery<Notification[]>({
@@ -109,13 +109,13 @@ export default function DashboardPage() {
 
   const kpis = stats ? [
     {
-      label: "Active contractors",
+      label: "Active employees",
       value: String(stats.activeContractors),
       sub: `${stats.pendingContractors} pending setup`,
       icon: Users,
       color: "text-primary",
       bgColor: "bg-primary/5",
-      href: "/contractors",
+      href: "/employees",
     },
     {
       label: "Total invoices",
@@ -147,10 +147,10 @@ export default function DashboardPage() {
   ] : [];
 
   const quickLinks = [
-    { title: "Upload timesheets", desc: "Drop PDFs for one or more contractors", href: "/timesheets", icon: Upload, color: "text-primary", bgColor: "bg-primary/10" },
+    { title: "Upload timesheets", desc: "Drop PDFs for one or more employees", href: "/timesheets", icon: Upload, color: "text-primary", bgColor: "bg-primary/10" },
     { title: "View invoices", desc: "Browse all synced Xero invoices", href: "/invoices", icon: Receipt, color: "text-amber-600", bgColor: "bg-amber-50 dark:bg-amber-900/20" },
     { title: "View payroll", desc: "Review pay runs and payroll history", href: "/payroll", icon: CreditCard, color: "text-green-600", bgColor: "bg-green-50 dark:bg-green-900/20" },
-    { title: "Add contractor", desc: "Set up a new contractor profile", href: "/contractors/new", icon: UserPlus, color: "text-primary", bgColor: "bg-primary/10" },
+    { title: "Add employee", desc: "Set up a new employee profile", href: "/employees/new", icon: UserPlus, color: "text-primary", bgColor: "bg-primary/10" },
   ];
 
   return (
@@ -297,18 +297,18 @@ export default function DashboardPage() {
             <div className="space-y-6">
               <Card>
                 <div className="flex items-center justify-between px-5 py-3.5 border-b">
-                  <span className="text-sm font-semibold text-foreground" data-testid="text-contractors-table-title">Contractors</span>
-                  <Link href="/contractors" className="text-xs font-semibold text-primary hover:underline" data-testid="link-view-all-contractors">
+                  <span className="text-sm font-semibold text-foreground" data-testid="text-employees-table-title">Employees</span>
+                  <Link href="/employees" className="text-xs font-semibold text-primary hover:underline" data-testid="link-view-all-employees">
                     View all <ArrowRight className="w-3 h-3 inline" />
                   </Link>
                 </div>
                 <CardContent className="p-0">
                   {activeContractors.length === 0 ? (
-                    <div className="p-6 text-center text-sm text-muted-foreground">No contractors</div>
+                    <div className="p-6 text-center text-sm text-muted-foreground">No employees</div>
                   ) : (
                     <div className="divide-y">
                       {activeContractors.map((c) => (
-                        <Link key={c.id} href={`/contractors/${c.id}`} data-testid={`link-contractor-${c.id}`}>
+                        <Link key={c.id} href={`/employees/${c.id}`} data-testid={`link-employee-${c.id}`}>
                           <div className="px-5 py-3 hover:bg-muted/30 transition-colors cursor-pointer">
                             <div className="flex items-center gap-2.5">
                               <div

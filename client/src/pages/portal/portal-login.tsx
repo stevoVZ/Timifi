@@ -50,7 +50,7 @@ export default function PortalLoginPage() {
             CP
           </div>
           <h1 className="text-xl font-semibold text-foreground" data-testid="text-portal-login-title">
-            Contractor Portal
+            Employee Portal
           </h1>
           <p className="text-sm text-muted-foreground">
             Sign in to access your dashboard

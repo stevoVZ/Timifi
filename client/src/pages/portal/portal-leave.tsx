@@ -68,7 +68,7 @@ export default function PortalLeavePage() {
   });
 
   const { data: leaveRequests, isLoading } = useQuery<LeaveRequest[]>({
-    queryKey: ["/api/leave/contractor", contractorId],
+    queryKey: ["/api/leave/employee", contractorId],
   });
 
   const createMutation = useMutation({
@@ -76,7 +76,7 @@ export default function PortalLeavePage() {
       await apiRequest("POST", "/api/leave", data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/leave/contractor", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leave/employee", contractorId] });
       toast({ title: "Leave request submitted" });
       setActiveTab("history");
       setForm({ leaveType: "ANNUAL", startDate: "", endDate: "", reason: "" });

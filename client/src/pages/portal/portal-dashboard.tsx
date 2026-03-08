@@ -48,7 +48,7 @@ function getContractorId(): string | null {
 }
 
 function getContractorName(): string {
-  return localStorage.getItem("portal_contractor_name") || "Contractor";
+  return localStorage.getItem("portal_contractor_name") || "Employee";
 }
 
 function formatCurrency(val: number): string {
@@ -70,7 +70,7 @@ export default function PortalDashboardPage() {
   }
 
   const { data: stats, isLoading } = useQuery<PortalStats>({
-    queryKey: ["/api/portal/contractor", contractorId, "stats"],
+    queryKey: ["/api/portal/employee", contractorId, "stats"],
   });
 
   const contractorName = stats

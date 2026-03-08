@@ -57,7 +57,7 @@ export default function PortalOnboardingPage() {
   });
 
   const { data: contractor } = useQuery<Contractor>({
-    queryKey: ["/api/contractors", contractorId],
+    queryKey: ["/api/employees", contractorId],
   });
 
   const [personalForm, setPersonalForm] = useState({

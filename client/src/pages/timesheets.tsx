@@ -52,13 +52,6 @@ const INTAKE_BADGE_STYLES: Record<string, string> = {
 
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
-const DEMO_WEEKS = [
-  { label: "Week 1 (3-7 Mar)", h: 42, ot: 2 },
-  { label: "Week 2 (10-14 Mar)", h: 44, ot: 4 },
-  { label: "Week 3 (17-21 Mar)", h: 40, ot: 0 },
-  { label: "Week 4 (24-28 Mar)", h: 38, ot: 0 },
-];
-
 interface QueueItem {
   id: string;
   file: File;
@@ -79,30 +72,10 @@ interface ScanResult {
   warnings: string[];
   weeks: { wk: string; h: number }[];
   notes: string | null;
-}
-
-function buildDemoResult(file: File, month: number, year: number, idx: number): ScanResult {
-  const wk = DEMO_WEEKS[idx % DEMO_WEEKS.length];
-  const isWeekly = idx < 4;
-  const totalHours = isWeekly ? wk.h : DEMO_WEEKS.reduce((s, w) => s + w.h, 0);
-  const overtimeHours = isWeekly ? wk.ot : DEMO_WEEKS.reduce((s, w) => s + w.ot, 0);
-  const regularHours = totalHours - overtimeHours;
-
-  return {
-    fileName: file.name,
-    fileSize: (file.size / 1024).toFixed(0) + " KB",
-    totalHours,
-    regularHours,
-    overtimeHours,
-    period: isWeekly ? wk.label : `1-28 ${MONTHS[month]} ${year}`,
-    format: ["Standard Weekly Grid", "Custom Template", "Daily Log Format", "Standard Weekly Grid"][idx % 4],
-    confidence: 88 + (idx % 3) * 3,
-    warnings: overtimeHours > 8 ? [`Overtime hours (${overtimeHours}h) exceed typical weekly limit`] : [],
-    weeks: isWeekly
-      ? [{ wk: wk.label, h: wk.h }]
-      : DEMO_WEEKS.map((w, i) => ({ wk: `Week ${i + 1}`, h: w.h })),
-    notes: idx === 0 ? "Approved by team lead J. Smith" : null,
-  };
+  employeeName?: string | null;
+  clientName?: string | null;
+  signatureDetected?: boolean;
+  monthBoundaryWarning?: string | null;
 }
 
 export default function TimesheetsPage() {
@@ -167,7 +140,7 @@ function UploadView() {
   const queueCountRef = useRef(0);
 
   const { data: contractors } = useQuery<Contractor[]>({
-    queryKey: ["/api/contractors"],
+    queryKey: ["/api/employees"],
   });
 
   const { data: timesheetsList } = useQuery<Timesheet[]>({
@@ -200,7 +173,7 @@ function UploadView() {
     setQueue((q) => q.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }, []);
 
-  const addFiles = useCallback((files: FileList | null) => {
+  const addFiles = useCallback(async (files: FileList | null) => {
     if (!files) return;
     const pdfs = Array.from(files).filter((f) => f.type === "application/pdf");
     if (pdfs.length < files.length) {
@@ -208,15 +181,46 @@ function UploadView() {
     }
     if (!pdfs.length) return;
 
+    const itemIds: string[] = [];
     pdfs.forEach((f) => {
       const id = uid();
-      const idx = queueCountRef.current++;
+      itemIds.push(id);
+      queueCountRef.current++;
       setQueue((q) => [...q, { id, file: f, status: "scanning", result: null, excluded: false }]);
-      setTimeout(() => {
-        const result = buildDemoResult(f, selectedMonth, selectedYear, idx);
-        setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "done", result } : item)));
-      }, 1200 + Math.random() * 800);
     });
+
+    const formData = new FormData();
+    pdfs.forEach((f) => formData.append("files", f));
+    formData.append("month", String(selectedMonth));
+    formData.append("year", String(selectedYear));
+
+    try {
+      const res = await fetch("/api/timesheets/scan", { method: "POST", body: formData, credentials: "include" });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ message: "Scan failed" }));
+        throw new Error(errData.message || "Scan failed");
+      }
+      const data = await res.json();
+      const results: ScanResult[] = data.results || [];
+
+      results.forEach((result: ScanResult, idx: number) => {
+        const id = itemIds[idx];
+        if (id) {
+          setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "done", result } : item)));
+        }
+      });
+
+      itemIds.forEach((id, idx) => {
+        if (idx >= results.length) {
+          setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "error", result: null } : item)));
+        }
+      });
+    } catch (err: any) {
+      toast({ title: "Scan failed", description: err.message || "AI extraction failed", variant: "destructive" });
+      itemIds.forEach((id) => {
+        setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "error", result: null } : item)));
+      });
+    }
   }, [selectedMonth, selectedYear, toast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -346,8 +350,8 @@ function UploadView() {
     <div className="space-y-5">
       <div className="flex items-start gap-4 flex-wrap">
         <div>
-          <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 block">Contractor</Label>
-          <div className="flex gap-1.5 flex-wrap" data-testid="picker-contractor">
+          <Label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 block">Employee</Label>
+          <div className="flex gap-1.5 flex-wrap" data-testid="picker-employee">
             {activeContractors.map((c) => (
               <button
                 key={c.id}
@@ -357,7 +361,7 @@ function UploadView() {
                     ? "border-primary/40 bg-primary/5 font-semibold text-primary"
                     : "border-border bg-card text-muted-foreground hover:border-primary/30"
                 }`}
-                data-testid={`button-pick-contractor-${c.id}`}
+                data-testid={`button-pick-employee-${c.id}`}
               >
                 <div
                   className="w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold"
@@ -566,7 +570,7 @@ function UploadView() {
                   {!selectedContractorId && (
                     <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted text-xs text-muted-foreground">
                       <Info className="w-3.5 h-3.5 flex-shrink-0" />
-                      Select a contractor before submitting
+                      Select an employee before submitting
                     </div>
                   )}
 
@@ -836,11 +840,14 @@ function FileQueueCard({
                 ["Period", r.period],
                 ["Format", r.format],
                 ["Confidence", `${r.confidence}%`],
+                ...(r.employeeName ? [["Employee Detected", r.employeeName]] : []),
+                ...(r.clientName ? [["Client", r.clientName]] : []),
+                ["Signature", r.signatureDetected ? "✓ Detected" : "Not detected"],
                 ...(r.notes ? [["Notes", r.notes]] : []),
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between py-1.5 border-b border-border last:border-0">
                   <span className="text-xs text-muted-foreground">{k}</span>
-                  <span className={`text-xs font-medium text-foreground text-right max-w-[220px] ${k === "Confidence" ? confColor : ""}`}>{v}</span>
+                  <span className={`text-xs font-medium text-foreground text-right max-w-[220px] ${k === "Confidence" ? confColor : k === "Signature" && r.signatureDetected ? "text-green-600" : ""}`}>{v}</span>
                 </div>
               ))}
             </div>
@@ -893,7 +900,7 @@ function SubmissionsView() {
   });
 
   const { data: contractors } = useQuery<Contractor[]>({
-    queryKey: ["/api/contractors"],
+    queryKey: ["/api/employees"],
   });
 
   const contractorMap = new Map(contractors?.map((c) => [c.id, c]) || []);
@@ -1016,14 +1023,14 @@ function SubmissionsView() {
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>New Timesheet Entry</DialogTitle>
-              <DialogDescription>Create a timesheet manually for a contractor</DialogDescription>
+              <DialogDescription>Create a timesheet manually for an employee</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
-                <Label>Contractor</Label>
+                <Label>Employee</Label>
                 <Select name="contractorId" required>
-                  <SelectTrigger data-testid="select-contractor">
-                    <SelectValue placeholder="Select contractor" />
+                  <SelectTrigger data-testid="select-employee">
+                    <SelectValue placeholder="Select employee" />
                   </SelectTrigger>
                   <SelectContent>
                     {contractors?.map((c) => (

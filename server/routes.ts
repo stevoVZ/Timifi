@@ -1,11 +1,15 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import multer from "multer";
 import { storage } from "./storage";
 import { insertContractorSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices } from "./xero";
 import { requireAuth } from "./auth";
+import { scanTimesheetPdf } from "./ocr";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 export async function registerRoutes(
   httpServer: Server,
@@ -28,7 +32,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/contractors", async (_req, res) => {
+  app.get("/api/employees", async (_req, res) => {
     try {
       const data = await storage.getContractors();
       res.json(data);
@@ -37,7 +41,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/contractors/stats", async (_req, res) => {
+  app.get("/api/employees/stats", async (_req, res) => {
     try {
       const allContractors = await storage.getContractors();
       const allTimesheets = await storage.getTimesheets();
@@ -58,7 +62,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/contractors/:id", async (req, res) => {
+  app.get("/api/employees/:id", async (req, res) => {
     try {
       const contractor = await storage.getContractor(req.params.id);
       if (!contractor) return res.status(404).json({ message: "Contractor not found" });
@@ -68,7 +72,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/contractors", async (req, res) => {
+  app.post("/api/employees", async (req, res) => {
     try {
       const parsed = insertContractorSchema.parse(req.body);
       const contractor = await storage.createContractor(parsed);
@@ -78,7 +82,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/contractors/:id", async (req, res) => {
+  app.patch("/api/employees/:id", async (req, res) => {
     try {
       const existing = await storage.getContractor(req.params.id);
       if (!existing) return res.status(404).json({ message: "Contractor not found" });
@@ -109,7 +113,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/timesheets/contractor/:contractorId", async (req, res) => {
+  app.get("/api/timesheets/employee/:contractorId", async (req, res) => {
     try {
       const data = await storage.getTimesheetsByContractor(req.params.contractorId);
       res.json(data);
@@ -147,6 +151,26 @@ export async function registerRoutes(
       res.status(201).json(timesheet);
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Invalid timesheet data" });
+    }
+  });
+
+  app.post("/api/timesheets/scan", upload.array("files", 20), async (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: "No PDF files uploaded" });
+      }
+      const month = parseInt(req.body.month) || (new Date().getMonth() + 1);
+      const year = parseInt(req.body.year) || new Date().getFullYear();
+
+      const results = await Promise.all(
+        files.map((file) => scanTimesheetPdf(file.buffer, file.originalname, month, year))
+      );
+
+      res.json({ results });
+    } catch (err: any) {
+      console.error("Timesheet scan error:", err);
+      res.status(500).json({ message: err.message || "Failed to scan timesheets" });
     }
   });
 
@@ -264,7 +288,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/messages/contractor/:contractorId", async (req, res) => {
+  app.get("/api/messages/employee/:contractorId", async (req, res) => {
     try {
       const data = await storage.getMessagesByContractor(req.params.contractorId);
       res.json(data);
@@ -323,7 +347,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/invoices/contractor/:contractorId", async (req, res) => {
+  app.get("/api/invoices/employee/:contractorId", async (req, res) => {
     try {
       const data = await storage.getInvoicesByContractor(req.params.contractorId);
       res.json(data);
@@ -348,7 +372,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/contractor/:contractorId/stats", async (req, res) => {
+  app.get("/api/portal/employee/:contractorId/stats", async (req, res) => {
     try {
       const contractor = await storage.getContractor(req.params.contractorId);
       if (!contractor) return res.status(404).json({ message: "Contractor not found" });
@@ -433,7 +457,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/leave/contractor/:contractorId", async (req, res) => {
+  app.get("/api/leave/employee/:contractorId", async (req, res) => {
     try {
       const data = await storage.getLeaveRequestsByContractor(req.params.contractorId);
       res.json(data);
@@ -542,7 +566,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/contractor/:contractorId/tax", async (req, res) => {
+  app.get("/api/portal/employee/:contractorId/tax", async (req, res) => {
     try {
       const dec = await storage.getTaxDeclaration(req.params.contractorId);
       res.json(dec || null);
@@ -551,7 +575,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/contractor/:contractorId/bank", async (req, res) => {
+  app.get("/api/portal/employee/:contractorId/bank", async (req, res) => {
     try {
       const acc = await storage.getBankAccount(req.params.contractorId);
       res.json(acc || null);
@@ -560,7 +584,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/contractor/:contractorId/super", async (req, res) => {
+  app.get("/api/portal/employee/:contractorId/super", async (req, res) => {
     try {
       const mem = await storage.getSuperMembership(req.params.contractorId);
       res.json(mem || null);

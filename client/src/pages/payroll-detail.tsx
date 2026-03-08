@@ -288,12 +288,12 @@ export default function PayrollDetailPage() {
                                       </span>
                                       {line.contractor && (
                                         <Link
-                                          href={`/contractors/${line.contractor.id}`}
+                                          href={`/employees/${line.contractor.id}`}
                                           className="text-xs text-primary hover:underline"
-                                          data-testid={`link-contractor-${line.id}`}
+                                          data-testid={`link-employee-${line.id}`}
                                           onClick={(e) => e.stopPropagation()}
                                         >
-                                          View Contractor Profile →
+                                          View Employee Profile →
                                         </Link>
                                       )}
                                     </div>

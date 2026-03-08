@@ -51,7 +51,7 @@ function PortalSidebar({ contractorName }: { contractorName?: string }) {
           </div>
           <div>
             <div className="font-semibold text-sm text-sidebar-foreground" data-testid="text-portal-name">
-              Contractor Portal
+              Employee Portal
             </div>
             <div className="text-[11px] text-muted-foreground">
               Self-Service
@@ -89,9 +89,9 @@ function PortalSidebar({ contractorName }: { contractorName?: string }) {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-sidebar-foreground truncate" data-testid="text-portal-user">
-              {contractorName || "Contractor"}
+              {contractorName || "Employee"}
             </div>
-            <div className="text-[11px] text-muted-foreground">Contractor</div>
+            <div className="text-[11px] text-muted-foreground">Employee</div>
           </div>
         </div>
         <Button

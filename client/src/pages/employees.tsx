@@ -83,7 +83,7 @@ function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: 
     : <ArrowDown className="w-3 h-3 ml-1" />;
 }
 
-export default function ContractorsPage() {
+export default function EmployeesPage() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -92,20 +92,20 @@ export default function ContractorsPage() {
   const { toast } = useToast();
 
   const { data: contractorsWithStats, isLoading } = useQuery<ContractorWithStats[]>({
-    queryKey: ["/api/contractors/stats"],
+    queryKey: ["/api/employees/stats"],
   });
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, string>) => {
-      const res = await apiRequest("POST", "/api/contractors", data);
+      const res = await apiRequest("POST", "/api/employees", data);
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/contractors"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/contractors/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       setDialogOpen(false);
-      toast({ title: "Contractor created", description: "New contractor has been added." });
+      toast({ title: "Employee created", description: "New employee has been added." });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -176,25 +176,25 @@ export default function ContractorsPage() {
   return (
     <div className="flex flex-col h-full">
       <TopBar
-        title="Contractors"
+        title="Employees"
         subtitle={`${contractorsWithStats?.length || 0} total`}
         actions={
           <>
-            <Link href="/contractors/new">
-              <Button data-testid="button-add-contractor">
+            <Link href="/employees/new">
+              <Button data-testid="button-add-employee">
                 <Plus className="w-4 h-4" />
-                Add Contractor
+                Add Employee
               </Button>
             </Link>
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
-                <Button variant="outline" data-testid="button-quick-add-contractor">
+                <Button variant="outline" data-testid="button-quick-add-employee">
                   Quick Add
                 </Button>
               </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
-                <DialogTitle>New Contractor</DialogTitle>
+                <DialogTitle>New Employee</DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
@@ -231,8 +231,8 @@ export default function ContractorsPage() {
                     <Input id="clientName" name="clientName" data-testid="input-client-name" />
                   </div>
                 </div>
-                <Button type="submit" className="w-full" disabled={createMutation.isPending} data-testid="button-submit-contractor">
-                  {createMutation.isPending ? "Creating..." : "Create Contractor"}
+                <Button type="submit" className="w-full" disabled={createMutation.isPending} data-testid="button-submit-employee">
+                  {createMutation.isPending ? "Creating..." : "Create Employee"}
                 </Button>
               </form>
             </DialogContent>
@@ -301,11 +301,11 @@ export default function ContractorsPage() {
             <div className="relative flex-1 min-w-[200px] max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search contractors..."
+                placeholder="Search employees..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-9"
-                data-testid="input-search-contractors"
+                data-testid="input-search-employees"
               />
             </div>
             <Select value={filterStatus} onValueChange={setFilterStatus}>
@@ -339,9 +339,9 @@ export default function ContractorsPage() {
             <Card>
               <CardContent className="py-16 text-center">
                 <Users className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-                <div className="text-lg font-semibold text-foreground mb-1">No contractors found</div>
+                <div className="text-lg font-semibold text-foreground mb-1">No employees found</div>
                 <div className="text-sm text-muted-foreground">
-                  {search ? "Try a different search term" : "Add your first contractor to get started"}
+                  {search ? "Try a different search term" : "Add your first employee to get started"}
                 </div>
               </CardContent>
             </Card>
@@ -357,7 +357,7 @@ export default function ContractorsPage() {
                           className="flex items-center text-xs font-medium"
                           data-testid="sort-name"
                         >
-                          Contractor
+                          Employee
                           <SortIcon field="name" sortField={sortField} sortDir={sortDir} />
                         </button>
                       </TableHead>
@@ -398,16 +398,16 @@ export default function ContractorsPage() {
                   </TableHeader>
                   <TableBody>
                     {filtered.map((c) => (
-                      <TableRow key={c.id} className="hover-elevate cursor-pointer" data-testid={`row-contractor-${c.id}`}>
+                      <TableRow key={c.id} className="hover-elevate cursor-pointer" data-testid={`row-employee-${c.id}`}>
                         <TableCell>
-                          <Link href={`/contractors/${c.id}`}>
+                          <Link href={`/employees/${c.id}`}>
                             <div className="flex items-center gap-3">
                               <div className={`w-8 h-8 rounded-md flex items-center justify-center font-bold text-xs flex-shrink-0 ${getAvatarColor(c.firstName + c.lastName)}`}>
                                 {getInitials(c.firstName, c.lastName)}
                               </div>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-sm font-medium text-foreground truncate" data-testid={`text-contractor-name-${c.id}`}>
+                                  <span className="text-sm font-medium text-foreground truncate" data-testid={`text-employee-name-${c.id}`}>
                                     {c.firstName} {c.lastName}
                                   </span>
                                   {c.xeroEmployeeId && (
@@ -442,8 +442,8 @@ export default function ContractorsPage() {
                           <span className="text-sm text-muted-foreground">{formatDate(c.startDate)}</span>
                         </TableCell>
                         <TableCell>
-                          <Link href={`/contractors/${c.id}`}>
-                            <Button size="icon" variant="ghost" data-testid={`button-view-contractor-${c.id}`}>
+                          <Link href={`/employees/${c.id}`}>
+                            <Button size="icon" variant="ghost" data-testid={`button-view-employee-${c.id}`}>
                               <ArrowRight className="w-4 h-4" />
                             </Button>
                           </Link>

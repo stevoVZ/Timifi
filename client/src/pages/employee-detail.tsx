@@ -54,7 +54,7 @@ function isClearanceExpired(expiry: string | null): boolean {
   return new Date(expiry) <= new Date();
 }
 
-export default function ContractorDetailPage() {
+export default function EmployeeDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const { toast } = useToast();
@@ -62,16 +62,16 @@ export default function ContractorDetailPage() {
   const [editValues, setEditValues] = useState<Record<string, string>>({});
 
   const { data: contractor, isLoading } = useQuery<Contractor>({
-    queryKey: ["/api/contractors", id],
+    queryKey: ["/api/employees", id],
   });
 
   const { data: timesheetsList } = useQuery<Timesheet[]>({
-    queryKey: ["/api/timesheets/contractor", id],
+    queryKey: ["/api/timesheets/employee", id],
     enabled: !!id,
   });
 
   const { data: invoicesList } = useQuery<Invoice[]>({
-    queryKey: ["/api/invoices/contractor", id],
+    queryKey: ["/api/invoices/employee", id],
     enabled: !!id,
   });
 
@@ -82,12 +82,12 @@ export default function ContractorDetailPage() {
 
   const updateMutation = useMutation({
     mutationFn: async (data: Record<string, string>) => {
-      const res = await apiRequest("PATCH", `/api/contractors/${id}`, data);
+      const res = await apiRequest("PATCH", `/api/employees/${id}`, data);
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/contractors", id] });
-      toast({ title: "Updated", description: "Contractor details saved." });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees", id] });
+      toast({ title: "Updated", description: "Employee details saved." });
       setEditingField(null);
     },
     onError: (err: Error) => {
@@ -125,13 +125,13 @@ export default function ContractorDetailPage() {
   if (!contractor) {
     return (
       <div className="flex flex-col h-full">
-        <TopBar title="Contractor Not Found" />
+        <TopBar title="Employee Not Found" />
         <main className="flex-1 overflow-auto p-6 bg-muted/30 flex items-center justify-center">
           <Card>
             <CardContent className="py-12 px-8 text-center">
-              <div className="text-lg font-semibold mb-2">Contractor not found</div>
-              <Link href="/contractors">
-                <Button variant="secondary">Back to Contractors</Button>
+              <div className="text-lg font-semibold mb-2">Employee not found</div>
+              <Link href="/employees">
+                <Button variant="secondary">Back to Employees</Button>
               </Link>
             </CardContent>
           </Card>
@@ -148,10 +148,10 @@ export default function ContractorDetailPage() {
     <div className="flex flex-col h-full">
       <TopBar
         title={`${contractor.firstName} ${contractor.lastName}`}
-        subtitle={contractor.jobTitle || "Contractor"}
+        subtitle={contractor.jobTitle || "Employee"}
         actions={
-          <Link href="/contractors">
-            <Button variant="secondary" size="sm" data-testid="button-back-contractors">
+          <Link href="/employees">
+            <Button variant="secondary" size="sm" data-testid="button-back-employees">
               <ArrowLeft className="w-4 h-4" />
               Back
             </Button>
@@ -168,7 +168,7 @@ export default function ContractorDetailPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 flex-wrap mb-2">
-                    <h2 className="text-xl font-bold text-foreground" data-testid="text-contractor-full-name">
+                    <h2 className="text-xl font-bold text-foreground" data-testid="text-employee-full-name">
                       {contractor.firstName} {contractor.lastName}
                     </h2>
                     <StatusBadge status={contractor.status} />
@@ -213,7 +213,7 @@ export default function ContractorDetailPage() {
           </Card>
 
           <Tabs defaultValue="profile" className="w-full">
-            <TabsList className="w-full justify-start flex-wrap gap-1" data-testid="tabs-contractor-detail">
+            <TabsList className="w-full justify-start flex-wrap gap-1" data-testid="tabs-employee-detail">
               <TabsTrigger value="profile" data-testid="tab-profile">
                 <User className="w-4 h-4 mr-1.5" />
                 Profile

@@ -20,7 +20,7 @@ function getContractorId(): string | null {
 }
 
 function getContractorName(): string {
-  return localStorage.getItem("portal_contractor_name") || "Contractor";
+  return localStorage.getItem("portal_contractor_name") || "Employee";
 }
 
 function formatTimestamp(dateStr: string | Date) {
@@ -92,7 +92,7 @@ export default function PortalMessagesPage() {
   }
 
   const { data: messagesList, isLoading } = useQuery<Message[]>({
-    queryKey: ["/api/messages/contractor", contractorId],
+    queryKey: ["/api/messages/employee", contractorId],
   });
 
   const sendMutation = useMutation({
@@ -101,8 +101,8 @@ export default function PortalMessagesPage() {
       return res.json();
     },
     onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/messages/contractor", contractorId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/contractor", contractorId, "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/employee", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", contractorId, "stats"] });
       if (composing) {
         setComposing(false);
         setNewSubject("");
@@ -123,8 +123,8 @@ export default function PortalMessagesPage() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/messages/contractor", contractorId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/contractor", contractorId, "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/employee", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", contractorId, "stats"] });
     },
   });
 

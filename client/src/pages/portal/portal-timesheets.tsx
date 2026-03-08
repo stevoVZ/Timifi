@@ -45,7 +45,7 @@ function getContractorId(): string | null {
 }
 
 function getContractorName(): string {
-  return localStorage.getItem("portal_contractor_name") || "Contractor";
+  return localStorage.getItem("portal_contractor_name") || "Employee";
 }
 
 function getWeeksForMonth(year: number, month: number): string[] {
@@ -387,7 +387,7 @@ export default function PortalTimesheetsPage() {
   }
 
   const { data: timesheetsList, isLoading } = useQuery<Timesheet[]>({
-    queryKey: ["/api/timesheets/contractor", contractorId],
+    queryKey: ["/api/timesheets/employee", contractorId],
   });
 
   const createMutation = useMutation({
@@ -396,8 +396,8 @@ export default function PortalTimesheetsPage() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/timesheets/contractor", contractorId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portal/contractor", contractorId, "stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets/employee", contractorId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portal/employee", contractorId, "stats"] });
       setDialogOpen(false);
       setResubmitTs(null);
       toast({ title: "Timesheet submitted", description: "Your timesheet has been submitted for review." });

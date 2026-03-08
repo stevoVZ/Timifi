@@ -8,21 +8,23 @@ import { AppSidebar } from "@/components/app-sidebar";
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
-import ContractorsPage from "@/pages/contractors";
-import ContractorDetailPage from "@/pages/contractor-detail";
+import EmployeesPage from "@/pages/employees";
+import EmployeeDetailPage from "@/pages/employee-detail";
 import TimesheetsPage from "@/pages/timesheets";
 import PayrollPage from "@/pages/payroll";
 import PayrollDetailPage from "@/pages/payroll-detail";
 import InvoicesPage from "@/pages/invoices";
 import NotificationsPage from "@/pages/notifications";
 import SettingsPage from "@/pages/settings";
-import ContractorNewPage from "@/pages/contractor-new";
+import EmployeeNewPage from "@/pages/employee-new";
 import PortalLoginPage from "@/pages/portal/portal-login";
 import PortalDashboardPage from "@/pages/portal/portal-dashboard";
 import PortalTimesheetsPage from "@/pages/portal/portal-timesheets";
 import PortalPayslipsPage from "@/pages/portal/portal-payslips";
 import PortalMessagesPage from "@/pages/portal/portal-messages";
 import PortalOnboardingPage from "@/pages/portal/portal-onboarding";
+import PortalLeavePage from "@/pages/portal/portal-leave";
+import PayItemsPage from "@/pages/pay-items";
 
 function useAuth() {
   return useQuery<{ id: string; username: string } | null>({
@@ -37,13 +39,14 @@ function AdminRouter() {
   return (
     <Switch>
       <Route path="/" component={DashboardPage} />
-      <Route path="/contractors/new" component={ContractorNewPage} />
-      <Route path="/contractors" component={ContractorsPage} />
-      <Route path="/contractors/:id" component={ContractorDetailPage} />
+      <Route path="/employees/new" component={EmployeeNewPage} />
+      <Route path="/employees" component={EmployeesPage} />
+      <Route path="/employees/:id" component={EmployeeDetailPage} />
       <Route path="/timesheets" component={TimesheetsPage} />
       <Route path="/payroll/:id" component={PayrollDetailPage} />
       <Route path="/payroll" component={PayrollPage} />
       <Route path="/invoices" component={InvoicesPage} />
+      <Route path="/pay-items" component={PayItemsPage} />
       <Route path="/notifications" component={NotificationsPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
@@ -99,6 +102,7 @@ function PortalRouter() {
       <Route path="/portal/timesheets">{() => <PortalGuard component={PortalTimesheetsPage} />}</Route>
       <Route path="/portal/payslips">{() => <PortalGuard component={PortalPayslipsPage} />}</Route>
       <Route path="/portal/messages">{() => <PortalGuard component={PortalMessagesPage} />}</Route>
+      <Route path="/portal/leave">{() => <PortalGuard component={PortalLeavePage} />}</Route>
       <Route path="/portal/onboarding">{() => <PortalGuard component={PortalOnboardingPage} />}</Route>
       <Route path="/portal">{() => {
         const contractorId = localStorage.getItem("portal_contractor_id");

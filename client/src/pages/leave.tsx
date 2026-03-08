@@ -73,7 +73,7 @@ export default function LeavePage() {
   });
 
   const { data: contractors } = useQuery<Contractor[]>({
-    queryKey: ["/api/contractors"],
+    queryKey: ["/api/employees"],
   });
 
   const updateMutation = useMutation({
@@ -161,7 +161,7 @@ export default function LeavePage() {
                 >
                   {getContractorInitials(leave.contractorId)}
                 </div>
-                <span className="font-medium text-sm" data-testid={`text-leave-contractor-${leave.id}`}>
+                <span className="font-medium text-sm" data-testid={`text-leave-employee-${leave.id}`}>
                   {getContractorName(leave.contractorId)}
                 </span>
                 <LeaveIcon className="w-4 h-4 text-muted-foreground" />
@@ -312,7 +312,7 @@ export default function LeavePage() {
               {contractorBalances.length === 0 ? (
                 <Card>
                   <CardContent className="p-6 text-center text-sm text-muted-foreground">
-                    No active contractors
+                    No active employees
                   </CardContent>
                 </Card>
               ) : (
@@ -400,7 +400,7 @@ export default function LeavePage() {
           {reviewDialog && (
             <div className="space-y-4">
               <div className="text-sm space-y-1">
-                <p><strong>Contractor:</strong> {getContractorName(reviewDialog.leave.contractorId)}</p>
+                <p><strong>Employee:</strong> {getContractorName(reviewDialog.leave.contractorId)}</p>
                 <p><strong>Type:</strong> {LEAVE_TYPE_LABELS[reviewDialog.leave.leaveType]}</p>
                 <p><strong>Dates:</strong> {formatDate(reviewDialog.leave.startDate)} — {formatDate(reviewDialog.leave.endDate)}</p>
                 <p><strong>Days:</strong> {reviewDialog.leave.totalDays}</p>

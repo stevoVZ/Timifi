@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Save, User, Briefcase, Shield, Building } from "lucide-react";
 import type { Contractor } from "@shared/schema";
 
-export default function ContractorNewPage() {
+export default function EmployeeNewPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
 
@@ -52,13 +52,13 @@ export default function ContractorNewPage() {
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, unknown>) => {
-      const res = await apiRequest("POST", "/api/contractors", data);
+      const res = await apiRequest("POST", "/api/employees", data);
       return res.json() as Promise<Contractor>;
     },
     onSuccess: (contractor) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/contractors"] });
-      toast({ title: "Contractor created successfully" });
-      navigate(`/contractors/${contractor.id}`);
+      queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
+      toast({ title: "Employee created successfully" });
+      navigate(`/employees/${contractor.id}`);
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -90,10 +90,10 @@ export default function ContractorNewPage() {
   return (
     <>
       <TopBar
-        title="New Contractor"
-        subtitle="Add a new contractor to the system"
+        title="New Employee"
+        subtitle="Add a new employee to the system"
         actions={
-          <Button variant="outline" onClick={() => navigate("/contractors")} data-testid="button-back-contractors">
+          <Button variant="outline" onClick={() => navigate("/employees")} data-testid="button-back-employees">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back
           </Button>
@@ -206,7 +206,7 @@ export default function ContractorNewPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="PAYROLL">Payroll (paid via pay run)</SelectItem>
-                  <SelectItem value="INVOICE">Invoice (contractor invoices via Pty Ltd)</SelectItem>
+                  <SelectItem value="INVOICE">Invoice (employee invoices via Pty Ltd)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -315,12 +315,12 @@ export default function ContractorNewPage() {
         </Card>
 
         <div className="flex justify-end gap-3">
-          <Button type="button" variant="outline" onClick={() => navigate("/contractors")} data-testid="button-cancel-new">
+          <Button type="button" variant="outline" onClick={() => navigate("/employees")} data-testid="button-cancel-new">
             Cancel
           </Button>
-          <Button type="submit" disabled={createMutation.isPending} data-testid="button-save-contractor">
+          <Button type="submit" disabled={createMutation.isPending} data-testid="button-save-employee">
             <Save className="w-4 h-4 mr-2" />
-            {createMutation.isPending ? "Creating..." : "Create Contractor"}
+            {createMutation.isPending ? "Creating..." : "Create Employee"}
           </Button>
         </div>
       </form>

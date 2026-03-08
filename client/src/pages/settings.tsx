@@ -251,7 +251,7 @@ function PayrollTab({ settings }: { settings: Setting[] | undefined }) {
       <div className="flex items-center justify-between">
         <div>
           <Label data-testid="label-payslip-email">Pay Slip Email Notifications</Label>
-          <p className="text-xs text-muted-foreground mt-0.5">Email pay slips to contractors after each pay run</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Email pay slips to employees after each pay run</p>
         </div>
         <Switch checked={paySlipEmailEnabled} onCheckedChange={setPaySlipEmailEnabled} data-testid="switch-payslip-email" />
       </div>
@@ -462,7 +462,7 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
       setSyncAllPending(false);
       setSyncResults(results);
       queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/contractors"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
       const totalCreated = Object.values(results).reduce((s, r) => s + r.created, 0);
       const totalUpdated = Object.values(results).reduce((s, r) => s + r.updated, 0);
@@ -488,7 +488,7 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
   const selectedTenantId = tenants.find(t => t.selected)?.tenantId || "";
 
   const syncItems = [
-    { label: "Employees", endpoint: "/api/xero/sync", invalidateKeys: ["/api/contractors"], lastSync: lastEmployeeSyncAt },
+    { label: "Employees", endpoint: "/api/xero/sync", invalidateKeys: ["/api/employees"], lastSync: lastEmployeeSyncAt },
     { label: "Pay Runs", endpoint: "/api/xero/sync-payruns", invalidateKeys: ["/api/pay-runs"], lastSync: lastPayRunSyncAt },
     { label: "Timesheets", endpoint: "/api/xero/sync-timesheets", invalidateKeys: ["/api/timesheets"], lastSync: lastTimesheetSyncAt },
     { label: "Invoices", endpoint: "/api/xero/sync-invoices", invalidateKeys: ["/api/invoices"], lastSync: lastInvoiceSyncAt },
@@ -803,15 +803,15 @@ function PortalTab({ settings }: { settings: Setting[] | undefined }) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <Label data-testid="label-portal-enabled">Enable Contractor Portal</Label>
-          <p className="text-xs text-muted-foreground mt-0.5">Allow contractors to access the self-service portal</p>
+          <Label data-testid="label-portal-enabled">Enable Employee Portal</Label>
+          <p className="text-xs text-muted-foreground mt-0.5">Allow employees to access the self-service portal</p>
         </div>
         <Switch checked={portalEnabled} onCheckedChange={setPortalEnabled} data-testid="switch-portal-enabled" />
       </div>
       <div className="flex items-center justify-between">
         <div>
           <Label data-testid="label-self-service-timesheets">Self-service Timesheets</Label>
-          <p className="text-xs text-muted-foreground mt-0.5">Let contractors submit timesheets via the portal</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Let employees submit timesheets via the portal</p>
         </div>
         <Switch checked={selfServiceTimesheets} onCheckedChange={setSelfServiceTimesheets} data-testid="switch-self-service-timesheets" />
       </div>
@@ -821,14 +821,14 @@ function PortalTab({ settings }: { settings: Setting[] | undefined }) {
           id="welcome-message"
           value={portalWelcomeMessage}
           onChange={(e) => setPortalWelcomeMessage(e.target.value)}
-          placeholder="Welcome to the contractor portal..."
+          placeholder="Welcome to the employee portal..."
           data-testid="input-welcome-message"
         />
       </div>
       <div className="flex items-center justify-between">
         <div>
           <Label data-testid="label-message-attachments">Allow Message Attachments</Label>
-          <p className="text-xs text-muted-foreground mt-0.5">Allow contractors to attach files to messages</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Allow employees to attach files to messages</p>
         </div>
         <Switch checked={allowMessageAttachments} onCheckedChange={setAllowMessageAttachments} data-testid="switch-message-attachments" />
       </div>
