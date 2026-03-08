@@ -2,10 +2,10 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema } from "@shared/schema";
+import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
-import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices } from "./xero";
+import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions } from "./xero";
 import { requireAuth } from "./auth";
 import { scanTimesheetPdf } from "./ocr";
 
@@ -534,11 +534,12 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid month or year" });
       }
 
-      const [allEmployees, allTimesheets, allInvoices, allPayRuns] = await Promise.all([
+      const [allEmployees, allTimesheets, allInvoices, allPayRuns, allBankTxns] = await Promise.all([
         storage.getEmployees(),
         storage.getTimesheets(),
         storage.getInvoices(),
         storage.getPayRuns(),
+        storage.getBankTransactions(),
       ]);
 
       const activeEmployees = allEmployees.filter((e) => e.status === "ACTIVE");
@@ -552,6 +553,10 @@ export async function registerRoutes(
           allPayRunLines.push({ line, payRun: pr });
         }
       }
+
+      const periodBankTxns = allBankTxns.filter(t => t.month === month && t.year === year);
+      const cashIn = periodBankTxns.filter(t => t.type === "RECEIVE").reduce((sum, t) => sum + parseFloat(t.amount), 0);
+      const cashOut = periodBankTxns.filter(t => t.type === "SPEND").reduce((sum, t) => sum + parseFloat(t.amount), 0);
 
       const statusPriority: Record<string, number> = { FILED: 3, REVIEW: 2, DRAFT: 1 };
 
@@ -569,6 +574,14 @@ export async function registerRoutes(
         const payLine = best?.line;
         const payRun = best?.payRun;
 
+        const hours = ts ? parseFloat(ts.totalHours || "0") : 0;
+        const chargeOutRate = emp.chargeOutRate ? parseFloat(emp.chargeOutRate) : 0;
+        const payRate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
+        const expectedRevenue = hours * chargeOutRate;
+        const employeeCost = payLine ? parseFloat(payLine.grossEarnings || "0") : hours * payRate;
+        const margin = expectedRevenue - employeeCost;
+        const marginPercent = expectedRevenue > 0 ? (margin / expectedRevenue) * 100 : 0;
+
         return {
           employee: {
             id: emp.id,
@@ -576,11 +589,12 @@ export async function registerRoutes(
             lastName: emp.lastName,
             clientName: emp.clientName,
             hourlyRate: emp.hourlyRate,
+            chargeOutRate: emp.chargeOutRate,
             paymentMethod: emp.paymentMethod,
           },
           timesheet: ts
             ? {
-                hours: parseFloat(ts.totalHours || "0"),
+                hours,
                 status: ts.status,
                 grossValue: parseFloat(ts.grossValue || "0"),
               }
@@ -602,6 +616,12 @@ export async function registerRoutes(
                 payRunStatus: payRun?.status || null,
               }
             : null,
+          financials: {
+            expectedRevenue,
+            employeeCost,
+            margin,
+            marginPercent: Math.round(marginPercent * 10) / 10,
+          },
         };
       });
 
@@ -611,7 +631,19 @@ export async function registerRoutes(
         )
       );
 
-      res.json(result);
+      res.json({
+        employees: result,
+        cashFlow: {
+          cashIn,
+          cashOut,
+          netCashFlow: cashIn - cashOut,
+        },
+        totals: {
+          totalRevenue: result.reduce((s, r) => s + r.financials.expectedRevenue, 0),
+          totalCost: result.reduce((s, r) => s + r.financials.employeeCost, 0),
+          totalMargin: result.reduce((s, r) => s + r.financials.margin, 0),
+        },
+      });
     } catch (err) {
       res.status(500).json({ message: "Failed to build reconciliation data" });
     }
@@ -1274,6 +1306,93 @@ export async function registerRoutes(
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to fetch payroll settings from Xero" });
+    }
+  });
+
+  app.post("/api/xero/sync-contacts", async (_req, res) => {
+    try {
+      const result = await syncContacts();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to sync contacts from Xero" });
+    }
+  });
+
+  app.post("/api/xero/sync-bank-transactions", async (_req, res) => {
+    try {
+      const result = await syncBankTransactions();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to sync bank transactions from Xero" });
+    }
+  });
+
+  app.get("/api/clients", async (_req, res) => {
+    try {
+      const data = await storage.getClients();
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch clients" });
+    }
+  });
+
+  app.get("/api/employees/:id/placements", async (req, res) => {
+    try {
+      const data = await storage.getPlacements(req.params.id);
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch placements" });
+    }
+  });
+
+  app.post("/api/employees/:id/placements", async (req, res) => {
+    try {
+      const parsed = insertPlacementSchema.safeParse({
+        ...req.body,
+        employeeId: req.params.id,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid placement data", errors: parsed.error.flatten().fieldErrors });
+      }
+      const placement = await storage.createPlacement(parsed.data);
+      if (parsed.data.status === "ACTIVE") {
+        const updateData: any = {};
+        if (parsed.data.clientName) updateData.clientName = parsed.data.clientName;
+        if (parsed.data.chargeOutRate) updateData.chargeOutRate = parsed.data.chargeOutRate;
+        if (parsed.data.payRate) updateData.hourlyRate = parsed.data.payRate;
+        if (Object.keys(updateData).length > 0) {
+          await storage.updateEmployee(req.params.id, updateData);
+        }
+      }
+      res.status(201).json(placement);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to create placement" });
+    }
+  });
+
+  app.patch("/api/placements/:id", async (req, res) => {
+    try {
+      const placement = await storage.updatePlacement(req.params.id, req.body);
+      if (!placement) return res.status(404).json({ message: "Placement not found" });
+      res.json(placement);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update placement" });
+    }
+  });
+
+  app.get("/api/bank-transactions", async (req, res) => {
+    try {
+      const month = req.query.month ? parseInt(req.query.month as string) : undefined;
+      const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+      let data = await storage.getBankTransactions();
+      if (month && year) {
+        data = data.filter(t => t.month === month && t.year === year);
+      } else if (year) {
+        data = data.filter(t => t.year === year);
+      }
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch bank transactions" });
     }
   });
 

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getQueryFn } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { TopBar } from "@/components/top-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Users, Clock, FileText, CreditCard, CheckCircle, XCircle, AlertTriangle,
-  ChevronLeft, ChevronRight, CircleDollarSign, TrendingUp,
+  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown, DollarSign,
 } from "lucide-react";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -22,11 +21,19 @@ interface ReconciliationRow {
     lastName: string;
     clientName: string | null;
     hourlyRate: string | null;
+    chargeOutRate: string | null;
     paymentMethod: string | null;
   };
   timesheet: { hours: number; status: string; grossValue: number } | null;
   invoice: { amount: number; amountExGst: number; invoiceNumber: string | null; status: string; paidDate: string | null } | null;
   payroll: { grossEarnings: number; netPay: number; hoursWorked: number; payRunStatus: string | null } | null;
+  financials: { expectedRevenue: number; employeeCost: number; margin: number; marginPercent: number };
+}
+
+interface ReconciliationData {
+  employees: ReconciliationRow[];
+  cashFlow: { cashIn: number; cashOut: number; netCashFlow: number };
+  totals: { totalRevenue: number; totalCost: number; totalMargin: number };
 }
 
 function StatusIcon({ status, type }: { status: "complete" | "partial" | "missing"; type: string }) {
@@ -64,10 +71,11 @@ function rowBg(row: ReconciliationRow): string {
   if (ts === "complete" && inv === "complete" && pay === "complete") {
     return "bg-green-50/50 dark:bg-green-950/20";
   }
-  if (ts === "missing" && inv === "missing" && pay === "missing") {
-    return "";
-  }
   return "";
+}
+
+function fmtCurrency(n: number): string {
+  return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 export default function ReconciliationPage() {
@@ -75,7 +83,7 @@ export default function ReconciliationPage() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
 
-  const { data, isLoading } = useQuery<ReconciliationRow[]>({
+  const { data, isLoading } = useQuery<ReconciliationData>({
     queryKey: ["/api/reconciliation", month, year],
     queryFn: async () => {
       const res = await fetch(`/api/reconciliation?month=${month}&year=${year}`, { credentials: "include" });
@@ -84,7 +92,9 @@ export default function ReconciliationPage() {
     },
   });
 
-  const rows = data || [];
+  const rows = data?.employees || [];
+  const cashFlow = data?.cashFlow || { cashIn: 0, cashOut: 0, netCashFlow: 0 };
+  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalMargin: 0 };
   const total = rows.length;
   const tsReceived = rows.filter((r) => r.timesheet).length;
   const tsApproved = rows.filter((r) => r.timesheet?.status === "APPROVED").length;
@@ -100,6 +110,8 @@ export default function ReconciliationPage() {
     if (month === 12) { setMonth(1); setYear(year + 1); }
     else setMonth(month + 1);
   };
+
+  const marginPercent = totals.totalRevenue > 0 ? Math.round((totals.totalMargin / totals.totalRevenue) * 100) : 0;
 
   const kpis = [
     {
@@ -149,7 +161,7 @@ export default function ReconciliationPage() {
         subtitle="Track workflow completion across all employees"
       />
       <main className="flex-1 overflow-auto p-6 bg-muted/30">
-        <div className="max-w-6xl mx-auto space-y-5">
+        <div className="max-w-7xl mx-auto space-y-5">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth} data-testid="button-prev-month">
@@ -194,6 +206,41 @@ export default function ReconciliationPage() {
                 <div className="text-[10px] text-muted-foreground mt-0.5">{k.sub}</div>
               </div>
             ))}
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-3.5 rounded-lg border bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800" data-testid="kpi-revenue">
+              <div className="flex items-center gap-2 mb-1">
+                <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-[11px] font-medium text-muted-foreground">Expected Revenue</span>
+              </div>
+              <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{fmtCurrency(totals.totalRevenue)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Based on charge-out rates</div>
+            </div>
+            <div className="p-3.5 rounded-lg border bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800" data-testid="kpi-cost">
+              <div className="flex items-center gap-2 mb-1">
+                <TrendingDown className="w-4 h-4 text-red-600 dark:text-red-400" />
+                <span className="text-[11px] font-medium text-muted-foreground">Employee Cost</span>
+              </div>
+              <div className="text-xl font-bold text-red-600 dark:text-red-400">{fmtCurrency(totals.totalCost)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Payroll gross or pay rate</div>
+            </div>
+            <div className={`p-3.5 rounded-lg border ${totals.totalMargin >= 0 ? "bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800" : "bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800"}`} data-testid="kpi-margin">
+              <div className="flex items-center gap-2 mb-1">
+                <TrendingUp className={`w-4 h-4 ${totals.totalMargin >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} />
+                <span className="text-[11px] font-medium text-muted-foreground">Gross Margin</span>
+              </div>
+              <div className={`text-xl font-bold ${totals.totalMargin >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>{fmtCurrency(totals.totalMargin)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">{marginPercent}% margin</div>
+            </div>
+            <div className={`p-3.5 rounded-lg border ${cashFlow.netCashFlow >= 0 ? "bg-sky-50 dark:bg-sky-900/30 border-sky-200 dark:border-sky-800" : "bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-800"}`} data-testid="kpi-cashflow">
+              <div className="flex items-center gap-2 mb-1">
+                <ArrowUpDown className={`w-4 h-4 ${cashFlow.netCashFlow >= 0 ? "text-sky-600 dark:text-sky-400" : "text-amber-600 dark:text-amber-400"}`} />
+                <span className="text-[11px] font-medium text-muted-foreground">Net Cash Flow</span>
+              </div>
+              <div className={`text-xl font-bold ${cashFlow.netCashFlow >= 0 ? "text-sky-600 dark:text-sky-400" : "text-amber-600 dark:text-amber-400"}`}>{fmtCurrency(cashFlow.netCashFlow)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">In: {fmtCurrency(cashFlow.cashIn)} / Out: {fmtCurrency(cashFlow.cashOut)}</div>
+            </div>
           </div>
 
           <Card>
@@ -241,6 +288,9 @@ export default function ReconciliationPage() {
                             Payroll
                           </div>
                         </th>
+                        <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Revenue</th>
+                        <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Cost</th>
+                        <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Margin</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -292,7 +342,7 @@ export default function ReconciliationPage() {
                                   {row.invoice ? (
                                     <>
                                       <div className="font-mono text-xs font-semibold text-foreground">
-                                        ${row.invoice.amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                        {fmtCurrency(row.invoice.amount)}
                                       </div>
                                       <div className="text-[10px] text-muted-foreground">{row.invoice.status}</div>
                                     </>
@@ -309,7 +359,7 @@ export default function ReconciliationPage() {
                                   {row.payroll ? (
                                     <>
                                       <div className="font-mono text-xs font-semibold text-foreground">
-                                        ${row.payroll.netPay.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                        {fmtCurrency(row.payroll.netPay)}
                                       </div>
                                       <div className="text-[10px] text-muted-foreground">{row.payroll.payRunStatus}</div>
                                     </>
@@ -319,9 +369,37 @@ export default function ReconciliationPage() {
                                 </div>
                               </div>
                             </td>
+                            <td className="py-3 px-2 hidden md:table-cell">
+                              <div className="text-right font-mono text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                                {row.financials.expectedRevenue > 0 ? fmtCurrency(row.financials.expectedRevenue) : "—"}
+                              </div>
+                            </td>
+                            <td className="py-3 px-2 hidden md:table-cell">
+                              <div className="text-right font-mono text-xs font-semibold text-red-600 dark:text-red-400">
+                                {row.financials.employeeCost > 0 ? fmtCurrency(row.financials.employeeCost) : "—"}
+                              </div>
+                            </td>
+                            <td className="py-3 px-2 hidden md:table-cell">
+                              <div className={`text-right font-mono text-xs font-semibold ${row.financials.margin >= 0 ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                                {row.financials.expectedRevenue > 0 ? (
+                                  <>
+                                    {fmtCurrency(row.financials.margin)}
+                                    <div className="text-[10px] text-muted-foreground font-normal">{row.financials.marginPercent}%</div>
+                                  </>
+                                ) : "—"}
+                              </div>
+                            </td>
                           </tr>
                         );
                       })}
+                      {rows.length > 0 && (
+                        <tr className="border-t-2 border-border bg-muted/30 font-semibold">
+                          <td className="py-3 px-2 text-xs" colSpan={5}>Totals</td>
+                          <td className="py-3 px-2 hidden md:table-cell text-right font-mono text-xs text-emerald-700 dark:text-emerald-400">{fmtCurrency(totals.totalRevenue)}</td>
+                          <td className="py-3 px-2 hidden md:table-cell text-right font-mono text-xs text-red-600 dark:text-red-400">{fmtCurrency(totals.totalCost)}</td>
+                          <td className="py-3 px-2 hidden md:table-cell text-right font-mono text-xs text-green-700 dark:text-green-400">{fmtCurrency(totals.totalMargin)}<div className="text-[10px] text-muted-foreground font-normal">{marginPercent}%</div></td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>

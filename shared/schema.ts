@@ -244,6 +244,55 @@ export const superMemberships = pgTable("super_memberships", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const placementStatusEnum = pgEnum("placement_status", ["ACTIVE", "ENDED"]);
+export const bankTxnTypeEnum = pgEnum("bank_txn_type", ["RECEIVE", "SPEND"]);
+
+export const clients = pgTable("clients", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  xeroContactId: text("xero_contact_id").unique(),
+  email: text("email"),
+  phone: text("phone"),
+  isCustomer: boolean("is_customer").notNull().default(false),
+  isSupplier: boolean("is_supplier").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const placements = pgTable("placements", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
+  clientId: varchar("client_id").references(() => clients.id),
+  clientName: text("client_name"),
+  startDate: date("start_date"),
+  endDate: date("end_date"),
+  chargeOutRate: numeric("charge_out_rate", { precision: 10, scale: 2 }),
+  payRate: numeric("pay_rate", { precision: 10, scale: 2 }),
+  status: placementStatusEnum("status").notNull().default("ACTIVE"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const bankTransactions = pgTable("bank_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  xeroBankTransactionId: text("xero_bank_transaction_id").unique(),
+  bankAccountId: text("bank_account_id"),
+  bankAccountName: text("bank_account_name"),
+  contactName: text("contact_name"),
+  xeroContactId: text("xero_contact_id"),
+  date: date("date").notNull(),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  type: bankTxnTypeEnum("type").notNull(),
+  reference: text("reference"),
+  description: text("description"),
+  status: text("status"),
+  isReconciled: boolean("is_reconciled").notNull().default(false),
+  month: smallint("month").notNull(),
+  year: smallint("year").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const insertEmployeeSchema = createInsertSchema(employees).omit({
   id: true,
   createdAt: true,
@@ -323,6 +372,30 @@ export const insertDocumentSchema = createInsertSchema(documents).omit({
   id: true,
   createdAt: true,
 });
+
+export const insertClientSchema = createInsertSchema(clients).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPlacementSchema = createInsertSchema(placements).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertBankTransactionSchema = createInsertSchema(bankTransactions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type Client = typeof clients.$inferSelect;
+export type InsertClient = z.infer<typeof insertClientSchema>;
+export type Placement = typeof placements.$inferSelect;
+export type InsertPlacement = z.infer<typeof insertPlacementSchema>;
+export type BankTransaction = typeof bankTransactions.$inferSelect;
+export type InsertBankTransaction = z.infer<typeof insertBankTransactionSchema>;
 
 export type Employee = typeof employees.$inferSelect;
 export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;

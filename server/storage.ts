@@ -4,6 +4,7 @@ import {
   employees, timesheets, invoices, payRuns, payRunLines, documents,
   notifications, messages, settings, users,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
+  clients, placements, bankTransactions,
   type Employee, type InsertEmployee,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
@@ -19,6 +20,9 @@ import {
   type BankAccount, type InsertBankAccount,
   type SuperMembership, type InsertSuperMembership,
   type User, type InsertUser,
+  type Client, type InsertClient,
+  type Placement, type InsertPlacement,
+  type BankTransaction, type InsertBankTransaction,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -115,6 +119,22 @@ export interface IStorage {
     bank: boolean;
     super: boolean;
   }>;
+
+  getClients(): Promise<Client[]>;
+  getClient(id: string): Promise<Client | undefined>;
+  getClientByXeroId(xeroContactId: string): Promise<Client | undefined>;
+  createClient(data: InsertClient): Promise<Client>;
+  updateClient(id: string, data: Partial<InsertClient>): Promise<Client | undefined>;
+
+  getPlacements(employeeId: string): Promise<Placement[]>;
+  getPlacement(id: string): Promise<Placement | undefined>;
+  createPlacement(data: InsertPlacement): Promise<Placement>;
+  updatePlacement(id: string, data: Partial<InsertPlacement>): Promise<Placement | undefined>;
+
+  getBankTransactions(): Promise<BankTransaction[]>;
+  getBankTransactionByXeroId(xeroId: string): Promise<BankTransaction | undefined>;
+  createBankTransaction(data: InsertBankTransaction): Promise<BankTransaction>;
+  updateBankTransaction(id: string, data: Partial<InsertBankTransaction>): Promise<BankTransaction | undefined>;
 
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -596,6 +616,68 @@ export class DatabaseStorage implements IStorage {
       bank: !!bank,
       super: !!superMem,
     };
+  }
+
+  async getClients(): Promise<Client[]> {
+    return db.select().from(clients).orderBy(clients.name);
+  }
+
+  async getClient(id: string): Promise<Client | undefined> {
+    const [client] = await db.select().from(clients).where(eq(clients.id, id));
+    return client;
+  }
+
+  async getClientByXeroId(xeroContactId: string): Promise<Client | undefined> {
+    const [client] = await db.select().from(clients).where(eq(clients.xeroContactId, xeroContactId));
+    return client;
+  }
+
+  async createClient(data: InsertClient): Promise<Client> {
+    const [client] = await db.insert(clients).values(data).returning();
+    return client;
+  }
+
+  async updateClient(id: string, data: Partial<InsertClient>): Promise<Client | undefined> {
+    const [client] = await db.update(clients).set({ ...data, updatedAt: new Date() }).where(eq(clients.id, id)).returning();
+    return client;
+  }
+
+  async getPlacements(employeeId: string): Promise<Placement[]> {
+    return db.select().from(placements).where(eq(placements.employeeId, employeeId)).orderBy(desc(placements.createdAt));
+  }
+
+  async getPlacement(id: string): Promise<Placement | undefined> {
+    const [placement] = await db.select().from(placements).where(eq(placements.id, id));
+    return placement;
+  }
+
+  async createPlacement(data: InsertPlacement): Promise<Placement> {
+    const [placement] = await db.insert(placements).values(data).returning();
+    return placement;
+  }
+
+  async updatePlacement(id: string, data: Partial<InsertPlacement>): Promise<Placement | undefined> {
+    const [placement] = await db.update(placements).set({ ...data, updatedAt: new Date() }).where(eq(placements.id, id)).returning();
+    return placement;
+  }
+
+  async getBankTransactions(): Promise<BankTransaction[]> {
+    return db.select().from(bankTransactions).orderBy(desc(bankTransactions.date));
+  }
+
+  async getBankTransactionByXeroId(xeroId: string): Promise<BankTransaction | undefined> {
+    const [txn] = await db.select().from(bankTransactions).where(eq(bankTransactions.xeroBankTransactionId, xeroId));
+    return txn;
+  }
+
+  async createBankTransaction(data: InsertBankTransaction): Promise<BankTransaction> {
+    const [txn] = await db.insert(bankTransactions).values(data).returning();
+    return txn;
+  }
+
+  async updateBankTransaction(id: string, data: Partial<InsertBankTransaction>): Promise<BankTransaction | undefined> {
+    const [txn] = await db.update(bankTransactions).set(data).where(eq(bankTransactions.id, id)).returning();
+    return txn;
   }
 }
 

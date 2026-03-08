@@ -25,7 +25,9 @@ Labour hire agency management portal for employees, timesheets, invoicing, and p
 - **Settings**: Tabbed settings page (Branding, Company, Payroll, Xero, Portal, Users)
 - **Reconciliation** (`/reconciliation`): Monthly bird's-eye view of all active employees. Month/year selector, KPI strip (employees, timesheets received, invoices raised/paid, payroll complete), per-employee table with status icons (green check, amber warning, red X) for timesheet/invoice/payroll, progress bars. Links to employee detail pages.
 - **Pay Items**: Pay codes/items management
-- **Xero Integration**: OAuth2 connection to Xero Payroll AU + Accounting API. Organisation (tenant) picker for multi-org support. Individual sync for: Employees, Pay Runs, Timesheets, Invoices, Payroll Settings. Sync All button. Xero-synced employees show badge and locked fields.
+- **Xero Integration**: OAuth2 connection to Xero Payroll AU + Accounting API. Organisation (tenant) picker for multi-org support. Individual sync for: Employees, Pay Runs, Timesheets, Invoices, Contacts, Bank Transactions, Payroll Settings. Sync All button. Xero-synced employees show badge and locked fields.
+- **Clients**: Synced from Xero Contacts. Client dropdown on employee detail page. Used in placements.
+- **Placements**: Track employee placements to clients over time. Multiple placements per employee (active/ended). Charge-out and pay rates per placement. Creating an active placement auto-updates employee rates and client name.
 
 ### Employee Portal (/portal/*)
 - **Portal Login**: Email-based login for employees
@@ -84,7 +86,14 @@ shared/
 - `GET /api/messages/employee/:employeeId` - Messages by employee
 - `GET /api/invoices/employee/:employeeId` - Invoices by employee
 - `GET /api/leave/employee/:employeeId` - Leave requests by employee
-- `GET /api/reconciliation?month=X&year=Y` - Monthly reconciliation across all active employees
+- `GET /api/reconciliation?month=X&year=Y` - Monthly reconciliation with employees, cashFlow, and totals
+- `GET /api/clients` - List all clients (synced from Xero Contacts)
+- `GET /api/employees/:id/placements` - List placements for employee
+- `POST /api/employees/:id/placements` - Create placement
+- `PATCH /api/placements/:id` - Update placement (e.g., end it)
+- `GET /api/bank-transactions?month=X&year=Y` - Bank transactions
+- `POST /api/xero/sync-contacts` - Sync Xero contacts to clients table
+- `POST /api/xero/sync-bank-transactions` - Sync Xero bank transactions
 - `GET /api/portal/employee/:employeeId/stats` - Portal dashboard stats
 - `GET /api/portal/employee/:employeeId/tax|bank|super` - Portal onboarding data
 
@@ -105,6 +114,9 @@ shared/
 - `tax_declarations` - Employee TFN declarations, `employee_id` FK
 - `bank_accounts` - Employee bank details, `employee_id` FK
 - `super_memberships` - Employee superannuation fund details, `employee_id` FK
+- `clients` - Xero contacts synced as clients, `xero_contact_id` unique, `is_customer`/`is_supplier` flags
+- `placements` - Employee placements to clients, `employee_id` FK, `client_id` FK, charge-out/pay rates, ACTIVE/ENDED status
+- `bank_transactions` - Xero bank transactions, `xero_bank_transaction_id` unique, RECEIVE/SPEND type, month/year for filtering
 - `session` - Express sessions (created automatically by connect-pg-simple)
 
 ## Auth
@@ -125,9 +137,9 @@ shared/
 ## Xero Integration
 
 - OAuth2 with Xero Payroll AU API + Accounting API
-- Scopes: openid, profile, email, payroll.*, accounting.invoices, accounting.invoices.read, accounting.contacts.read, offline_access
+- Scopes: openid, profile, email, payroll.*, accounting.invoices, accounting.invoices.read, accounting.contacts.read, accounting.transactions.read, accounting.reports.read, offline_access
 - Multi-organisation support via tenant picker in settings
-- Sync functions: syncEmployees, syncPayRuns, syncTimesheets, syncInvoices, syncPayrollSettings
+- Sync functions: syncEmployees, syncPayRuns, syncTimesheets, syncInvoices, syncContacts, syncBankTransactions, syncPayrollSettings
 - Token refresh handled automatically
 - Connected tenant: stored in settings as xero.tenantId / xero.tenantName
 - Last sync timestamps stored per data type (xero.lastEmployeeSyncAt, etc.)
@@ -143,6 +155,7 @@ shared/
 ## Important Notes
 
 - After every `npm run db:push`, must recreate session table: `CREATE TABLE IF NOT EXISTS "session" ("sid" varchar NOT NULL PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL)`
+- Tables created via direct SQL ALTER/CREATE (not db:push): `calendar_name` column, `documents.timesheet_id` column, `charge_out_rate` column, `clients` table, `placements` table, `bank_transactions` table, `placement_status` enum, `bank_txn_type` enum
 - paymentMethodEnum values: "PAYROLL" (default) or "INVOICE"
 - Invoice dedup: getInvoiceByNumber first, fallback to getInvoiceByXeroId
 - ytdBillings uses `paidDate` for FY filtering

@@ -49,6 +49,8 @@ export async function getConsentUrl(): Promise<string> {
     "accounting.invoices",
     "accounting.invoices.read",
     "accounting.contacts.read",
+    "accounting.transactions.read",
+    "accounting.reports.read",
     "offline_access",
   ];
 
@@ -959,4 +961,170 @@ export async function syncInvoices(): Promise<{
   await saveSetting("xero.lastInvoiceSyncAt", new Date().toISOString());
 
   return { total: xeroInvoices.length, created, updated, errors };
+}
+
+export async function syncContacts(): Promise<{
+  total: number;
+  created: number;
+  updated: number;
+  errors: string[];
+}> {
+  const { accessToken, tenantId } = await refreshTokenIfNeeded();
+
+  let page = 1;
+  let allContacts: any[] = [];
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await fetch(`https://api.xero.com/api.xro/2.0/Contacts?page=${page}`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Failed to fetch contacts from Xero (${response.status}): ${errorBody}`);
+    }
+
+    const data = await response.json() as { Contacts?: any[] };
+    const contacts = data.Contacts || [];
+    allContacts = allContacts.concat(contacts);
+    hasMore = contacts.length === 100;
+    page++;
+  }
+
+  let created = 0;
+  let updated = 0;
+  const errors: string[] = [];
+
+  for (const contact of allContacts) {
+    try {
+      const xeroContactId = contact.ContactID;
+      if (!xeroContactId) continue;
+
+      const name = contact.Name || "";
+      const email = contact.EmailAddress || null;
+      const phone = contact.Phones?.find((p: any) => p.PhoneType === "DEFAULT")?.PhoneNumber || null;
+      const isCustomer = contact.IsCustomer === true;
+      const isSupplier = contact.IsSupplier === true;
+
+      const existing = await storage.getClientByXeroId(xeroContactId);
+
+      if (existing) {
+        await storage.updateClient(existing.id, {
+          name,
+          email,
+          phone,
+          isCustomer,
+          isSupplier,
+        });
+        updated++;
+      } else {
+        await storage.createClient({
+          name,
+          xeroContactId,
+          email,
+          phone,
+          isCustomer,
+          isSupplier,
+        });
+        created++;
+      }
+    } catch (err: any) {
+      errors.push(`Error syncing contact ${contact.Name || contact.ContactID}: ${err.message}`);
+    }
+  }
+
+  await saveSetting("xero.lastContactSyncAt", new Date().toISOString());
+
+  return { total: allContacts.length, created, updated, errors };
+}
+
+export async function syncBankTransactions(): Promise<{
+  total: number;
+  created: number;
+  updated: number;
+  errors: string[];
+}> {
+  const { accessToken, tenantId } = await refreshTokenIfNeeded();
+
+  let page = 1;
+  let allTxns: any[] = [];
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await fetch(`https://api.xero.com/api.xro/2.0/BankTransactions?page=${page}&where=Status!%3D%22DELETED%22`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Failed to fetch bank transactions from Xero (${response.status}): ${errorBody}`);
+    }
+
+    const data = await response.json() as { BankTransactions?: any[] };
+    const txns = data.BankTransactions || [];
+    allTxns = allTxns.concat(txns);
+    hasMore = txns.length === 100;
+    page++;
+  }
+
+  let created = 0;
+  let updated = 0;
+  const errors: string[] = [];
+
+  for (const txn of allTxns) {
+    try {
+      const xeroId = txn.BankTransactionID;
+      if (!xeroId) continue;
+
+      const txnDate = parseXeroDate(txn.Date) || new Date().toISOString().split("T")[0];
+      const dateObj = new Date(txnDate);
+      const month = dateObj.getMonth() + 1;
+      const year = dateObj.getFullYear();
+
+      const type = txn.Type === "RECEIVE" ? "RECEIVE" as const : "SPEND" as const;
+      const amount = Math.abs(txn.Total || 0);
+
+      const txnData = {
+        xeroBankTransactionId: xeroId,
+        bankAccountId: txn.BankAccount?.AccountID || null,
+        bankAccountName: txn.BankAccount?.Name || null,
+        contactName: txn.Contact?.Name || null,
+        xeroContactId: txn.Contact?.ContactID || null,
+        date: txnDate,
+        amount: String(amount),
+        type,
+        reference: txn.Reference || null,
+        description: txn.LineItems?.[0]?.Description || null,
+        status: txn.Status || null,
+        isReconciled: txn.IsReconciled === true,
+        month,
+        year,
+      };
+
+      const existing = await storage.getBankTransactionByXeroId(xeroId);
+
+      if (existing) {
+        await storage.updateBankTransaction(existing.id, txnData);
+        updated++;
+      } else {
+        await storage.createBankTransaction(txnData);
+        created++;
+      }
+    } catch (err: any) {
+      errors.push(`Error syncing bank txn ${txn.BankTransactionID}: ${err.message}`);
+    }
+  }
+
+  await saveSetting("xero.lastBankTxnSyncAt", new Date().toISOString());
+
+  return { total: allTxns.length, created, updated, errors };
 }

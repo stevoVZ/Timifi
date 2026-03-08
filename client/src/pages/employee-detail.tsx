@@ -20,7 +20,7 @@ import {
   Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File, Lock, RefreshCw,
   TrendingUp, CheckCircle, AlertCircle, CircleDollarSign,
 } from "lucide-react";
-import type { Employee, Timesheet, Invoice, Document } from "@shared/schema";
+import type { Employee, Timesheet, Invoice, Document, Client, Placement } from "@shared/schema";
 
 interface ReconciliationPeriod {
   month: number;
@@ -99,6 +99,15 @@ export default function EmployeeDetailPage() {
 
   const { data: reconciliation } = useQuery<ReconciliationPeriod[]>({
     queryKey: ["/api/employees", id, "reconciliation"],
+    enabled: !!id,
+  });
+
+  const { data: clientsList } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+  });
+
+  const { data: placementsList } = useQuery<Placement[]>({
+    queryKey: ["/api/employees", id, "placements"],
     enabled: !!id,
   });
 
@@ -302,20 +311,29 @@ export default function EmployeeDetailPage() {
                       testId="text-job-title"
                       locked={!!employee.xeroEmployeeId}
                     />
-                    <EditableField
-                      icon={MapPin}
-                      label="Client"
-                      field="clientName"
-                      value={employee.clientName || "Not assigned"}
-                      editingField={editingField}
-                      editValues={editValues}
-                      setEditValues={setEditValues}
-                      onStartEdit={startEdit}
-                      onSave={saveEdit}
-                      onCancel={cancelEdit}
-                      isPending={updateMutation.isPending}
-                      testId="text-client"
-                    />
+                    <div className="flex items-center gap-3 py-2" data-testid="field-client">
+                      <MapPin className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] text-muted-foreground mb-0.5">Client</div>
+                        <Select
+                          value={employee.clientName || "__none__"}
+                          onValueChange={(v) => {
+                            const val = v === "__none__" ? "" : v;
+                            updateMutation.mutate({ clientName: val });
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-sm" data-testid="select-client">
+                            <SelectValue placeholder="Select client" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Not assigned</SelectItem>
+                            {(clientsList || []).map((c) => (
+                              <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
                     <InfoRow icon={CreditCard} label="Payment Method" value={employee.paymentMethod === "INVOICE" ? "Invoice (Pty Ltd)" : "Payroll"} testId="text-payment-method" />
                     {employee.paymentMethod === "INVOICE" && (
                       <>
@@ -487,6 +505,12 @@ export default function EmployeeDetailPage() {
                   )}
                 </CardContent>
               </Card>
+
+              <PlacementsCard
+                employeeId={id!}
+                placements={placementsList || []}
+                clients={clientsList || []}
+              />
             </TabsContent>
 
             <TabsContent value="financials" className="mt-4">
@@ -902,6 +926,169 @@ function DocumentsTab({ employeeId, documents }: { employeeId: string; documents
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function PlacementsCard({ employeeId, placements, clients }: { employeeId: string; placements: Placement[]; clients: Client[] }) {
+  const { toast } = useToast();
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState({
+    clientId: "",
+    clientName: "",
+    startDate: new Date().toISOString().split("T")[0],
+    endDate: "",
+    chargeOutRate: "",
+    payRate: "",
+    notes: "",
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await apiRequest("POST", `/api/employees/${employeeId}/placements`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId, "placements"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId] });
+      toast({ title: "Placement Added", description: "New placement created." });
+      setShowForm(false);
+      setFormData({ clientId: "", clientName: "", startDate: new Date().toISOString().split("T")[0], endDate: "", chargeOutRate: "", payRate: "", notes: "" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const endMutation = useMutation({
+    mutationFn: async ({ placementId, endDate }: { placementId: string; endDate: string }) => {
+      const res = await apiRequest("PATCH", `/api/placements/${placementId}`, { status: "ENDED", endDate });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId, "placements"] });
+      toast({ title: "Placement Ended" });
+    },
+  });
+
+  const activePlacements = placements.filter(p => p.status === "ACTIVE");
+  const endedPlacements = placements.filter(p => p.status === "ENDED");
+
+  const handleSubmit = () => {
+    const client = clients.find(c => c.id === formData.clientId);
+    createMutation.mutate({
+      clientId: formData.clientId || null,
+      clientName: client?.name || formData.clientName || null,
+      startDate: formData.startDate || null,
+      endDate: formData.endDate || null,
+      chargeOutRate: formData.chargeOutRate || null,
+      payRate: formData.payRate || null,
+      notes: formData.notes || null,
+      status: "ACTIVE",
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Briefcase className="w-4 h-4" />
+            Placements
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setShowForm(!showForm)} data-testid="button-add-placement">
+            {showForm ? <X className="w-4 h-4 mr-1" /> : <Pencil className="w-4 h-4 mr-1" />}
+            {showForm ? "Cancel" : "Add Placement"}
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {showForm && (
+          <div className="p-3 border rounded-lg bg-muted/30 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Client</label>
+                <Select value={formData.clientId || "__none__"} onValueChange={(v) => setFormData(prev => ({ ...prev, clientId: v === "__none__" ? "" : v }))}>
+                  <SelectTrigger className="h-8 text-sm" data-testid="select-placement-client">
+                    <SelectValue placeholder="Select client" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Select a client...</SelectItem>
+                    {clients.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
+                <Input type="date" className="h-8 text-sm" value={formData.startDate} onChange={(e) => setFormData(prev => ({ ...prev, startDate: e.target.value }))} data-testid="input-placement-start" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Charge Out Rate</label>
+                <Input type="number" className="h-8 text-sm" placeholder="$/hr" value={formData.chargeOutRate} onChange={(e) => setFormData(prev => ({ ...prev, chargeOutRate: e.target.value }))} data-testid="input-placement-charge-rate" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Pay Rate</label>
+                <Input type="number" className="h-8 text-sm" placeholder="$/hr" value={formData.payRate} onChange={(e) => setFormData(prev => ({ ...prev, payRate: e.target.value }))} data-testid="input-placement-pay-rate" />
+              </div>
+            </div>
+            <Button size="sm" onClick={handleSubmit} disabled={createMutation.isPending} data-testid="button-save-placement">
+              <Check className="w-4 h-4 mr-1" />
+              {createMutation.isPending ? "Saving..." : "Save Placement"}
+            </Button>
+          </div>
+        )}
+
+        {activePlacements.length === 0 && endedPlacements.length === 0 && !showForm && (
+          <p className="text-sm text-muted-foreground py-4 text-center" data-testid="text-no-placements">No placements recorded.</p>
+        )}
+
+        {activePlacements.map((p) => (
+          <div key={p.id} className="p-3 border rounded-lg bg-green-50/50 dark:bg-green-950/20 border-green-200 dark:border-green-800" data-testid={`placement-active-${p.id}`}>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-[10px]">Active</Badge>
+                <span className="text-sm font-semibold">{p.clientName || "Unknown Client"}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => endMutation.mutate({ placementId: p.id, endDate: new Date().toISOString().split("T")[0] })}
+                disabled={endMutation.isPending}
+                data-testid={`button-end-placement-${p.id}`}
+              >
+                End Placement
+              </Button>
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span>From: {p.startDate || "N/A"}</span>
+              {p.chargeOutRate && <span>Charge: ${p.chargeOutRate}/hr</span>}
+              {p.payRate && <span>Pay: ${p.payRate}/hr</span>}
+            </div>
+          </div>
+        ))}
+
+        {endedPlacements.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pt-2">History</div>
+            {endedPlacements.map((p) => (
+              <div key={p.id} className="p-3 border rounded-lg opacity-60" data-testid={`placement-ended-${p.id}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <Badge variant="outline" className="text-[10px]">Ended</Badge>
+                  <span className="text-sm font-medium">{p.clientName || "Unknown Client"}</span>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  <span>{p.startDate || "N/A"} — {p.endDate || "N/A"}</span>
+                  {p.chargeOutRate && <span>Charge: ${p.chargeOutRate}/hr</span>}
+                  {p.payRate && <span>Pay: ${p.payRate}/hr</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

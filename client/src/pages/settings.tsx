@@ -438,6 +438,8 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
         { label: "Pay Runs", url: "/api/xero/sync-payruns" },
         { label: "Timesheets", url: "/api/xero/sync-timesheets" },
         { label: "Invoices", url: "/api/xero/sync-invoices" },
+        { label: "Contacts", url: "/api/xero/sync-contacts" },
+        { label: "Bank Transactions", url: "/api/xero/sync-bank-transactions" },
       ];
       const results: Record<string, SyncResult> = {};
       for (const ep of endpoints) {
@@ -482,6 +484,8 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
   const lastPayRunSyncAt = useSettingValue(settings, "xero.lastPayRunSyncAt", "");
   const lastTimesheetSyncAt = useSettingValue(settings, "xero.lastTimesheetSyncAt", "");
   const lastInvoiceSyncAt = useSettingValue(settings, "xero.lastInvoiceSyncAt", "");
+  const lastContactSyncAt = useSettingValue(settings, "xero.lastContactSyncAt", "");
+  const lastBankTxnSyncAt = useSettingValue(settings, "xero.lastBankTxnSyncAt", "");
   const lastSettingsSyncAt = useSettingValue(settings, "xero.lastSettingsSyncAt", "");
 
   const tenants = tenantsQuery.data || [];
@@ -492,6 +496,8 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
     { label: "Pay Runs", endpoint: "/api/xero/sync-payruns", invalidateKeys: ["/api/pay-runs"], lastSync: lastPayRunSyncAt },
     { label: "Timesheets", endpoint: "/api/xero/sync-timesheets", invalidateKeys: ["/api/timesheets"], lastSync: lastTimesheetSyncAt },
     { label: "Invoices", endpoint: "/api/xero/sync-invoices", invalidateKeys: ["/api/invoices"], lastSync: lastInvoiceSyncAt },
+    { label: "Contacts", endpoint: "/api/xero/sync-contacts", invalidateKeys: ["/api/clients"], lastSync: lastContactSyncAt },
+    { label: "Bank Transactions", endpoint: "/api/xero/sync-bank-transactions", invalidateKeys: ["/api/bank-transactions"], lastSync: lastBankTxnSyncAt },
   ];
 
   return (
