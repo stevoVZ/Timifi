@@ -302,18 +302,19 @@ function UploadView() {
 
   const batchTotalHours = doneActive.reduce((s, i) => s + (i.result?.totalHours || 0), 0);
 
-  const handleSubmit = async () => {
-    if (!canSubmit) return;
-    setSubmitting(true);
+  const [overwriteWarnings, setOverwriteWarnings] = useState<{ employeeName: string; month: number; year: number; existingStatus: string }[]>([]);
+  const [pendingItems, setPendingItems] = useState<any[]>([]);
 
+  const buildItems = () => {
     const notesObj: Record<string, any> = { intakeSource };
     if (senderEmail) notesObj.senderEmail = senderEmail;
     if (intakeNotes) notesObj.intakeNotes = intakeNotes;
     if (receivedDate) notesObj.receivedDate = receivedDate;
     const notesStr = JSON.stringify(notesObj);
 
-    const items = groupSummaries.map((g) => ({
+    return groupSummaries.map((g) => ({
       employeeId: g.empId,
+      employeeName: g.emp ? `${g.emp.firstName} ${g.emp.lastName}` : g.empId,
       year: g.year,
       month: g.month,
       totalHours: String(g.totalHours),
@@ -335,9 +336,23 @@ function UploadView() {
           size: item.file.size,
         })),
     }));
+  };
 
+  const submitBatch = async (items: any[], forceOverwrite = false) => {
     try {
-      const res = await apiRequest("POST", "/api/timesheets/batch", { items });
+      const res = await fetch("/api/timesheets/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ items, forceOverwrite }),
+      });
+      if (res.status === 409) {
+        const data = await res.json();
+        setOverwriteWarnings(data.warnings || []);
+        setPendingItems(items);
+        setSubmitting(false);
+        return;
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({ message: "Failed to submit" }));
         throw new Error(err.message);
@@ -351,6 +366,25 @@ function UploadView() {
       toast({ title: "Submission failed", description: err.message, variant: "destructive" });
       setSubmitting(false);
     }
+  };
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    const items = buildItems();
+    await submitBatch(items);
+  };
+
+  const handleForceOverwrite = async () => {
+    setOverwriteWarnings([]);
+    setSubmitting(true);
+    await submitBatch(pendingItems, true);
+    setPendingItems([]);
+  };
+
+  const cancelOverwrite = () => {
+    setOverwriteWarnings([]);
+    setPendingItems([]);
   };
 
   const resetAll = () => {
@@ -793,6 +827,42 @@ function UploadView() {
           </Card>
         </div>
       </div>
+
+      {overwriteWarnings.length > 0 && (
+        <Dialog open onOpenChange={() => cancelOverwrite()}>
+          <DialogContent className="max-w-md" data-testid="dialog-overwrite-warning">
+            <DialogHeader>
+              <DialogTitle className="text-base flex items-center gap-2 text-amber-600">
+                <AlertTriangle className="w-5 h-5" />
+                Overwrite Warning
+              </DialogTitle>
+              <DialogDescription>
+                The following timesheets already have <strong>approved</strong> records that will be overwritten:
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {overwriteWarnings.map((w, i) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 rounded-md text-sm">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span><strong>{w.employeeName}</strong> — {MONTHS[w.month]} {w.year} ({w.existingStatus})</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end pt-2">
+              <Button variant="outline" onClick={cancelOverwrite} data-testid="button-cancel-overwrite">
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleForceOverwrite}
+                data-testid="button-confirm-overwrite"
+              >
+                Overwrite Approved
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
@@ -1498,6 +1568,19 @@ function SubmissionsView() {
   );
 }
 
+interface AuditLogEntry {
+  id: string;
+  timesheetId: string;
+  employeeId: string;
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  changeSource: string;
+  changedBy: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
 function TimesheetRow({
   timesheet: ts,
   employee: c,
@@ -1517,6 +1600,9 @@ function TimesheetRow({
   const [docs, setDocs] = useState<DocType[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [selectedDocIdx, setSelectedDocIdx] = useState(0);
+  const [showHistory, setShowHistory] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const overtimeHours = parseFloat(ts.overtimeHours || "0");
   const intakeLabel = intakeSource ? INTAKE_SOURCES.find((s) => s.value === intakeSource)?.label : null;
   const intakeBadgeClass = intakeSource ? INTAKE_BADGE_STYLES[intakeSource] || "" : "";
@@ -1671,9 +1757,87 @@ function TimesheetRow({
                     Submit
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  onClick={async () => {
+                    if (!showHistory && auditLogs.length === 0) {
+                      setLoadingHistory(true);
+                      try {
+                        const res = await fetch(`/api/timesheets/${ts.id}/history`, { credentials: "include" });
+                        if (res.ok) setAuditLogs(await res.json());
+                      } catch {}
+                      setLoadingHistory(false);
+                    }
+                    setShowHistory(!showHistory);
+                  }}
+                  data-testid={`button-history-${ts.id}`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span className="ml-1 text-xs">History</span>
+                  {showHistory ? <ChevronUp className="w-3 h-3 ml-0.5" /> : <ChevronDown className="w-3 h-3 ml-0.5" />}
+                </Button>
               </div>
             </div>
           </div>
+          {showHistory && (
+            <div className="mt-3 pt-3 border-t border-border">
+              <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                Change History
+              </div>
+              {loadingHistory ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Loading...
+                </div>
+              ) : auditLogs.length === 0 ? (
+                <div className="text-xs text-muted-foreground py-2" data-testid={`text-no-history-${ts.id}`}>
+                  No changes recorded yet.
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto" data-testid={`list-history-${ts.id}`}>
+                  {auditLogs.map((log) => (
+                    <div key={log.id} className="flex items-start gap-2 text-xs py-1.5 px-2 rounded bg-muted/40" data-testid={`audit-log-${log.id}`}>
+                      <div className="shrink-0 mt-0.5">
+                        {log.field === "created" ? (
+                          <Plus className="w-3 h-3 text-green-600" />
+                        ) : log.field === "status" ? (
+                          <ArrowRight className="w-3 h-3 text-blue-600" />
+                        ) : (
+                          <Info className="w-3 h-3 text-amber-600" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold capitalize">{log.field === "created" ? "Created" : log.field.replace(/([A-Z])/g, " $1").trim()}</span>
+                          {log.field !== "created" && (
+                            <>
+                              <span className="text-muted-foreground">
+                                {log.oldValue} → {log.newValue}
+                              </span>
+                            </>
+                          )}
+                          {log.field === "created" && (
+                            <span className="text-muted-foreground">{log.newValue}</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal">
+                            {log.changeSource.replace(/_/g, " ")}
+                          </Badge>
+                          {log.changedBy && <span>by {log.changedBy}</span>}
+                          <span>·</span>
+                          <span>{new Date(log.createdAt).toLocaleString()}</span>
+                          {log.notes && <><span>·</span><span>{log.notes}</span></>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
     </>

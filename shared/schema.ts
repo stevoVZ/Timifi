@@ -328,6 +328,24 @@ export const rateHistory = pgTable("rate_history", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const timesheetAuditLog = pgTable("timesheet_audit_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  timesheetId: varchar("timesheet_id").notNull(),
+  employeeId: varchar("employee_id").notNull(),
+  field: varchar("field", { length: 50 }).notNull(),
+  oldValue: text("old_value"),
+  newValue: text("new_value"),
+  changeSource: varchar("change_source", { length: 30 }).notNull().default("MANUAL_EDIT"),
+  changedBy: varchar("changed_by", { length: 100 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertTimesheetAuditLogSchema = createInsertSchema(timesheetAuditLog).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertEmployeeSchema = createInsertSchema(employees).omit({
   id: true,
   createdAt: true,
@@ -476,3 +494,5 @@ export type PayslipLine = typeof payslipLines.$inferSelect;
 export type InsertPayslipLine = z.infer<typeof insertPayslipLineSchema>;
 export type RateHistory = typeof rateHistory.$inferSelect;
 export type InsertRateHistory = z.infer<typeof insertRateHistorySchema>;
+export type TimesheetAuditLog = typeof timesheetAuditLog.$inferSelect;
+export type InsertTimesheetAuditLog = z.infer<typeof insertTimesheetAuditLogSchema>;

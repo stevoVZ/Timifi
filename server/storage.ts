@@ -4,7 +4,7 @@ import {
   employees, timesheets, invoices, payRuns, payRunLines, documents,
   notifications, messages, settings, users,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
-  clients, placements, bankTransactions, payslipLines, rateHistory,
+  clients, placements, bankTransactions, payslipLines, rateHistory, timesheetAuditLog,
   type Employee, type InsertEmployee,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
@@ -25,6 +25,7 @@ import {
   type BankTransaction, type InsertBankTransaction,
   type PayslipLine, type InsertPayslipLine,
   type RateHistory, type InsertRateHistory,
+  type TimesheetAuditLog, type InsertTimesheetAuditLog,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -40,6 +41,10 @@ export interface IStorage {
   getTimesheet(id: string): Promise<Timesheet | undefined>;
   createTimesheet(data: InsertTimesheet): Promise<Timesheet>;
   updateTimesheet(id: string, data: Partial<InsertTimesheet>): Promise<Timesheet | undefined>;
+
+  createTimesheetAuditLogs(entries: InsertTimesheetAuditLog[]): Promise<TimesheetAuditLog[]>;
+  getTimesheetAuditLogs(timesheetId: string): Promise<TimesheetAuditLog[]>;
+  getTimesheetAuditLogsByEmployee(employeeId: string): Promise<TimesheetAuditLog[]>;
 
   getInvoices(): Promise<Invoice[]>;
   getInvoicesByEmployee(employeeId: string): Promise<Invoice[]>;
@@ -213,6 +218,23 @@ export class DatabaseStorage implements IStorage {
       .where(eq(timesheets.id, id))
       .returning();
     return timesheet;
+  }
+
+  async createTimesheetAuditLogs(entries: InsertTimesheetAuditLog[]): Promise<TimesheetAuditLog[]> {
+    if (entries.length === 0) return [];
+    return db.insert(timesheetAuditLog).values(entries).returning();
+  }
+
+  async getTimesheetAuditLogs(timesheetId: string): Promise<TimesheetAuditLog[]> {
+    return db.select().from(timesheetAuditLog)
+      .where(eq(timesheetAuditLog.timesheetId, timesheetId))
+      .orderBy(desc(timesheetAuditLog.createdAt));
+  }
+
+  async getTimesheetAuditLogsByEmployee(employeeId: string): Promise<TimesheetAuditLog[]> {
+    return db.select().from(timesheetAuditLog)
+      .where(eq(timesheetAuditLog.employeeId, employeeId))
+      .orderBy(desc(timesheetAuditLog.createdAt));
   }
 
   async getInvoices(): Promise<Invoice[]> {

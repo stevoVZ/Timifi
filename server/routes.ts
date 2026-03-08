@@ -152,9 +152,24 @@ export async function registerRoutes(
 
   app.post("/api/timesheets", async (req, res) => {
     try {
-      const { fileData, fileType: uploadedFileType, files: filesList, ...timesheetData } = req.body;
+      const { fileData, fileType: uploadedFileType, files: filesList, changeSource: reqSource, ...timesheetData } = req.body;
       const parsed = insertTimesheetSchema.parse(coerceDates(timesheetData));
       const timesheet = await storage.createTimesheet(parsed);
+
+      let notesJson: any = {};
+      try { notesJson = parsed.notes ? JSON.parse(parsed.notes) : {}; } catch {}
+      const source = reqSource || notesJson.intakeSource || "MANUAL_EDIT";
+
+      await storage.createTimesheetAuditLogs([{
+        timesheetId: timesheet.id,
+        employeeId: parsed.employeeId,
+        field: "created",
+        oldValue: null,
+        newValue: `${parsed.totalHours || 0}h (regular: ${parsed.regularHours || 0}, OT: ${parsed.overtimeHours || 0})`,
+        changeSource: source,
+        changedBy: (req as any).user?.username || "admin",
+        notes: parsed.fileName || null,
+      }]);
 
       if (filesList && Array.isArray(filesList) && parsed.employeeId) {
         for (const f of filesList) {
@@ -189,29 +204,87 @@ export async function registerRoutes(
 
   app.post("/api/timesheets/batch", async (req, res) => {
     try {
-      const { items } = req.body;
+      const { items, forceOverwrite } = req.body;
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: "No timesheet items provided" });
       }
 
       const allTimesheets = await storage.getTimesheets();
-      const results: { index: number; success: boolean; timesheet?: any; error?: string }[] = [];
+      const warnings: { index: number; employeeName: string; month: number; year: number; existingStatus: string }[] = [];
+      const parsedItems: { index: number; parsed: any; filesList: any; existing: any[] }[] = [];
 
       for (let i = 0; i < items.length; i++) {
+        const { files: filesList, ...timesheetData } = items[i];
+        const parsed = insertTimesheetSchema.parse(coerceDates(timesheetData));
+        const existing = allTimesheets.filter(
+          (ts) => ts.employeeId === parsed.employeeId && ts.month === parsed.month && ts.year === parsed.year
+        );
+        const approvedTs = existing.find((ts) => ts.status === "APPROVED");
+        if (approvedTs && !forceOverwrite) {
+          warnings.push({
+            index: i,
+            employeeName: timesheetData.employeeName || `Employee ${parsed.employeeId}`,
+            month: parsed.month!,
+            year: parsed.year!,
+            existingStatus: "APPROVED",
+          });
+        }
+        parsedItems.push({ index: i, parsed, filesList, existing });
+      }
+
+      if (warnings.length > 0 && !forceOverwrite) {
+        return res.status(409).json({ message: "Some timesheets would overwrite approved records", warnings });
+      }
+
+      const results: { index: number; success: boolean; timesheet?: any; error?: string }[] = [];
+      for (const { index: i, parsed, filesList, existing } of parsedItems) {
         try {
-          const { files: filesList, ...timesheetData } = items[i];
-          const parsed = insertTimesheetSchema.parse(coerceDates(timesheetData));
+          const existingRecord = existing.find((ts) => ts.status === "APPROVED") || existing.find((ts) => ts.status !== "APPROVED");
+          let timesheet;
 
-          const existing = allTimesheets.filter(
-            (ts) => ts.employeeId === parsed.employeeId && ts.month === parsed.month && ts.year === parsed.year
-          );
-          const hasApproved = existing.some((ts) => ts.status === "APPROVED");
-          if (hasApproved) {
-            results.push({ index: i, success: false, error: `Period ${parsed.month}/${parsed.year} is already approved for this employee` });
-            continue;
+          if (existingRecord) {
+            const auditEntries: any[] = [];
+            const trackedFields = ["totalHours", "regularHours", "overtimeHours", "grossValue"] as const;
+            for (const field of trackedFields) {
+              const oldVal = existingRecord[field];
+              const newVal = parsed[field];
+              if (oldVal !== undefined && newVal !== undefined && String(oldVal) !== String(newVal)) {
+                auditEntries.push({
+                  timesheetId: existingRecord.id,
+                  employeeId: parsed.employeeId,
+                  field,
+                  oldValue: String(oldVal),
+                  newValue: String(newVal),
+                  changeSource: "PDF_UPLOAD",
+                  changedBy: (req as any).user?.username || "admin",
+                  notes: parsed.fileName || "Batch upload overwrite",
+                });
+              }
+            }
+            if (auditEntries.length > 0) {
+              await storage.createTimesheetAuditLogs(auditEntries);
+            }
+
+            const updateFields: any = {};
+            for (const field of trackedFields) {
+              if (parsed[field] !== undefined) updateFields[field] = parsed[field];
+            }
+            if (parsed.fileName) updateFields.fileName = parsed.fileName;
+            if (parsed.status) updateFields.status = parsed.status;
+            timesheet = await storage.updateTimesheet(existingRecord.id, updateFields);
+          } else {
+            timesheet = await storage.createTimesheet(parsed);
+            await storage.createTimesheetAuditLogs([{
+              timesheetId: timesheet.id,
+              employeeId: parsed.employeeId,
+              field: "created",
+              oldValue: null,
+              newValue: `${parsed.totalHours || 0}h (regular: ${parsed.regularHours || 0}, OT: ${parsed.overtimeHours || 0})`,
+              changeSource: "PDF_UPLOAD",
+              changedBy: (req as any).user?.username || "admin",
+              notes: parsed.fileName || null,
+            }]);
           }
-
-          const timesheet = await storage.createTimesheet(parsed);
 
           if (filesList && Array.isArray(filesList) && parsed.employeeId) {
             for (const f of filesList) {
@@ -270,11 +343,45 @@ export async function registerRoutes(
 
   app.patch("/api/timesheets/:id", async (req, res) => {
     try {
-      const timesheet = await storage.updateTimesheet(req.params.id, coerceDates(req.body));
-      if (!timesheet) return res.status(404).json({ message: "Timesheet not found" });
+      const existing = await storage.getTimesheet(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Timesheet not found" });
+
+      const { changeSource: reqSource, ...updateData } = req.body;
+      const source = reqSource || "MANUAL_EDIT";
+
+      const trackedFields = ["totalHours", "regularHours", "overtimeHours", "grossValue", "status"] as const;
+      const auditEntries: any[] = [];
+      for (const field of trackedFields) {
+        if (updateData[field] !== undefined && String(existing[field]) !== String(updateData[field])) {
+          auditEntries.push({
+            timesheetId: existing.id,
+            employeeId: existing.employeeId,
+            field,
+            oldValue: String(existing[field]),
+            newValue: String(updateData[field]),
+            changeSource: source,
+            changedBy: (req as any).user?.username || "admin",
+          });
+        }
+      }
+
+      const timesheet = await storage.updateTimesheet(req.params.id, coerceDates(updateData));
+      if (auditEntries.length > 0) {
+        await storage.createTimesheetAuditLogs(auditEntries);
+      }
+
       res.json(timesheet);
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to update timesheet" });
+    }
+  });
+
+  app.get("/api/timesheets/:id/history", async (req, res) => {
+    try {
+      const logs = await storage.getTimesheetAuditLogs(req.params.id);
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to get audit logs" });
     }
   });
 
