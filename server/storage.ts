@@ -4,7 +4,7 @@ import {
   employees, timesheets, invoices, payRuns, payRunLines, documents,
   notifications, messages, settings, users,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
-  clients, placements, bankTransactions,
+  clients, placements, bankTransactions, payslipLines, rateHistory,
   type Employee, type InsertEmployee,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
@@ -23,6 +23,8 @@ import {
   type Client, type InsertClient,
   type Placement, type InsertPlacement,
   type BankTransaction, type InsertBankTransaction,
+  type PayslipLine, type InsertPayslipLine,
+  type RateHistory, type InsertRateHistory,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -135,6 +137,14 @@ export interface IStorage {
   getBankTransactionByXeroId(xeroId: string): Promise<BankTransaction | undefined>;
   createBankTransaction(data: InsertBankTransaction): Promise<BankTransaction>;
   updateBankTransaction(id: string, data: Partial<InsertBankTransaction>): Promise<BankTransaction | undefined>;
+
+  getPayslipLines(payRunLineId: string): Promise<PayslipLine[]>;
+  createPayslipLines(data: InsertPayslipLine[]): Promise<PayslipLine[]>;
+  deletePayslipLinesByPayRunLine(payRunLineId: string): Promise<void>;
+
+  getRateHistory(employeeId: string): Promise<RateHistory[]>;
+  getLatestRateHistory(employeeId: string): Promise<RateHistory | undefined>;
+  createRateHistory(data: InsertRateHistory): Promise<RateHistory>;
 
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
@@ -294,6 +304,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePayRunLines(payRunId: string): Promise<void> {
+    const lines = await db.select({ id: payRunLines.id }).from(payRunLines).where(eq(payRunLines.payRunId, payRunId));
+    if (lines.length > 0) {
+      const lineIds = lines.map(l => l.id);
+      await db.delete(payslipLines).where(inArray(payslipLines.payRunLineId, lineIds));
+    }
     await db.delete(payRunLines).where(eq(payRunLines.payRunId, payRunId));
   }
 
@@ -678,6 +693,40 @@ export class DatabaseStorage implements IStorage {
   async updateBankTransaction(id: string, data: Partial<InsertBankTransaction>): Promise<BankTransaction | undefined> {
     const [txn] = await db.update(bankTransactions).set(data).where(eq(bankTransactions.id, id)).returning();
     return txn;
+  }
+
+  async getPayslipLines(payRunLineId: string): Promise<PayslipLine[]> {
+    return db.select().from(payslipLines)
+      .where(eq(payslipLines.payRunLineId, payRunLineId))
+      .orderBy(payslipLines.lineType);
+  }
+
+  async createPayslipLines(data: InsertPayslipLine[]): Promise<PayslipLine[]> {
+    if (data.length === 0) return [];
+    return db.insert(payslipLines).values(data).returning();
+  }
+
+  async deletePayslipLinesByPayRunLine(payRunLineId: string): Promise<void> {
+    await db.delete(payslipLines).where(eq(payslipLines.payRunLineId, payRunLineId));
+  }
+
+  async getRateHistory(employeeId: string): Promise<RateHistory[]> {
+    return db.select().from(rateHistory)
+      .where(eq(rateHistory.employeeId, employeeId))
+      .orderBy(desc(rateHistory.effectiveDate));
+  }
+
+  async getLatestRateHistory(employeeId: string): Promise<RateHistory | undefined> {
+    const [latest] = await db.select().from(rateHistory)
+      .where(eq(rateHistory.employeeId, employeeId))
+      .orderBy(desc(rateHistory.effectiveDate))
+      .limit(1);
+    return latest;
+  }
+
+  async createRateHistory(data: InsertRateHistory): Promise<RateHistory> {
+    const [record] = await db.insert(rateHistory).values(data).returning();
+    return record;
   }
 }
 

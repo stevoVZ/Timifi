@@ -8,6 +8,7 @@ import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions } from "./xero";
 import { requireAuth } from "./auth";
 import { scanTimesheetPdf } from "./ocr";
+import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from "./rates";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -582,6 +583,10 @@ export async function registerRoutes(
         const margin = expectedRevenue - employeeCost;
         const marginPercent = expectedRevenue > 0 ? (margin / expectedRevenue) * 100 : 0;
 
+        const feePercent = parseFloat(emp.payrollFeePercent || "0");
+        const grossForFee = payLine ? parseFloat(payLine.grossEarnings || "0") : 0;
+        const payrollFeeRevenue = grossForFee * (feePercent / 100);
+
         return {
           employee: {
             id: emp.id,
@@ -591,6 +596,7 @@ export async function registerRoutes(
             hourlyRate: emp.hourlyRate,
             chargeOutRate: emp.chargeOutRate,
             paymentMethod: emp.paymentMethod,
+            payrollFeePercent: emp.payrollFeePercent,
           },
           timesheet: ts
             ? {
@@ -621,6 +627,7 @@ export async function registerRoutes(
             employeeCost,
             margin,
             marginPercent: Math.round(marginPercent * 10) / 10,
+            payrollFeeRevenue: Math.round(payrollFeeRevenue * 100) / 100,
           },
         };
       });
@@ -630,6 +637,8 @@ export async function registerRoutes(
           `${b.employee.firstName} ${b.employee.lastName}`
         )
       );
+
+      const totalPayrollFeeRevenue = result.reduce((s, r) => s + r.financials.payrollFeeRevenue, 0);
 
       res.json({
         employees: result,
@@ -642,6 +651,7 @@ export async function registerRoutes(
           totalRevenue: result.reduce((s, r) => s + r.financials.expectedRevenue, 0),
           totalCost: result.reduce((s, r) => s + r.financials.employeeCost, 0),
           totalMargin: result.reduce((s, r) => s + r.financials.margin, 0),
+          totalPayrollFeeRevenue: Math.round(totalPayrollFeeRevenue * 100) / 100,
         },
       });
     } catch (err) {
@@ -1377,6 +1387,35 @@ export async function registerRoutes(
       res.json(placement);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to update placement" });
+    }
+  });
+
+  app.get("/api/employees/:id/rate-history", async (req, res) => {
+    try {
+      const history = await storage.getRateHistory(req.params.id);
+      res.json(history);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch rate history" });
+    }
+  });
+
+  app.get("/api/pay-run-lines/:lineId/detail", async (req, res) => {
+    try {
+      const detail = await storage.getPayslipLines(req.params.lineId);
+      res.json(detail);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch payslip detail" });
+    }
+  });
+
+  app.get("/api/super-rate", async (req, res) => {
+    try {
+      const dateStr = req.query.date as string;
+      const date = dateStr ? new Date(dateStr) : new Date();
+      const rate = getSuperRate(date);
+      res.json({ rate, date: date.toISOString().split("T")[0] });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to get super rate" });
     }
   });
 

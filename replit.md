@@ -1,164 +1,52 @@
 # Recruitment Portal
 
-Labour hire agency management portal for employees, timesheets, invoicing, and payroll. Includes a self-service employee portal. Connected to live Xero data — no demo/seed data.
+## Overview
 
-## Architecture
+This project is a comprehensive management portal designed for labour hire agencies. It centralizes the management of employees, timesheets, invoicing, and payroll, offering both an administrative panel and a self-service employee portal. The system is built to streamline agency operations, improve efficiency, and provide real-time financial insights by integrating directly with Xero. Its key capabilities include AI-powered OCR for timesheet processing, robust payroll management with ABA file generation, and detailed financial reconciliation. The overarching goal is to modernize labour hire agency management, reduce manual overhead, and enhance the experience for both agency staff and employees.
 
-- **Frontend**: React + TypeScript with Vite, Tailwind CSS, shadcn/ui components, wouter routing
-- **Backend**: Express.js with TypeScript
-- **Database**: PostgreSQL with Drizzle ORM
-- **Fonts**: DM Sans + DM Mono
-- **Auth**: Passport.js local strategy with express-session (connect-pg-simple store)
-- **AI/OCR**: OpenAI GPT-4o vision via Replit AI Integrations for PDF timesheet scanning (PDF→PNG conversion via pdftoppm)
+## User Preferences
 
-## Key Features
+I prefer clear and concise communication. For any proposed changes, please provide a brief explanation of the "why" behind them. I value iterative development, so feel free to suggest small, incremental improvements. When making significant architectural decisions or adding new external dependencies, please ask for my approval first.
 
-### Admin Panel
-- **Admin Login**: Username/password authentication required. Default credentials: admin/admin. Sessions stored in PostgreSQL.
-- **Dashboard**: KPI overview (active employees, total invoices, total paid, FY pay runs), recent invoices table (last 5), recent pay runs table (last 5), employees sidebar, quick actions (upload timesheets, view invoices, view payroll, add employee), YTD billings card, recent activity feed
-- **Employees** (`/employees`): KPI strip (Active/Pending/YTD Billings/Avg Rate), sortable table (name/rate/YTD hours/start date), search, filter by status, add new (full form + quick add). Detail view (`/employees/:id`) with tabs: Profile (contact, employment, payment details, notes), Financials (reconciliation KPIs + period table comparing timesheet hours vs invoiced hours vs payments received), Documents (upload/manage certifications). Financials tab pulls from `/api/employees/:id/reconciliation` endpoint.
-- **Timesheets**: Two-tab layout (Upload/Submissions). Upload tab: drag-and-drop PDF zone with real AI-powered OCR (GPT-4o vision), per-file employee/month/year assignment, auto-employee detection from OCR, batch summary sidebar, duplicate detection. Post-scan "Review & Confirm" mode shows side-by-side PDF preview (left) with detected data and assignment controls (right), file-by-file navigation. PDF files saved as base64 documents linked to timesheets. Submissions tab: existing timesheet list with status tabs, manual entry dialog, approve/reject workflow, intake source badges, PDF viewer dialog for viewing uploaded timesheet documents
-- **Payroll**: Enhanced pay run management with employee-level pay lines (hours, rate, gross, PAYG, super, net), file workflow (Draft → Review → Filed), ABA direct entry file download, payslip generation, month navigation. Sortable table columns on both pay lines and pay run history tables.
-- **Invoices**: KPI strip (Total Billed, Outstanding, Paid, Voided), filter tabs including Voided tab, pending invoices from approved timesheets, create/send workflow. Table view with sortable columns matching Xero layout. Search filters table rows.
-- **Payroll**: Defaults to most recent pay run month (not current calendar month)
-- **Notifications**: Priority-based notification center with filtering by type/priority, mark read/unread
-- **Settings**: Tabbed settings page (Branding, Company, Payroll, Xero, Portal, Users)
-- **Reconciliation** (`/reconciliation`): Monthly bird's-eye view of all active employees. Month/year selector, KPI strip (employees, timesheets received, invoices raised/paid, payroll complete), per-employee table with status icons (green check, amber warning, red X) for timesheet/invoice/payroll, progress bars. Links to employee detail pages.
-- **Bank Statements** (`/bank-statements`): Monthly bank transaction viewer synced from Xero. KPI cards (Total Income, Total Expenses, Net Cash Flow). Three tabs: Expenses (grouped by payee with collapsible sections and subtotals), All Transactions (sortable table), Income. Search/filter by contact, description, or reference. Color-coded amounts (green=income, red=expense). Reconciled status indicators.
-- **Pay Items**: Pay codes/items management
-- **Xero Integration**: OAuth2 connection to Xero Payroll AU + Accounting API. Organisation (tenant) picker for multi-org support. Individual sync for: Employees, Pay Runs, Timesheets, Invoices, Contacts, Bank Transactions, Payroll Settings. Sync All button. Xero-synced employees show badge and locked fields.
-- **Clients**: Synced from Xero Contacts. Client dropdown on employee detail page. Used in placements.
-- **Placements**: Track employee placements to clients over time. Multiple placements per employee (active/ended). Charge-out and pay rates per placement. Creating an active placement auto-updates employee rates and client name.
+## System Architecture
 
-### Employee Portal (/portal/*)
-- **Portal Login**: Email-based login for employees
-- **Portal Dashboard**: 3 KPI cards (This month hours, YTD earnings, Next pay date), contract utilisation progress bar, quick action links, recent timesheets/payslips mini-tables
-- **Portal Timesheets**: Weekly hour breakdown entry, auto-calculated totals, expandable history, resubmit rejected timesheets
-- **Portal Leave**: Tab-based layout (History/New Request tabs), 2 balance cards (Annual/Sick) with progress bars, inline leave request form
-- **Portal Payslips**: 4-card YTD summary strip, table layout with PDF download
-- **Portal Messages**: Split-pane inbox with message list sidebar, conversation detail view, reply functionality, compose new message
-- **Portal Onboarding**: 7-step wizard (Welcome, Personal, Address, Tax, Bank, Super, Complete)
+The Recruitment Portal is built as a full-stack application.
 
-## File Structure
+**Frontend:**
+-   **Framework:** React with TypeScript, using Vite for fast development.
+-   **Styling:** Tailwind CSS for utility-first styling, complemented by shadcn/ui components for a modern and accessible UI.
+-   **Routing:** `wouter` for a lightweight and flexible routing solution.
+-   **UI/UX Decisions:** The admin panel features a dashboard with key performance indicators (KPIs), sortable tables, and quick action links. Employee detail views are tabbed for clear organization. The employee portal offers a simplified, self-service experience with progress bars and quick access to essential information.
 
-```
-client/src/
-  App.tsx                     - Main app with admin/portal layout routing, auth guard
-  pages/
-    login.tsx                 - Admin login page (username/password)
-    dashboard.tsx             - Dashboard with KPIs and quick links
-    employees.tsx             - Employee list with search/filter
-    employee-new.tsx          - Full employee creation form
-    employee-detail.tsx       - Employee detail with tabs
-    timesheets.tsx            - Timesheet management with AI OCR scanning
-    payroll.tsx               - Pay run overview
-    payroll-detail.tsx        - Pay run detail with employee pay lines
-    invoices.tsx              - Invoice management
-    reconciliation.tsx        - Monthly reconciliation dashboard
-    bank-statements.tsx       - Bank transactions / expenses viewer
-    leave.tsx                 - Leave request management (admin)
-    pay-items.tsx             - Pay items/pay codes management
-    notifications.tsx         - Notification center with filters
-    settings.tsx              - Settings with tabbed interface (includes Xero org picker + sync controls)
-    portal/                   - Employee self-service portal pages
+**Backend:**
+-   **Framework:** Express.js with TypeScript for a robust and scalable API layer.
+-   **Authentication:** Passport.js with a local strategy for admin login and `express-session` using `connect-pg-simple` for session storage in PostgreSQL. Portal authentication uses email-based login without password validation for simplicity.
+-   **AI/OCR:** Utilizes OpenAI GPT-4o vision via Replit AI Integrations for advanced PDF timesheet scanning. This involves converting PDFs to PNGs (`pdftoppm`) and sending images to GPT-4o for data extraction and auto-detection of employee/month/year.
+-   **Payroll:** Server-side generation of payslips (using `jsPDF`) and ABA direct entry files for payroll processing.
+-   **Xero Integration:** OAuth2-based integration with Xero Payroll AU and Accounting APIs for syncing employees, pay runs, timesheets, invoices, contacts, bank transactions, and payroll settings. Supports multi-organisation selection.
 
-server/
-  index.ts                    - Express server setup with seed
-  auth.ts                     - Passport.js auth setup, password hashing, requireAuth middleware
-  routes.ts                   - API routes for all entities + Xero sync endpoints
-  storage.ts                  - Database storage layer with Drizzle
-  db.ts                       - Database connection
-  seed.ts                     - Creates default admin user + settings only (no demo data)
-  ocr.ts                      - GPT-4o vision PDF timesheet scanner (converts PDF→PNG via pdftoppm, sends images to GPT-4o)
-  payslip.ts                  - Payslip generation (jsPDF server-side PDF + HTML fallback)
-  aba.ts                      - ABA direct entry file generation
-  xero.ts                     - Xero Payroll AU + Accounting API integration
+**Database:**
+-   **Type:** PostgreSQL.
+-   **ORM:** Drizzle ORM for type-safe database interactions.
+-   **Schema:** Key tables include `employees`, `timesheets`, `invoices`, `pay_runs`, `pay_run_lines`, `documents`, `notifications`, `messages`, `settings`, `users`, `leave_requests`, `pay_items`, `tax_declarations`, `bank_accounts`, `super_memberships`, `clients`, `placements`, `bank_transactions`, `payslip_lines`, and `rate_history`.
 
-shared/
-  schema.ts                   - Drizzle schema with all tables and types
-```
+**Feature Specifications:**
+-   **Admin Panel:** Includes comprehensive modules for Dashboard, Employees (with detailed profiles, financials, documents), Timesheets (upload with AI OCR, review, approval workflow), Payroll (pay run management, payslip generation, ABA files), Invoices, Reconciliation, Bank Statements (synced from Xero), Notifications, Settings (including Xero integration), Clients, and Placements.
+-   **Employee Portal:** Provides self-service functionalities for employees including Dashboard, Timesheet entry, Leave requests, Payslip access, Messaging, and an Onboarding wizard.
 
-## API Routes
+## External Dependencies
 
-- `GET/POST /api/employees` - List/create employees
-- `GET/PATCH /api/employees/:id` - Get/update employee
-- `GET /api/employees/stats` - Employee stats with YTD data
-- `POST /api/timesheets/scan` - Upload PDFs for AI OCR scanning (multipart form data)
-- `GET /api/timesheets/employee/:employeeId` - Timesheets by employee
-- `GET /api/messages/employee/:employeeId` - Messages by employee
-- `GET /api/invoices/employee/:employeeId` - Invoices by employee
-- `GET /api/leave/employee/:employeeId` - Leave requests by employee
-- `GET /api/reconciliation?month=X&year=Y` - Monthly reconciliation with employees, cashFlow, and totals
-- `GET /api/clients` - List all clients (synced from Xero Contacts)
-- `GET /api/employees/:id/placements` - List placements for employee
-- `POST /api/employees/:id/placements` - Create placement
-- `PATCH /api/placements/:id` - Update placement (e.g., end it)
-- `GET /api/bank-transactions?month=X&year=Y` - Bank transactions
-- `POST /api/xero/sync-contacts` - Sync Xero contacts to clients table
-- `POST /api/xero/sync-bank-transactions` - Sync Xero bank transactions
-- `GET /api/portal/employee/:employeeId/stats` - Portal dashboard stats
-- `GET /api/portal/employee/:employeeId/tax|bank|super` - Portal onboarding data
-
-## Database Tables
-
-- `employees` - Employee profiles with optional `xero_employee_id` for Xero sync, `payment_method` (PAYROLL/INVOICE enum), `company_name`, `abn`, `charge_out_rate` (billable rate ex GST), `hourly_rate` (pay rate / rate to them ex GST)
-- `timesheets` - Monthly timesheet records with `employee_id` FK, hours and status workflow
-- `invoices` - Invoice records with GST calculations and status tracking, nullable `employee_id`, `contact_name` for client org, `xero_invoice_id` for sync dedup
-- `pay_runs` - Payroll run records with PAYG/super breakdowns, period dates, payment date
-- `pay_run_lines` - Employee-level pay run detail lines with `employee_id` FK
-- `documents` - Employee documents with categories, `employee_id` FK, optional `timesheet_id` FK for linking uploaded PDFs to timesheets
-- `notifications` - Admin notification center, optional `employee_id` FK
-- `messages` - Messaging between admin and employees, `employee_id` FK
-- `settings` - Key-value application settings (includes Xero OAuth tokens, tenant config)
-- `users` - Admin user accounts (username/hashed password)
-- `leave_requests` - Leave requests with approval workflow, `employee_id` FK
-- `pay_items` - Pay codes/items with rate, multiplier, flags
-- `tax_declarations` - Employee TFN declarations, `employee_id` FK
-- `bank_accounts` - Employee bank details, `employee_id` FK
-- `super_memberships` - Employee superannuation fund details, `employee_id` FK
-- `clients` - Xero contacts synced as clients, `xero_contact_id` unique, `is_customer`/`is_supplier` flags
-- `placements` - Employee placements to clients, `employee_id` FK, `client_id` FK, charge-out/pay rates, ACTIVE/ENDED status
-- `bank_transactions` - Xero bank transactions, `xero_bank_transaction_id` unique, RECEIVE/SPEND type, month/year for filtering
-- `session` - Express sessions (created automatically by connect-pg-simple)
-
-## Auth
-
-- **Admin auth**: Passport.js local strategy with scrypt password hashing and express-session. Protected via `requireAuth` middleware on all `/api/*` routes except `/api/auth/*`, `/api/portal/*`, and `/api/xero/callback`.
-- **Portal auth**: Uses `localStorage` keys `portal_employee_id` and `portal_employee_name`; route guard in App.tsx redirects unauthenticated portal users to `/portal/login`. POST `/api/portal/login` looks up employee by email, no password validation (MVP).
-- **Default admin**: username `admin`, password `admin` — seeded on first startup.
-
-## AI/OCR Integration
-
-- Uses OpenAI GPT-4o vision model via Replit AI Integrations (billed to Replit credits, no external API key needed)
-- Environment variables: `AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL`
-- `server/ocr.ts` accepts PDF buffer, converts to PNG images using `pdftoppm` (200 DPI), sends each page as base64 image_url to GPT-4o
-- Multi-page PDFs: all pages sent in a single GPT-4o request for context
-- Extracts: employee name, client name, total hours, regular/overtime hours, weekly breakdown, signature detection, confidence score, month-boundary warnings
-- Endpoint: `POST /api/timesheets/scan` with multer (max 20 files, 20MB each)
-
-## Xero Integration
-
-- OAuth2 with Xero Payroll AU API + Accounting API
-- Scopes: openid, profile, email, payroll.*, accounting.invoices, accounting.invoices.read, accounting.contacts.read, accounting.banktransactions.read, offline_access
-- Multi-organisation support via tenant picker in settings
-- Sync functions: syncEmployees, syncPayRuns, syncTimesheets, syncInvoices, syncContacts, syncBankTransactions, syncPayrollSettings
-- Token refresh handled automatically
-- Connected tenant: stored in settings as xero.tenantId / xero.tenantName
-- Last sync timestamps stored per data type (xero.lastEmployeeSyncAt, etc.)
-
-## Environment Variables
-
-- `DATABASE_URL` - PostgreSQL connection string
-- `SESSION_SECRET` - Express session secret
-- `XERO_REDIRECT_URI` - Xero OAuth callback URI (defaults to http://localhost:5000/api/xero/callback)
-- `AI_INTEGRATIONS_OPENAI_API_KEY` - OpenAI API key (via Replit AI Integrations)
-- `AI_INTEGRATIONS_OPENAI_BASE_URL` - OpenAI base URL (via Replit AI Integrations)
-
-## Important Notes
-
-- After every `npm run db:push`, must recreate session table: `CREATE TABLE IF NOT EXISTS "session" ("sid" varchar NOT NULL PRIMARY KEY, "sess" json NOT NULL, "expire" timestamp(6) NOT NULL)`
-- Tables created via direct SQL ALTER/CREATE (not db:push): `calendar_name` column, `documents.timesheet_id` column, `charge_out_rate` column, `clients` table, `placements` table, `bank_transactions` table, `placement_status` enum, `bank_txn_type` enum
-- paymentMethodEnum values: "PAYROLL" (default) or "INVOICE"
-- Invoice dedup: getInvoiceByNumber first, fallback to getInvoiceByXeroId
-- ytdBillings uses `paidDate` for FY filtering
-- DB fully renamed: `employees` table (was `contractors`), `employee_id` FKs (was `contractor_id`), `employee_status` enum (was `contractor_status`)
+-   **OpenAI GPT-4o Vision:** Accessed via Replit AI Integrations for PDF timesheet OCR and data extraction.
+-   **Xero API:** OAuth2 integration with Xero Payroll AU API and Xero Accounting API for financial data synchronization (employees, pay runs, timesheets, invoices, contacts, bank transactions).
+-   **PostgreSQL:** Relational database for all application data storage.
+-   **pdftoppm:** Utility used server-side for converting PDF documents to PNG images for OCR processing.
+-   **jsPDF:** Server-side library for generating PDF payslips.
+-   **Passport.js:** Authentication middleware for Node.js.
+-   **express-session:** Session management middleware for Express.
+-   **connect-pg-simple:** PostgreSQL session store for `express-session`.
+-   **Drizzle ORM:** TypeScript ORM for PostgreSQL.
+-   **Tailwind CSS:** Utility-first CSS framework.
+-   **shadcn/ui:** Reusable UI components.
+-   **wouter:** Lightweight React router.
+-   **Vite:** Frontend build tool.
+-   **DM Sans + DM Mono:** Chosen fonts for the application.

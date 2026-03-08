@@ -1,6 +1,8 @@
 import { XeroClient } from "xero-node";
 import { storage } from "./storage";
+import { getSuperRate, calculateChargeOutFromPayRate } from "./rates";
 import crypto from "crypto";
+import type { InsertPayslipLine } from "@shared/schema";
 
 let xeroClient: XeroClient | null = null;
 let cachedClientId: string | null = null;
@@ -314,21 +316,32 @@ export async function syncEmployees(): Promise<{
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
 
-  const empResponse = await fetch("https://api.xero.com/payroll.xro/1.0/Employees", {
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-      "Xero-Tenant-Id": tenantId,
-      "Accept": "application/json",
-    },
-  });
+  let allEmployees: any[] = [];
+  let page = 1;
+  let hasMore = true;
 
-  if (!empResponse.ok) {
-    const errorBody = await empResponse.text();
-    throw new Error(`Failed to fetch employees from Xero (${empResponse.status}): ${errorBody}`);
+  while (hasMore) {
+    const empResponse = await fetch(`https://api.xero.com/payroll.xro/1.0/Employees?page=${page}`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+
+    if (!empResponse.ok) {
+      const errorBody = await empResponse.text();
+      throw new Error(`Failed to fetch employees from Xero (${empResponse.status}): ${errorBody}`);
+    }
+
+    const empData = await empResponse.json() as { Employees?: any[] };
+    const batch = empData.Employees || [];
+    allEmployees = allEmployees.concat(batch);
+    hasMore = batch.length === 100;
+    page++;
   }
 
-  const empData = await empResponse.json() as { Employees?: any[] };
-  const employees = empData.Employees || [];
+  const employees = allEmployees;
 
   let calendarsMap: Record<string, string> = {};
   try {
@@ -460,7 +473,7 @@ async function fetchPayRunDetail(payRunId: string, accessToken: string, tenantId
   return null;
 }
 
-async function syncPayRunLines(payRunId: string, localPayRunId: string, accessToken: string, tenantId: string, errors: string[]): Promise<number> {
+async function syncPayRunLines(payRunId: string, localPayRunId: string, accessToken: string, tenantId: string, errors: string[], periodStart?: string | null): Promise<number> {
   const detail = await fetchPayRunDetail(payRunId, accessToken, tenantId);
   if (!detail || !detail.Payslips || !Array.isArray(detail.Payslips) || detail.Payslips.length === 0) {
     return 0;
@@ -489,7 +502,7 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
         ? String(slip.EarningsLines.reduce((sum: number, el: any) => sum + (el.Amount || 0), 0))
         : "0";
 
-      await storage.createPayRunLine({
+      const payRunLine = await storage.createPayRunLine({
         payRunId: localPayRunId,
         employeeId: employee.id,
         hoursWorked,
@@ -500,6 +513,113 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
         netPay: String(slip.NetPay || 0),
         status: "INCLUDED",
       });
+
+      const payslipDetailLines: InsertPayslipLine[] = [];
+
+      if (slip.EarningsLines && Array.isArray(slip.EarningsLines)) {
+        for (const el of slip.EarningsLines) {
+          payslipDetailLines.push({
+            payRunLineId: payRunLine.id,
+            lineType: "EARNINGS",
+            name: el.EarningsRateName || null,
+            xeroRateId: el.EarningsRateID || null,
+            units: el.NumberOfUnits != null ? String(el.NumberOfUnits) : null,
+            rate: el.RatePerUnit != null ? String(el.RatePerUnit) : null,
+            amount: String(el.Amount || 0),
+          });
+        }
+      }
+
+      if (slip.DeductionLines && Array.isArray(slip.DeductionLines)) {
+        for (const dl of slip.DeductionLines) {
+          payslipDetailLines.push({
+            payRunLineId: payRunLine.id,
+            lineType: "DEDUCTION",
+            name: dl.DeductionTypeName || null,
+            xeroRateId: dl.DeductionTypeID || null,
+            amount: String(dl.Amount || 0),
+          });
+        }
+      }
+
+      if (slip.SuperannuationLines && Array.isArray(slip.SuperannuationLines)) {
+        for (const sl of slip.SuperannuationLines) {
+          payslipDetailLines.push({
+            payRunLineId: payRunLine.id,
+            lineType: "SUPER",
+            name: sl.ContributionType || sl.SuperMembershipName || null,
+            xeroRateId: sl.SuperMembershipID || null,
+            amount: String(sl.Amount || 0),
+            percentage: sl.Percentage != null ? String(sl.Percentage) : null,
+          });
+        }
+      }
+
+      if (slip.ReimbursementLines && Array.isArray(slip.ReimbursementLines)) {
+        for (const rl of slip.ReimbursementLines) {
+          payslipDetailLines.push({
+            payRunLineId: payRunLine.id,
+            lineType: "REIMBURSEMENT",
+            name: rl.ReimbursementTypeName || rl.Description || null,
+            xeroRateId: rl.ReimbursementTypeID || null,
+            amount: String(rl.Amount || 0),
+          });
+        }
+      }
+
+      if (slip.TaxLines && Array.isArray(slip.TaxLines)) {
+        for (const tl of slip.TaxLines) {
+          payslipDetailLines.push({
+            payRunLineId: payRunLine.id,
+            lineType: "TAX",
+            name: tl.TaxTypeName || tl.Description || null,
+            amount: String(tl.Amount || 0),
+          });
+        }
+      }
+
+      if (slip.LeaveAccrualLines && Array.isArray(slip.LeaveAccrualLines)) {
+        for (const ll of slip.LeaveAccrualLines) {
+          payslipDetailLines.push({
+            payRunLineId: payRunLine.id,
+            lineType: "LEAVE",
+            name: ll.LeaveTypeName || null,
+            xeroRateId: ll.LeaveTypeID || null,
+            units: ll.NumberOfUnits != null ? String(ll.NumberOfUnits) : null,
+            amount: String(ll.Amount || 0),
+          });
+        }
+      }
+
+      if (payslipDetailLines.length > 0) {
+        await storage.createPayslipLines(payslipDetailLines);
+      }
+
+      if (ratePerHour !== "0" && parseFloat(ratePerHour) > 0) {
+        try {
+          const latestRate = await storage.getLatestRateHistory(employee.id);
+          const currentPayRate = parseFloat(ratePerHour);
+          const lastKnownRate = latestRate ? parseFloat(latestRate.payRate) : null;
+
+          if (lastKnownRate === null || Math.abs(currentPayRate - lastKnownRate) >= 0.01) {
+            const effectiveDate = periodStart || new Date().toISOString().split("T")[0];
+            const dateObj = new Date(effectiveDate);
+            const superPercent = getSuperRate(dateObj);
+            const chargeOut = calculateChargeOutFromPayRate(currentPayRate, superPercent);
+
+            await storage.createRateHistory({
+              employeeId: employee.id,
+              effectiveDate,
+              payRate: String(currentPayRate),
+              chargeOutRate: String(chargeOut.toFixed(2)),
+              superPercent: String(superPercent),
+              source: "PAYROLL_SYNC",
+              payRunId: localPayRunId,
+            });
+          }
+        } catch {}
+      }
+
       lineCount++;
     } catch (lineErr: any) {
       errors.push(`Error syncing payslip for employee ${slip.EmployeeID}: ${lineErr.message}`);
@@ -535,21 +655,32 @@ export async function syncPayRuns(): Promise<{
     }
   } catch {}
 
-  const response = await fetch("https://api.xero.com/payroll.xro/1.0/PayRuns", {
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-      "Xero-Tenant-Id": tenantId,
-      "Accept": "application/json",
-    },
-  });
+  let allPayRuns: any[] = [];
+  let prPage = 1;
+  let prHasMore = true;
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Failed to fetch pay runs from Xero (${response.status}): ${errorBody}`);
+  while (prHasMore) {
+    const response = await fetch(`https://api.xero.com/payroll.xro/1.0/PayRuns?page=${prPage}`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Failed to fetch pay runs from Xero (${response.status}): ${errorBody}`);
+    }
+
+    const data = await response.json() as { PayRuns?: any[] };
+    const batch = data.PayRuns || [];
+    allPayRuns = allPayRuns.concat(batch);
+    prHasMore = batch.length === 100;
+    prPage++;
   }
 
-  const data = await response.json() as { PayRuns?: any[] };
-  const payRuns = data.PayRuns || [];
+  const payRuns = allPayRuns;
 
   let created = 0;
   let updated = 0;
@@ -583,6 +714,9 @@ export async function syncPayRuns(): Promise<{
       if (existing) {
         await storage.updatePayRun(existing.id, {
           status: localStatus,
+          periodStart,
+          periodEnd,
+          paymentDate: payDate,
           totalGross: String(pr.Wages || 0),
           totalPayg: String(pr.Tax || 0),
           totalSuper: String(pr.Super || 0),
@@ -592,7 +726,7 @@ export async function syncPayRuns(): Promise<{
         });
 
         if (pr.PayRunID) {
-          await syncPayRunLines(pr.PayRunID, existing.id, accessToken, tenantId, errors);
+          await syncPayRunLines(pr.PayRunID, existing.id, accessToken, tenantId, errors, periodStart);
         }
 
         updated++;
@@ -616,7 +750,7 @@ export async function syncPayRuns(): Promise<{
         });
 
         if (pr.PayRunID) {
-          await syncPayRunLines(pr.PayRunID, newPayRun.id, accessToken, tenantId, errors);
+          await syncPayRunLines(pr.PayRunID, newPayRun.id, accessToken, tenantId, errors, periodStart);
         }
 
         created++;
@@ -641,21 +775,32 @@ export async function syncTimesheets(): Promise<{
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
 
-  const response = await fetch("https://api.xero.com/payroll.xro/1.0/Timesheets", {
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-      "Xero-Tenant-Id": tenantId,
-      "Accept": "application/json",
-    },
-  });
+  let allTimesheets: any[] = [];
+  let tsPage = 1;
+  let tsHasMore = true;
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Failed to fetch timesheets from Xero (${response.status}): ${errorBody}`);
+  while (tsHasMore) {
+    const response = await fetch(`https://api.xero.com/payroll.xro/1.0/Timesheets?page=${tsPage}`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Failed to fetch timesheets from Xero (${response.status}): ${errorBody}`);
+    }
+
+    const data = await response.json() as { Timesheets?: any[] };
+    const batch = data.Timesheets || [];
+    allTimesheets = allTimesheets.concat(batch);
+    tsHasMore = batch.length === 100;
+    tsPage++;
   }
 
-  const data = await response.json() as { Timesheets?: any[] };
-  const xeroTimesheets = data.Timesheets || [];
+  const xeroTimesheets = allTimesheets;
 
   let created = 0;
   let updated = 0;
@@ -923,6 +1068,16 @@ export async function syncInvoices(): Promise<{
         existing = await storage.getInvoiceByXeroId(xeroInvoiceId);
       }
 
+      let totalHours: string | undefined;
+      let hourlyRateVal: string | undefined;
+      let descriptionVal: string | undefined;
+      if (inv.LineItems && inv.LineItems.length > 0) {
+        const firstLine = inv.LineItems[0];
+        if (firstLine.Quantity) totalHours = String(firstLine.Quantity);
+        if (firstLine.UnitAmount) hourlyRateVal = String(firstLine.UnitAmount);
+        if (firstLine.Description) descriptionVal = firstLine.Description;
+      }
+
       if (existing) {
         await storage.updateInvoice(existing.id, {
           contactName: contactName || existing.contactName,
@@ -932,18 +1087,17 @@ export async function syncInvoices(): Promise<{
           amountExclGst: String(amountExclGst),
           gstAmount: String(gstAmount),
           amountInclGst: String(amountInclGst),
+          issueDate: invoiceDate,
+          dueDate: dueDate || existing.dueDate,
           paidDate: localStatus === "PAID" ? (parseXeroDate(inv.FullyPaidOnDate) || existing.paidDate) : existing.paidDate,
+          hours: totalHours || existing.hours,
+          hourlyRate: hourlyRateVal || existing.hourlyRate,
+          description: descriptionVal || inv.Reference || existing.description,
+          year,
+          month,
         });
         updated++;
       } else {
-        let totalHours: string | undefined;
-        let hourlyRate: string | undefined;
-        if (inv.LineItems && inv.LineItems.length > 0) {
-          const firstLine = inv.LineItems[0];
-          if (firstLine.Quantity) totalHours = String(firstLine.Quantity);
-          if (firstLine.UnitAmount) hourlyRate = String(firstLine.UnitAmount);
-        }
-
         await storage.createInvoice({
           employeeId: employee?.id || null,
           contactName: contactName || null,
@@ -955,8 +1109,8 @@ export async function syncInvoices(): Promise<{
           gstAmount: String(gstAmount),
           amountInclGst: String(amountInclGst),
           hours: totalHours,
-          hourlyRate,
-          description: inv.Reference || `${contactName} - ${inv.InvoiceNumber || "Invoice"}`,
+          hourlyRate: hourlyRateVal,
+          description: descriptionVal || inv.Reference || `${contactName} - ${inv.InvoiceNumber || "Invoice"}`,
           issueDate: invoiceDate,
           dueDate,
           paidDate: localStatus === "PAID" ? parseXeroDate(inv.FullyPaidOnDate) : null,
@@ -1022,6 +1176,21 @@ export async function syncContacts(): Promise<{
       const isCustomer = contact.IsCustomer === true;
       const isSupplier = contact.IsSupplier === true;
 
+      let addressLine1: string | null = null;
+      let city: string | null = null;
+      let region: string | null = null;
+      let postalCode: string | null = null;
+      let country: string | null = null;
+      const addr = contact.Addresses?.find((a: any) => a.AddressType === "STREET") ||
+                   contact.Addresses?.find((a: any) => a.AddressType === "POBOX");
+      if (addr) {
+        addressLine1 = addr.AddressLine1 || null;
+        city = addr.City || null;
+        region = addr.Region || null;
+        postalCode = addr.PostalCode || null;
+        country = addr.Country || null;
+      }
+
       const existing = await storage.getClientByXeroId(xeroContactId);
 
       if (existing) {
@@ -1031,6 +1200,11 @@ export async function syncContacts(): Promise<{
           phone,
           isCustomer,
           isSupplier,
+          addressLine1,
+          city,
+          region,
+          postalCode,
+          country,
         });
         updated++;
       } else {
@@ -1041,6 +1215,11 @@ export async function syncContacts(): Promise<{
           phone,
           isCustomer,
           isSupplier,
+          addressLine1,
+          city,
+          region,
+          postalCode,
+          country,
         });
         created++;
       }

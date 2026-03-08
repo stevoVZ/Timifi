@@ -18,7 +18,7 @@ import {
   DollarSign, Clock, Pencil, Check, X, AlertTriangle, FileText,
   Receipt, User, Upload, CloudUpload, Trash2, Eye, FileBadge,
   Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File, Lock, RefreshCw,
-  TrendingUp, CheckCircle, AlertCircle, CircleDollarSign,
+  TrendingUp, CheckCircle, AlertCircle, CircleDollarSign, Percent, History,
 } from "lucide-react";
 import type { Employee, Timesheet, Invoice, Document, Client, Placement } from "@shared/schema";
 
@@ -420,6 +420,21 @@ export default function EmployeeDetailPage() {
                       isPending={updateMutation.isPending}
                       testId="text-pay-rate"
                     />
+                    <EditableField
+                      icon={Percent}
+                      label="Payroll Service Fee %"
+                      field="payrollFeePercent"
+                      value={employee.payrollFeePercent ? `${parseFloat(employee.payrollFeePercent).toFixed(2)}%` : "0%"}
+                      rawValue={employee.payrollFeePercent || "0"}
+                      editingField={editingField}
+                      editValues={editValues}
+                      setEditValues={setEditValues}
+                      onStartEdit={startEdit}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      isPending={updateMutation.isPending}
+                      testId="text-payroll-fee-percent"
+                    />
                   </div>
                   {(employee.chargeOutRate || employee.hourlyRate) && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 p-3 rounded-lg bg-muted/50 border border-border">
@@ -514,7 +529,7 @@ export default function EmployeeDetailPage() {
             </TabsContent>
 
             <TabsContent value="financials" className="mt-4">
-              <FinancialsTab reconciliation={reconciliation || []} />
+              <FinancialsTab reconciliation={reconciliation || []} employeeId={id!} />
             </TabsContent>
 
             <TabsContent value="documents" className="mt-4">
@@ -529,7 +544,16 @@ export default function EmployeeDetailPage() {
 
 const FULL_MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-function FinancialsTab({ reconciliation }: { reconciliation: ReconciliationPeriod[] }) {
+function FinancialsTab({ reconciliation, employeeId }: { reconciliation: ReconciliationPeriod[]; employeeId: string }) {
+  const { data: rateHistory } = useQuery<any[]>({
+    queryKey: ["/api/employees", employeeId, "rate-history"],
+    queryFn: async () => {
+      const res = await fetch(`/api/employees/${employeeId}/rate-history`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
   const totalTimesheetHours = reconciliation.reduce((s, p) => s + p.timesheetHours, 0);
   const totalInvoiced = reconciliation.reduce((s, p) => s + p.invoicedAmount, 0);
   const totalPaid = reconciliation.reduce((s, p) => s + p.paidAmount, 0);
@@ -649,6 +673,48 @@ function FinancialsTab({ reconciliation }: { reconciliation: ReconciliationPerio
           )}
         </CardContent>
       </Card>
+
+      {rateHistory && rateHistory.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <History className="w-4 h-4" />
+              Rate History
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="table-rate-history">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Effective Date</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Pay Rate</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Charge-Out (Ex GST)</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Super %</th>
+                    <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rateHistory.map((rh: any, idx: number) => (
+                    <tr key={rh.id} className={`border-b border-border/50 ${idx === 0 ? "bg-blue-50/50 dark:bg-blue-900/20" : ""}`} data-testid={`row-rate-history-${idx}`}>
+                      <td className="py-2.5 px-2 text-foreground">
+                        {rh.effectiveDate ? new Date(rh.effectiveDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : "—"}
+                        {idx === 0 && <Badge variant="outline" className="ml-2 text-[9px] px-1 py-0 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">Current</Badge>}
+                      </td>
+                      <td className="py-2.5 px-2 text-right font-mono text-foreground">${parseFloat(rh.payRate).toFixed(2)}/hr</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-foreground">{rh.chargeOutRate ? `$${parseFloat(rh.chargeOutRate).toFixed(2)}/hr` : "—"}</td>
+                      <td className="py-2.5 px-2 text-right font-mono text-foreground">{rh.superPercent ? `${parseFloat(rh.superPercent).toFixed(1)}%` : "—"}</td>
+                      <td className="py-2.5 px-2">
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">{rh.source}</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

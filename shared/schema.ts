@@ -46,6 +46,7 @@ export const employees = pgTable("employees", {
   companyName: text("company_name"),
   abn: text("abn"),
   paymentMethod: paymentMethodEnum("payment_method").notNull().default("PAYROLL"),
+  payrollFeePercent: numeric("payroll_fee_percent", { precision: 5, scale: 2 }).default("0"),
   xeroEmployeeId: text("xero_employee_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -244,6 +245,8 @@ export const superMemberships = pgTable("super_memberships", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const payslipLineTypeEnum = pgEnum("payslip_line_type", ["EARNINGS", "DEDUCTION", "SUPER", "REIMBURSEMENT", "TAX", "LEAVE"]);
+
 export const placementStatusEnum = pgEnum("placement_status", ["ACTIVE", "ENDED"]);
 export const bankTxnTypeEnum = pgEnum("bank_txn_type", ["RECEIVE", "SPEND"]);
 
@@ -255,6 +258,11 @@ export const clients = pgTable("clients", {
   phone: text("phone"),
   isCustomer: boolean("is_customer").notNull().default(false),
   isSupplier: boolean("is_supplier").notNull().default(false),
+  addressLine1: text("address_line1"),
+  city: text("city"),
+  region: text("region"),
+  postalCode: text("postal_code"),
+  country: text("country"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -268,6 +276,7 @@ export const placements = pgTable("placements", {
   endDate: date("end_date"),
   chargeOutRate: numeric("charge_out_rate", { precision: 10, scale: 2 }),
   payRate: numeric("pay_rate", { precision: 10, scale: 2 }),
+  payrollFeePercent: numeric("payroll_fee_percent", { precision: 5, scale: 2 }).default("0"),
   status: placementStatusEnum("status").notNull().default("ACTIVE"),
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -290,6 +299,32 @@ export const bankTransactions = pgTable("bank_transactions", {
   isReconciled: boolean("is_reconciled").notNull().default(false),
   month: smallint("month").notNull(),
   year: smallint("year").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const payslipLines = pgTable("payslip_lines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  payRunLineId: varchar("pay_run_line_id").notNull().references(() => payRunLines.id),
+  lineType: payslipLineTypeEnum("line_type").notNull(),
+  name: text("name"),
+  xeroRateId: text("xero_rate_id"),
+  units: numeric("units", { precision: 10, scale: 4 }),
+  rate: numeric("rate", { precision: 10, scale: 4 }),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  percentage: numeric("percentage", { precision: 6, scale: 4 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const rateHistory = pgTable("rate_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
+  effectiveDate: date("effective_date").notNull(),
+  payRate: numeric("pay_rate", { precision: 10, scale: 2 }).notNull(),
+  chargeOutRate: numeric("charge_out_rate", { precision: 10, scale: 2 }),
+  superPercent: numeric("super_percent", { precision: 5, scale: 2 }),
+  source: text("source").notNull().default("PAYROLL_SYNC"),
+  payRunId: varchar("pay_run_id").references(() => payRuns.id),
+  notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -390,6 +425,16 @@ export const insertBankTransactionSchema = createInsertSchema(bankTransactions).
   createdAt: true,
 });
 
+export const insertPayslipLineSchema = createInsertSchema(payslipLines).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertRateHistorySchema = createInsertSchema(rateHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type Client = typeof clients.$inferSelect;
 export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Placement = typeof placements.$inferSelect;
@@ -427,3 +472,7 @@ export type PayRunLine = typeof payRunLines.$inferSelect;
 export type InsertPayRunLine = z.infer<typeof insertPayRunLineSchema>;
 export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+export type PayslipLine = typeof payslipLines.$inferSelect;
+export type InsertPayslipLine = z.infer<typeof insertPayslipLineSchema>;
+export type RateHistory = typeof rateHistory.$inferSelect;
+export type InsertRateHistory = z.infer<typeof insertRateHistorySchema>;

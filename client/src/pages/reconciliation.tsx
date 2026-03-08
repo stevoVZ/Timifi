@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Users, Clock, FileText, CreditCard, CheckCircle, XCircle, AlertTriangle,
-  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown, DollarSign,
+  ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown, DollarSign, Percent,
 } from "lucide-react";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -23,17 +23,18 @@ interface ReconciliationRow {
     hourlyRate: string | null;
     chargeOutRate: string | null;
     paymentMethod: string | null;
+    payrollFeePercent: string | null;
   };
   timesheet: { hours: number; status: string; grossValue: number } | null;
   invoice: { amount: number; amountExGst: number; invoiceNumber: string | null; status: string; paidDate: string | null } | null;
   payroll: { grossEarnings: number; netPay: number; hoursWorked: number; payRunStatus: string | null } | null;
-  financials: { expectedRevenue: number; employeeCost: number; margin: number; marginPercent: number };
+  financials: { expectedRevenue: number; employeeCost: number; margin: number; marginPercent: number; payrollFeeRevenue: number };
 }
 
 interface ReconciliationData {
   employees: ReconciliationRow[];
   cashFlow: { cashIn: number; cashOut: number; netCashFlow: number };
-  totals: { totalRevenue: number; totalCost: number; totalMargin: number };
+  totals: { totalRevenue: number; totalCost: number; totalMargin: number; totalPayrollFeeRevenue: number };
 }
 
 function StatusIcon({ status, type }: { status: "complete" | "partial" | "missing"; type: string }) {
@@ -94,7 +95,7 @@ export default function ReconciliationPage() {
 
   const rows = data?.employees || [];
   const cashFlow = data?.cashFlow || { cashIn: 0, cashOut: 0, netCashFlow: 0 };
-  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalMargin: 0 };
+  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalMargin: 0, totalPayrollFeeRevenue: 0 };
   const total = rows.length;
   const tsReceived = rows.filter((r) => r.timesheet).length;
   const tsApproved = rows.filter((r) => r.timesheet?.status === "APPROVED").length;
@@ -208,7 +209,7 @@ export default function ReconciliationPage() {
             ))}
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
             <div className="p-3.5 rounded-lg border bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800" data-testid="kpi-revenue">
               <div className="flex items-center gap-2 mb-1">
                 <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -232,6 +233,14 @@ export default function ReconciliationPage() {
               </div>
               <div className={`text-xl font-bold ${totals.totalMargin >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>{fmtCurrency(totals.totalMargin)}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">{marginPercent}% margin</div>
+            </div>
+            <div className="p-3.5 rounded-lg border bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-800" data-testid="kpi-payroll-fee">
+              <div className="flex items-center gap-2 mb-1">
+                <Percent className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                <span className="text-[11px] font-medium text-muted-foreground">Payroll Fee Revenue</span>
+              </div>
+              <div className="text-xl font-bold text-violet-600 dark:text-violet-400">{fmtCurrency(totals.totalPayrollFeeRevenue)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">1.4-2% of gross payroll</div>
             </div>
             <div className={`p-3.5 rounded-lg border ${cashFlow.netCashFlow >= 0 ? "bg-sky-50 dark:bg-sky-900/30 border-sky-200 dark:border-sky-800" : "bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-800"}`} data-testid="kpi-cashflow">
               <div className="flex items-center gap-2 mb-1">
@@ -291,6 +300,7 @@ export default function ReconciliationPage() {
                         <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Revenue</th>
                         <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Cost</th>
                         <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Margin</th>
+                        <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden lg:table-cell">Payroll Fee</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -389,6 +399,14 @@ export default function ReconciliationPage() {
                                 ) : "—"}
                               </div>
                             </td>
+                            <td className="py-3 px-2 hidden lg:table-cell">
+                              <div className="text-right font-mono text-xs font-semibold text-violet-700 dark:text-violet-400">
+                                {row.financials.payrollFeeRevenue > 0 ? fmtCurrency(row.financials.payrollFeeRevenue) : "—"}
+                                {row.employee.payrollFeePercent && parseFloat(row.employee.payrollFeePercent) > 0 && (
+                                  <div className="text-[10px] text-muted-foreground font-normal">{parseFloat(row.employee.payrollFeePercent).toFixed(1)}%</div>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                         );
                       })}
@@ -398,6 +416,7 @@ export default function ReconciliationPage() {
                           <td className="py-3 px-2 hidden md:table-cell text-right font-mono text-xs text-emerald-700 dark:text-emerald-400">{fmtCurrency(totals.totalRevenue)}</td>
                           <td className="py-3 px-2 hidden md:table-cell text-right font-mono text-xs text-red-600 dark:text-red-400">{fmtCurrency(totals.totalCost)}</td>
                           <td className="py-3 px-2 hidden md:table-cell text-right font-mono text-xs text-green-700 dark:text-green-400">{fmtCurrency(totals.totalMargin)}<div className="text-[10px] text-muted-foreground font-normal">{marginPercent}%</div></td>
+                          <td className="py-3 px-2 hidden lg:table-cell text-right font-mono text-xs text-violet-700 dark:text-violet-400">{fmtCurrency(totals.totalPayrollFeeRevenue)}</td>
                         </tr>
                       )}
                     </tbody>
