@@ -1610,45 +1610,82 @@ export async function registerRoutes(
 
   app.post("/api/invoices/auto-link", async (_req, res) => {
     try {
-      const [allPlacements, allInvoices, allEmployees] = await Promise.all([
+      const [allPlacements, allInvoices, allEmployees, clients] = await Promise.all([
         storage.getAllPlacements(),
         storage.getInvoices(),
         storage.getEmployees(),
+        storage.getClients(),
       ]);
 
       const linkablePlacements = allPlacements.filter(p => p.status === "ACTIVE" || p.status === "ENDED");
-      const clients = await storage.getClients();
-      let linked = 0;
+      let linkedByRate = 0;
+      let linkedByName = 0;
       const claimedInvoiceIds = new Set<string>();
 
+      const placementsByClient = new Map<string, Array<{ employeeId: string; rate: number; employee: typeof allEmployees[0] }>>();
       for (const placement of linkablePlacements) {
         const employee = allEmployees.find(e => e.id === placement.employeeId);
         if (!employee) continue;
-
         const client = clients.find(c => c.id === placement.clientId);
         if (!client) continue;
-
         const rate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
-        if (rate === 0) continue;
+        if (!placementsByClient.has(client.name)) {
+          placementsByClient.set(client.name, []);
+        }
+        placementsByClient.get(client.name)!.push({ employeeId: employee.id, rate, employee });
+      }
 
-        const matchingInvoices = allInvoices.filter(inv => {
-          if (inv.employeeId) return false;
-          if (claimedInvoiceIds.has(inv.id)) return false;
-          if (inv.contactName !== client.name) return false;
-          const invRate = inv.hours && parseFloat(inv.hours) > 0
-            ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
-            : 0;
-          return Math.abs(invRate - rate) < 0.01;
+      for (const inv of allInvoices) {
+        if (inv.employeeId) continue;
+        if (claimedInvoiceIds.has(inv.id)) continue;
+
+        const clientPlacements = placementsByClient.get(inv.contactName || "");
+        if (!clientPlacements || clientPlacements.length === 0) continue;
+
+        const invRate = inv.hours && parseFloat(inv.hours) > 0
+          ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
+          : 0;
+        const rateMatches = invRate > 0
+          ? clientPlacements.filter(p => p.rate > 0 && Math.abs(invRate - p.rate) < 0.01)
+          : [];
+
+        if (rateMatches.length === 1) {
+          claimedInvoiceIds.add(inv.id);
+          await storage.updateInvoice(inv.id, { employeeId: rateMatches[0].employeeId });
+          await storage.setInvoiceEmployees(inv.id, [rateMatches[0].employeeId]);
+          linkedByRate++;
+          continue;
+        }
+
+        const desc = (inv.description || "").toLowerCase();
+        if (!desc) continue;
+        const wordBoundaryMatch = (text: string, term: string) => {
+          if (term.length < 2) return false;
+          const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+        };
+        const nameMatches = clientPlacements.filter(p => {
+          const first = (p.employee.firstName || "").toLowerCase().trim();
+          const last = (p.employee.lastName || "").toLowerCase().trim();
+          if (!first || !last || last.length < 3) return false;
+          return wordBoundaryMatch(desc, last) && wordBoundaryMatch(desc, first);
         });
 
-        for (const inv of matchingInvoices) {
+        if (nameMatches.length === 1) {
           claimedInvoiceIds.add(inv.id);
-          await storage.updateInvoice(inv.id, { employeeId: employee.id });
-          linked++;
+          await storage.updateInvoice(inv.id, { employeeId: nameMatches[0].employeeId });
+          await storage.setInvoiceEmployees(inv.id, [nameMatches[0].employeeId]);
+          linkedByName++;
         }
       }
 
-      res.json({ linked, message: `Auto-linked ${linked} invoices to employees` });
+      const total = linkedByRate + linkedByName;
+      res.json({
+        linked: total,
+        linkedByRate,
+        linkedByName,
+        message: `Auto-linked ${total} invoices (${linkedByRate} by rate, ${linkedByName} by employee name in description)`,
+      });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to auto-link invoices" });
     }
