@@ -23,6 +23,7 @@ Labour hire agency management portal for employees, timesheets, invoicing, and p
 - **Payroll**: Defaults to most recent pay run month (not current calendar month)
 - **Notifications**: Priority-based notification center with filtering by type/priority, mark read/unread
 - **Settings**: Tabbed settings page (Branding, Company, Payroll, Xero, Portal, Users)
+- **Reconciliation** (`/reconciliation`): Monthly bird's-eye view of all active employees. Month/year selector, KPI strip (employees, timesheets received, invoices raised/paid, payroll complete), per-employee table with status icons (green check, amber warning, red X) for timesheet/invoice/payroll, progress bars. Links to employee detail pages.
 - **Pay Items**: Pay codes/items management
 - **Xero Integration**: OAuth2 connection to Xero Payroll AU + Accounting API. Organisation (tenant) picker for multi-org support. Individual sync for: Employees, Pay Runs, Timesheets, Invoices, Payroll Settings. Sync All button. Xero-synced employees show badge and locked fields.
 
@@ -50,6 +51,7 @@ client/src/
     payroll.tsx               - Pay run overview
     payroll-detail.tsx        - Pay run detail with employee pay lines
     invoices.tsx              - Invoice management
+    reconciliation.tsx        - Monthly reconciliation dashboard
     leave.tsx                 - Leave request management (admin)
     pay-items.tsx             - Pay items/pay codes management
     notifications.tsx         - Notification center with filters
@@ -82,6 +84,7 @@ shared/
 - `GET /api/messages/employee/:employeeId` - Messages by employee
 - `GET /api/invoices/employee/:employeeId` - Invoices by employee
 - `GET /api/leave/employee/:employeeId` - Leave requests by employee
+- `GET /api/reconciliation?month=X&year=Y` - Monthly reconciliation across all active employees
 - `GET /api/portal/employee/:employeeId/stats` - Portal dashboard stats
 - `GET /api/portal/employee/:employeeId/tax|bank|super` - Portal onboarding data
 

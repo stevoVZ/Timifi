@@ -525,6 +525,98 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/reconciliation", async (req, res) => {
+    try {
+      const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+
+      if (month < 1 || month > 12 || year < 2000 || year > 2100) {
+        return res.status(400).json({ message: "Invalid month or year" });
+      }
+
+      const [allEmployees, allTimesheets, allInvoices, allPayRuns] = await Promise.all([
+        storage.getEmployees(),
+        storage.getTimesheets(),
+        storage.getInvoices(),
+        storage.getPayRuns(),
+      ]);
+
+      const activeEmployees = allEmployees.filter((e) => e.status === "ACTIVE");
+
+      const periodPayRuns = allPayRuns.filter((pr) => pr.month === month && pr.year === year);
+
+      let allPayRunLines: { line: any; payRun: typeof periodPayRuns[0] }[] = [];
+      for (const pr of periodPayRuns) {
+        const lines = await storage.getPayRunLines(pr.id);
+        for (const line of lines) {
+          allPayRunLines.push({ line, payRun: pr });
+        }
+      }
+
+      const statusPriority: Record<string, number> = { FILED: 3, REVIEW: 2, DRAFT: 1 };
+
+      const result = activeEmployees.map((emp) => {
+        const ts = allTimesheets.find(
+          (t) => t.employeeId === emp.id && t.month === month && t.year === year
+        );
+        const inv = allInvoices.find(
+          (i) => i.employeeId === emp.id && i.month === month && i.year === year
+        );
+        const empPayLines = allPayRunLines
+          .filter((pl) => pl.line.employeeId === emp.id)
+          .sort((a, b) => (statusPriority[b.payRun.status] || 0) - (statusPriority[a.payRun.status] || 0));
+        const best = empPayLines[0] || null;
+        const payLine = best?.line;
+        const payRun = best?.payRun;
+
+        return {
+          employee: {
+            id: emp.id,
+            firstName: emp.firstName,
+            lastName: emp.lastName,
+            clientName: emp.clientName,
+            hourlyRate: emp.hourlyRate,
+            paymentMethod: emp.paymentMethod,
+          },
+          timesheet: ts
+            ? {
+                hours: parseFloat(ts.totalHours || "0"),
+                status: ts.status,
+                grossValue: parseFloat(ts.grossValue || "0"),
+              }
+            : null,
+          invoice: inv
+            ? {
+                amount: parseFloat(inv.amountInclGst || "0"),
+                amountExGst: parseFloat(inv.amountExclGst || "0"),
+                invoiceNumber: inv.invoiceNumber,
+                status: inv.status,
+                paidDate: inv.paidDate,
+              }
+            : null,
+          payroll: payLine
+            ? {
+                grossEarnings: parseFloat(payLine.grossEarnings || "0"),
+                netPay: parseFloat(payLine.netPay || "0"),
+                hoursWorked: parseFloat(payLine.hoursWorked || "0"),
+                payRunStatus: payRun?.status || null,
+              }
+            : null,
+        };
+      });
+
+      result.sort((a, b) =>
+        `${a.employee.firstName} ${a.employee.lastName}`.localeCompare(
+          `${b.employee.firstName} ${b.employee.lastName}`
+        )
+      );
+
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to build reconciliation data" });
+    }
+  });
+
   app.post("/api/portal/login", async (req, res) => {
     try {
       const { email } = req.body;

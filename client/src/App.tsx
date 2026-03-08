@@ -25,6 +25,7 @@ import PortalMessagesPage from "@/pages/portal/portal-messages";
 import PortalOnboardingPage from "@/pages/portal/portal-onboarding";
 import PortalLeavePage from "@/pages/portal/portal-leave";
 import PayItemsPage from "@/pages/pay-items";
+import ReconciliationPage from "@/pages/reconciliation";
 
 function useAuth() {
   return useQuery<{ id: string; username: string } | null>({
@@ -46,6 +47,7 @@ function AdminRouter() {
       <Route path="/payroll/:id" component={PayrollDetailPage} />
       <Route path="/payroll" component={PayrollPage} />
       <Route path="/invoices" component={InvoicesPage} />
+      <Route path="/reconciliation" component={ReconciliationPage} />
       <Route path="/pay-items" component={PayItemsPage} />
       <Route path="/notifications" component={NotificationsPage} />
       <Route path="/settings" component={SettingsPage} />

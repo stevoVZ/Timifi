@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { StatusBadge } from "@/components/status-badge";
@@ -420,9 +420,6 @@ function UploadView() {
     const r = currentReview.result!;
     const assignedEmp = activeEmployees.find((e) => e.id === currentReview.assignedEmployeeId);
     const confColor = r.confidence >= 90 ? "text-green-600" : r.confidence >= 70 ? "text-amber-600" : "text-red-600";
-    const pdfSrc = currentReview.fileBase64
-      ? currentReview.fileBase64.startsWith("data:") ? currentReview.fileBase64 : `data:application/pdf;base64,${currentReview.fileBase64}`
-      : null;
 
     return (
       <div className="space-y-3">
@@ -457,29 +454,8 @@ function UploadView() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ minHeight: "65vh" }}>
-          <Card className="flex flex-col overflow-hidden">
-            <div className="p-3 border-b border-border bg-muted/50 flex items-center justify-between">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                <span className="text-sm font-semibold text-foreground truncate" data-testid="text-review-filename">{currentReview.file.name}</span>
-              </div>
-              <span className="text-xs text-muted-foreground flex-shrink-0">{(currentReview.file.size / 1024).toFixed(0)} KB</span>
-            </div>
-            <div className="flex-1 min-h-0 bg-muted">
-              {pdfSrc ? (
-                <iframe
-                  src={pdfSrc}
-                  className="w-full h-full"
-                  title={currentReview.file.name}
-                  data-testid="iframe-review-pdf"
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                  PDF preview not available
-                </div>
-              )}
-            </div>
-          </Card>
+          <ReviewPdfPanel item={currentReview} />
+
 
           <div className="flex flex-col gap-3">
             <Card>
@@ -869,6 +845,63 @@ function DropZone({
   );
 }
 
+function ReviewPdfPanel({ item }: { item: QueueItem }) {
+  const blobUrl = useBase64BlobUrl(item.fileBase64);
+  return (
+    <Card className="flex flex-col overflow-hidden">
+      <div className="p-3 border-b border-border bg-muted/50 flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          <span className="text-sm font-semibold text-foreground truncate" data-testid="text-review-filename">{item.file.name}</span>
+        </div>
+        <span className="text-xs text-muted-foreground flex-shrink-0">{(item.file.size / 1024).toFixed(0)} KB</span>
+      </div>
+      <div className="flex-1 min-h-0 bg-muted">
+        {blobUrl ? (
+          <iframe
+            src={blobUrl}
+            className="w-full h-full"
+            title={item.file.name}
+            data-testid="iframe-review-pdf"
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+            {item.fileBase64 ? "Loading PDF..." : "PDF preview not available"}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function useBase64BlobUrl(base64Data: string | null): string | null {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!base64Data) {
+      setBlobUrl(null);
+      return;
+    }
+    try {
+      let raw = base64Data;
+      if (raw.startsWith("data:")) {
+        raw = raw.split(",")[1];
+      }
+      const bytes = atob(raw);
+      const arr = new Uint8Array(bytes.length);
+      for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+      const blob = new Blob([arr], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      setBlobUrl(url);
+      return () => URL.revokeObjectURL(url);
+    } catch {
+      setBlobUrl(null);
+    }
+  }, [base64Data]);
+
+  return blobUrl;
+}
+
 function PdfViewerDialog({
   open,
   onOpenChange,
@@ -880,8 +913,8 @@ function PdfViewerDialog({
   pdfData: string | null;
   title: string;
 }) {
+  const blobUrl = useBase64BlobUrl(open ? pdfData : null);
   if (!pdfData) return null;
-  const pdfSrc = pdfData.startsWith("data:") ? pdfData : `data:application/pdf;base64,${pdfData}`;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
@@ -893,12 +926,16 @@ function PdfViewerDialog({
           <DialogDescription>Review the uploaded timesheet PDF</DialogDescription>
         </DialogHeader>
         <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-border bg-muted">
-          <iframe
-            src={pdfSrc}
-            className="w-full h-full"
-            title={title}
-            data-testid="iframe-pdf-viewer"
-          />
+          {blobUrl ? (
+            <iframe
+              src={blobUrl}
+              className="w-full h-full"
+              title={title}
+              data-testid="iframe-pdf-viewer"
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Loading PDF...</div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
