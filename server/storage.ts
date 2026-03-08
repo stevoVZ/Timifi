@@ -56,6 +56,7 @@ export interface IStorage {
   deletePayRunLines(payRunId: string): Promise<void>;
 
   getDocuments(employeeId: string): Promise<Document[]>;
+  getDocumentsByTimesheetId(timesheetId: string): Promise<Document[]>;
   createDocument(data: InsertDocument): Promise<Document>;
   deleteDocument(id: string): Promise<void>;
 
@@ -279,6 +280,12 @@ export class DatabaseStorage implements IStorage {
   async getDocuments(employeeId: string): Promise<Document[]> {
     return db.select().from(documents)
       .where(eq(documents.employeeId, employeeId))
+      .orderBy(desc(documents.createdAt));
+  }
+
+  async getDocumentsByTimesheetId(timesheetId: string): Promise<Document[]> {
+    return db.select().from(documents)
+      .where(eq(documents.timesheetId, timesheetId))
       .orderBy(desc(documents.createdAt));
   }
 

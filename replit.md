@@ -17,7 +17,7 @@ Labour hire agency management portal for employees, timesheets, invoicing, and p
 - **Admin Login**: Username/password authentication required. Default credentials: admin/admin. Sessions stored in PostgreSQL.
 - **Dashboard**: KPI overview (active employees, total invoices, total paid, FY pay runs), recent invoices table (last 5), recent pay runs table (last 5), employees sidebar, quick actions (upload timesheets, view invoices, view payroll, add employee), YTD billings card, recent activity feed
 - **Employees** (`/employees`): KPI strip (Active/Pending/YTD Billings/Avg Rate), sortable table (name/rate/YTD hours/start date), search, filter by status, add new (full form + quick add), detail view with timesheet history
-- **Timesheets**: Two-tab layout (Upload/Submissions). Upload tab: drag-and-drop PDF zone with real AI-powered OCR (GPT-4o vision), employee + period pickers, intake source form, file queue with AI-extracted data (hours/confidence/weekly breakdown/employee name/signature detection), batch summary sidebar, duplicate detection. Submissions tab: existing timesheet list with status tabs, manual entry dialog, approve/reject workflow, intake source badges
+- **Timesheets**: Two-tab layout (Upload/Submissions). Upload tab: drag-and-drop PDF zone with real AI-powered OCR (GPT-4o vision), employee + period pickers, intake source form, file queue with AI-extracted data (hours/confidence/weekly breakdown/employee name/signature detection), batch summary sidebar, duplicate detection, auto-employee detection from OCR. PDF files saved as base64 documents linked to timesheets. Submissions tab: existing timesheet list with status tabs, manual entry dialog, approve/reject workflow, intake source badges, PDF viewer dialog for viewing uploaded timesheet documents
 - **Payroll**: Enhanced pay run management with employee-level pay lines (hours, rate, gross, PAYG, super, net), file workflow (Draft → Review → Filed), ABA direct entry file download, payslip generation, month navigation. Sortable table columns on both pay lines and pay run history tables.
 - **Invoices**: KPI strip (Total Billed, Outstanding, Paid, Voided), filter tabs including Voided tab, pending invoices from approved timesheets, create/send workflow. Table view with sortable columns matching Xero layout. Search filters table rows.
 - **Payroll**: Defaults to most recent pay run month (not current calendar month)
@@ -92,7 +92,7 @@ shared/
 - `invoices` - Invoice records with GST calculations and status tracking, nullable `employee_id`, `contact_name` for client org, `xero_invoice_id` for sync dedup
 - `pay_runs` - Payroll run records with PAYG/super breakdowns, period dates, payment date
 - `pay_run_lines` - Employee-level pay run detail lines with `employee_id` FK
-- `documents` - Employee documents with categories, `employee_id` FK
+- `documents` - Employee documents with categories, `employee_id` FK, optional `timesheet_id` FK for linking uploaded PDFs to timesheets
 - `notifications` - Admin notification center, optional `employee_id` FK
 - `messages` - Messaging between admin and employees, `employee_id` FK
 - `settings` - Key-value application settings (includes Xero OAuth tokens, tenant config)

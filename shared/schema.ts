@@ -15,7 +15,7 @@ export const notificationPriorityEnum = pgEnum("notification_priority", ["URGENT
 export const leaveTypeEnum = pgEnum("leave_type", ["ANNUAL", "SICK", "LONG_SERVICE", "PERSONAL", "COMPASSIONATE", "UNPAID", "PUBLIC_HOLIDAY"]);
 export const leaveStatusEnum = pgEnum("leave_status", ["PENDING", "APPROVED", "REJECTED", "CANCELLED"]);
 export const payRunLineStatusEnum = pgEnum("pay_run_line_status", ["INCLUDED", "EXCLUDED"]);
-export const documentTypeEnum = pgEnum("document_type", ["PAYSLIP", "CONTRACT", "CLEARANCE", "OTHER"]);
+export const documentTypeEnum = pgEnum("document_type", ["PAYSLIP", "CONTRACT", "CLEARANCE", "OTHER", "TIMESHEET"]);
 
 export const employees = pgTable("employees", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -130,6 +130,7 @@ export const payRunLines = pgTable("pay_run_lines", {
 export const documents = pgTable("documents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   employeeId: varchar("employee_id").notNull().references(() => employees.id),
+  timesheetId: varchar("timesheet_id").references(() => timesheets.id),
   type: documentTypeEnum("type").notNull().default("OTHER"),
   name: text("name").notNull(),
   category: text("category").notNull().default("Other"),

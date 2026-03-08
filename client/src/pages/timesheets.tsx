@@ -32,7 +32,7 @@ import {
   Mail, Upload, UserCheck, Monitor, Paperclip, ChevronDown, ChevronUp,
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus,
 } from "lucide-react";
-import type { Timesheet, Employee } from "@shared/schema";
+import type { Timesheet, Employee, Document as DocType } from "@shared/schema";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -55,6 +55,7 @@ const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 interface QueueItem {
   id: string;
   file: File;
+  fileBase64: string | null;
   status: "scanning" | "done" | "error";
   result: ScanResult | null;
   excluded: boolean;
@@ -173,6 +174,15 @@ function UploadView() {
     setQueue((q) => q.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }, []);
 
+  const readFileBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const addFiles = useCallback(async (files: FileList | null) => {
     if (!files) return;
     const pdfs = Array.from(files).filter((f) => f.type === "application/pdf");
@@ -186,7 +196,13 @@ function UploadView() {
       const id = uid();
       itemIds.push(id);
       queueCountRef.current++;
-      setQueue((q) => [...q, { id, file: f, status: "scanning", result: null, excluded: false }]);
+      setQueue((q) => [...q, { id, file: f, fileBase64: null, status: "scanning", result: null, excluded: false }]);
+    });
+
+    const base64Promises = pdfs.map(async (f, idx) => {
+      const b64 = await readFileBase64(f);
+      const id = itemIds[idx];
+      setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, fileBase64: b64 } : item)));
     });
 
     const formData = new FormData();
@@ -195,7 +211,10 @@ function UploadView() {
     formData.append("year", String(selectedYear));
 
     try {
-      const res = await fetch("/api/timesheets/scan", { method: "POST", body: formData, credentials: "include" });
+      const [res] = await Promise.all([
+        fetch("/api/timesheets/scan", { method: "POST", body: formData, credentials: "include" }),
+        ...base64Promises,
+      ]);
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ message: "Scan failed" }));
         throw new Error(errData.message || "Scan failed");
@@ -215,13 +234,29 @@ function UploadView() {
           setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "error", result: null } : item)));
         }
       });
+
+      if (!selectedEmployeeId && results.length > 0) {
+        const detectedName = results[0].employeeName;
+        if (detectedName && activeEmployees.length > 0) {
+          const lower = detectedName.toLowerCase();
+          const match = activeEmployees.find((e) => {
+            const full = `${e.firstName} ${e.lastName}`.toLowerCase();
+            return full === lower || lower.includes(e.firstName.toLowerCase()) && lower.includes(e.lastName.toLowerCase());
+          });
+          if (match) {
+            setSelectedEmployeeId(match.id);
+            setSenderEmail(match.email || "");
+            toast({ title: "Employee detected", description: `Auto-selected ${match.firstName} ${match.lastName} from scanned timesheet.` });
+          }
+        }
+      }
     } catch (err: any) {
       toast({ title: "Scan failed", description: err.message || "AI extraction failed", variant: "destructive" });
       itemIds.forEach((id) => {
         setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "error", result: null } : item)));
       });
     }
-  }, [selectedMonth, selectedYear, toast]);
+  }, [selectedMonth, selectedYear, toast, selectedEmployeeId, activeEmployees]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -255,7 +290,16 @@ function UploadView() {
     if (intakeNotes) notesObj.intakeNotes = intakeNotes;
     if (receivedDate) notesObj.receivedDate = receivedDate;
 
-    const payload = {
+    const filesPayload = doneActive
+      .filter((item) => item.fileBase64)
+      .map((item) => ({
+        name: item.result?.fileName || item.file.name,
+        data: item.fileBase64,
+        type: item.file.type || "application/pdf",
+        size: item.file.size,
+      }));
+
+    const payload: Record<string, any> = {
       employeeId: selectedEmployeeId,
       year: selectedYear,
       month: selectedMonth,
@@ -270,6 +314,10 @@ function UploadView() {
         : `Batch (${doneActive.length} files)`,
       notes: JSON.stringify(notesObj),
     };
+
+    if (filesPayload.length > 0) {
+      payload.files = filesPayload;
+    }
 
     createMutation.mutate(payload, {
       onSuccess: () => {
@@ -638,7 +686,7 @@ function IntakeForm({
               className="h-8 text-xs"
               value={senderEmail}
               onChange={(e) => setSenderEmail(e.target.value)}
-              placeholder="contractor@email.com"
+              placeholder="employee@email.com"
               data-testid="input-sender-email"
             />
           </div>
@@ -727,6 +775,42 @@ function DropZone({
   );
 }
 
+function PdfViewerDialog({
+  open,
+  onOpenChange,
+  pdfData,
+  title,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  pdfData: string | null;
+  title: string;
+}) {
+  if (!pdfData) return null;
+  const pdfSrc = pdfData.startsWith("data:") ? pdfData : `data:application/pdf;base64,${pdfData}`;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileText className="w-4 h-4" />
+            {title}
+          </DialogTitle>
+          <DialogDescription>Review the uploaded timesheet PDF</DialogDescription>
+        </DialogHeader>
+        <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-border bg-muted">
+          <iframe
+            src={pdfSrc}
+            className="w-full h-full"
+            title={title}
+            data-testid="iframe-pdf-viewer"
+          />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FileQueueCard({
   item, idx, expanded, onToggleExpand, onExclude, onRemove,
 }: {
@@ -737,10 +821,18 @@ function FileQueueCard({
   onExclude: () => void;
   onRemove: () => void;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const r = item.result;
   const confColor = !r ? "text-muted-foreground" : r.confidence >= 90 ? "text-green-600" : r.confidence >= 70 ? "text-amber-600" : "text-red-600";
 
   return (
+    <>
+    <PdfViewerDialog
+      open={previewOpen}
+      onOpenChange={setPreviewOpen}
+      pdfData={item.fileBase64}
+      title={item.file.name}
+    />
     <Card
       className={`transition-all ${item.excluded ? "opacity-45" : ""}`}
       style={{
@@ -772,6 +864,12 @@ function FileQueueCard({
                   <span> · </span>
                   <span className="font-semibold text-foreground">{r.totalHours}h</span>
                   <span> · {r.period}</span>
+                  {r.employeeName && (
+                    <>
+                      <span> · </span>
+                      <span className="text-primary font-medium">{r.employeeName}</span>
+                    </>
+                  )}
                 </>
               )}
               {item.status === "error" && <span className="text-red-600"> · Scan failed</span>}
@@ -779,6 +877,11 @@ function FileQueueCard({
           </div>
 
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            {item.fileBase64 && !item.excluded && (
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setPreviewOpen(true)} data-testid={`button-preview-${item.id}`}>
+                <Eye className="w-3.5 h-3.5" />
+              </Button>
+            )}
             {r && !item.excluded && (
               <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onToggleExpand} data-testid={`button-expand-${item.id}`}>
                 {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -885,6 +988,7 @@ function FileQueueCard({
         )}
       </CardContent>
     </Card>
+    </>
   );
 }
 
@@ -1226,81 +1330,169 @@ function TimesheetRow({
   onReject: () => void;
   onSubmit: () => void;
 }) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [docs, setDocs] = useState<DocType[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
+  const [selectedDocIdx, setSelectedDocIdx] = useState(0);
   const overtimeHours = parseFloat(ts.overtimeHours || "0");
   const intakeLabel = intakeSource ? INTAKE_SOURCES.find((s) => s.value === intakeSource)?.label : null;
   const intakeBadgeClass = intakeSource ? INTAKE_BADGE_STYLES[intakeSource] || "" : "";
 
+  const handleViewPdf = async () => {
+    setDocs([]);
+    setSelectedDocIdx(0);
+    setLoadingDocs(true);
+    setViewerOpen(true);
+    try {
+      const res = await fetch(`/api/timesheets/${ts.id}/documents`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setDocs(data);
+      }
+    } catch {}
+    setLoadingDocs(false);
+  };
+
+  const selectedDoc = docs[selectedDocIdx];
+
   return (
-    <Card className="hover-elevate" data-testid={`card-timesheet-${ts.id}`}>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3 min-w-0">
-            {c && (
-              <div
-                className="w-9 h-9 rounded-md flex items-center justify-center font-semibold text-xs flex-shrink-0"
-                style={{ backgroundColor: `${c.accentColour || "#2563eb"}15`, color: c.accentColour || "#2563eb" }}
-              >
-                {c.firstName[0]}{c.lastName[0]}
+    <>
+      <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
+        <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              {ts.fileName || "Timesheet Document"}
+            </DialogTitle>
+            <DialogDescription>
+              {c ? `${c.firstName} ${c.lastName}` : "Unknown"} · {MONTHS[ts.month]} {ts.year} · {ts.totalHours}h
+            </DialogDescription>
+          </DialogHeader>
+          {docs.length > 1 && (
+            <div className="flex gap-1.5 flex-wrap">
+              {docs.map((d, idx) => (
+                <button
+                  key={d.id}
+                  onClick={() => setSelectedDocIdx(idx)}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg border transition-all ${
+                    selectedDocIdx === idx
+                      ? "border-primary bg-primary/5 font-semibold text-primary"
+                      : "border-border bg-card text-muted-foreground hover:border-primary/30"
+                  }`}
+                  data-testid={`button-doc-tab-${idx}`}
+                >
+                  <FileText className="w-3 h-3 inline mr-1" />
+                  {d.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex-1 min-h-0 rounded-lg overflow-hidden border border-border bg-muted">
+            {docs.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                {loadingDocs ? (
+                  <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...</>
+                ) : (
+                  "No PDF documents attached to this timesheet"
+                )}
+              </div>
+            ) : selectedDoc?.fileUrl ? (
+              <iframe
+                src={selectedDoc.fileUrl.startsWith("data:") ? selectedDoc.fileUrl : `data:application/pdf;base64,${selectedDoc.fileUrl}`}
+                className="w-full h-full"
+                title={selectedDoc.name}
+                data-testid="iframe-pdf-viewer"
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                File data not available
               </div>
             )}
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-foreground" data-testid={`text-timesheet-name-${ts.id}`}>
-                  {c ? `${c.firstName} ${c.lastName}` : "Unknown"}
-                </span>
-                <StatusBadge status={ts.status} />
-                {intakeLabel && (
-                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${intakeBadgeClass}`} data-testid={`badge-intake-${ts.id}`}>
-                    {intakeLabel}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Card className="hover-elevate" data-testid={`card-timesheet-${ts.id}`}>
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3 min-w-0">
+              {c && (
+                <div
+                  className="w-9 h-9 rounded-md flex items-center justify-center font-semibold text-xs flex-shrink-0"
+                  style={{ backgroundColor: `${c.accentColour || "#2563eb"}15`, color: c.accentColour || "#2563eb" }}
+                >
+                  {c.firstName[0]}{c.lastName[0]}
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-foreground" data-testid={`text-timesheet-name-${ts.id}`}>
+                    {c ? `${c.firstName} ${c.lastName}` : "Unknown"}
                   </span>
+                  <StatusBadge status={ts.status} />
+                  {intakeLabel && (
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${intakeBadgeClass}`} data-testid={`badge-intake-${ts.id}`}>
+                      {intakeLabel}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                  <span>{MONTHS[ts.month]} {ts.year}</span>
+                  {ts.fileName && (
+                    <>
+                      <span>·</span>
+                      <Paperclip className="w-3 h-3 inline" />
+                      <span data-testid={`text-timesheet-file-${ts.id}`}>{ts.fileName}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="text-right">
+                <div className="text-sm font-mono font-medium text-foreground" data-testid={`text-timesheet-hours-${ts.id}`}>
+                  {ts.totalHours}h
+                </div>
+                {overtimeHours > 0 && (
+                  <div className="text-[11px] text-amber-600 dark:text-amber-400">+{ts.overtimeHours}h OT</div>
                 )}
               </div>
-              <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                <span>{MONTHS[ts.month]} {ts.year}</span>
-                {ts.fileName && (
+              <div className="text-right min-w-[90px]">
+                <div className="text-sm font-mono font-semibold text-foreground" data-testid={`text-timesheet-value-${ts.id}`}>
+                  ${parseFloat(ts.grossValue || "0").toLocaleString()}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleViewPdf}
+                  disabled={loadingDocs}
+                  data-testid={`button-view-pdf-${ts.id}`}
+                >
+                  {loadingDocs ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                  <span className="ml-1">View</span>
+                </Button>
+                {ts.status === "SUBMITTED" && (
                   <>
-                    <span>·</span>
-                    <Paperclip className="w-3 h-3 inline" />
-                    <span data-testid={`text-timesheet-file-${ts.id}`}>{ts.fileName}</span>
+                    <Button size="sm" onClick={onApprove} data-testid={`button-approve-${ts.id}`}>
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={onReject} data-testid={`button-reject-${ts.id}`}>
+                      Reject
+                    </Button>
                   </>
                 )}
+                {ts.status === "DRAFT" && (
+                  <Button size="sm" onClick={onSubmit} data-testid={`button-submit-${ts.id}`}>
+                    Submit
+                  </Button>
+                )}
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="text-right">
-              <div className="text-sm font-mono font-medium text-foreground" data-testid={`text-timesheet-hours-${ts.id}`}>
-                {ts.totalHours}h
-              </div>
-              {overtimeHours > 0 && (
-                <div className="text-[11px] text-amber-600 dark:text-amber-400">+{ts.overtimeHours}h OT</div>
-              )}
-            </div>
-            <div className="text-right min-w-[90px]">
-              <div className="text-sm font-mono font-semibold text-foreground" data-testid={`text-timesheet-value-${ts.id}`}>
-                ${parseFloat(ts.grossValue || "0").toLocaleString()}
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {ts.status === "SUBMITTED" && (
-                <>
-                  <Button size="sm" onClick={onApprove} data-testid={`button-approve-${ts.id}`}>
-                    Approve
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={onReject} data-testid={`button-reject-${ts.id}`}>
-                    Reject
-                  </Button>
-                </>
-              )}
-              {ts.status === "DRAFT" && (
-                <Button size="sm" onClick={onSubmit} data-testid={`button-submit-${ts.id}`}>
-                  Submit
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </>
   );
 }

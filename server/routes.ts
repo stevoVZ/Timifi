@@ -132,15 +132,39 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/timesheets/:id/documents", async (req, res) => {
+    try {
+      const docs = await storage.getDocumentsByTimesheetId(req.params.id);
+      res.json(docs);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch timesheet documents" });
+    }
+  });
+
   app.post("/api/timesheets", async (req, res) => {
     try {
-      const { fileData, fileType: uploadedFileType, ...timesheetData } = req.body;
+      const { fileData, fileType: uploadedFileType, files: filesList, ...timesheetData } = req.body;
       const parsed = insertTimesheetSchema.parse(timesheetData);
       const timesheet = await storage.createTimesheet(parsed);
 
-      if (fileData && parsed.fileName && parsed.employeeId) {
+      if (filesList && Array.isArray(filesList) && parsed.employeeId) {
+        for (const f of filesList) {
+          if (f.data && f.name) {
+            await storage.createDocument({
+              employeeId: parsed.employeeId,
+              timesheetId: timesheet.id,
+              type: "TIMESHEET",
+              name: f.name,
+              fileUrl: f.data,
+              fileType: f.type || "application/pdf",
+              fileSize: f.size || null,
+            });
+          }
+        }
+      } else if (fileData && parsed.fileName && parsed.employeeId) {
         await storage.createDocument({
           employeeId: parsed.employeeId,
+          timesheetId: timesheet.id,
           type: "TIMESHEET",
           name: parsed.fileName,
           fileUrl: fileData,
