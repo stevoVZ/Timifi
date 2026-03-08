@@ -5,7 +5,7 @@ import {
   notifications, messages, settings, users,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
   clients, placements, bankTransactions, payslipLines, rateHistory, timesheetAuditLog,
-  invoiceEmployees,
+  invoiceEmployees, rctis,
   type Employee, type InsertEmployee,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
@@ -28,6 +28,7 @@ import {
   type RateHistory, type InsertRateHistory,
   type TimesheetAuditLog, type InsertTimesheetAuditLog,
   type InvoiceEmployee,
+  type Rcti, type InsertRcti,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -162,6 +163,13 @@ export interface IStorage {
   getInvoiceEmployeesByInvoice(invoiceIds: string[]): Promise<InvoiceEmployee[]>;
   setInvoiceEmployees(invoiceId: string, employeeIds: string[]): Promise<InvoiceEmployee[]>;
   getInvoiceIdsByEmployee(employeeId: string): Promise<string[]>;
+
+  getRctis(): Promise<Rcti[]>;
+  getRctisByEmployee(employeeId: string): Promise<Rcti[]>;
+  getRctisByClient(clientId: string): Promise<Rcti[]>;
+  createRcti(data: InsertRcti): Promise<Rcti>;
+  updateRcti(id: string, data: Partial<InsertRcti>): Promise<Rcti | undefined>;
+  deleteRcti(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -785,6 +793,32 @@ export class DatabaseStorage implements IStorage {
       .from(invoiceEmployees)
       .where(eq(invoiceEmployees.employeeId, employeeId));
     return rows.map(r => r.invoiceId);
+  }
+
+  async getRctis(): Promise<Rcti[]> {
+    return db.select().from(rctis).orderBy(desc(rctis.year), desc(rctis.month));
+  }
+
+  async getRctisByEmployee(employeeId: string): Promise<Rcti[]> {
+    return db.select().from(rctis).where(eq(rctis.employeeId, employeeId)).orderBy(desc(rctis.year), desc(rctis.month));
+  }
+
+  async getRctisByClient(clientId: string): Promise<Rcti[]> {
+    return db.select().from(rctis).where(eq(rctis.clientId, clientId)).orderBy(desc(rctis.year), desc(rctis.month));
+  }
+
+  async createRcti(data: InsertRcti): Promise<Rcti> {
+    const [rcti] = await db.insert(rctis).values(data).returning();
+    return rcti;
+  }
+
+  async updateRcti(id: string, data: Partial<InsertRcti>): Promise<Rcti | undefined> {
+    const [rcti] = await db.update(rctis).set({ ...data, updatedAt: new Date() }).where(eq(rctis.id, id)).returning();
+    return rcti;
+  }
+
+  async deleteRcti(id: string): Promise<void> {
+    await db.delete(rctis).where(eq(rctis.id, id));
   }
 }
 

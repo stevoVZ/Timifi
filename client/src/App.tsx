@@ -29,6 +29,7 @@ import ReconciliationPage from "@/pages/reconciliation";
 import BankStatementsPage from "@/pages/bank-statements";
 import ProfitabilityPage from "@/pages/profitability";
 import ClientLedgerPage from "@/pages/client-ledger";
+import RctisPage from "@/pages/rctis";
 
 function useAuth() {
   return useQuery<{ id: string; username: string } | null>({
@@ -50,6 +51,7 @@ function AdminRouter() {
       <Route path="/payroll/:id" component={PayrollDetailPage} />
       <Route path="/payroll" component={PayrollPage} />
       <Route path="/invoices" component={InvoicesPage} />
+      <Route path="/rctis" component={RctisPage} />
       <Route path="/reconciliation" component={ReconciliationPage} />
       <Route path="/bank-statements" component={BankStatementsPage} />
       <Route path="/profitability" component={ProfitabilityPage} />

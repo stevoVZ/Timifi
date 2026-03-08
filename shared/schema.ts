@@ -263,6 +263,7 @@ export const clients = pgTable("clients", {
   region: text("region"),
   postalCode: text("postal_code"),
   country: text("country"),
+  isRcti: boolean("is_rcti").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -496,6 +497,32 @@ export type RateHistory = typeof rateHistory.$inferSelect;
 export type InsertRateHistory = z.infer<typeof insertRateHistorySchema>;
 export type TimesheetAuditLog = typeof timesheetAuditLog.$inferSelect;
 export type InsertTimesheetAuditLog = z.infer<typeof insertTimesheetAuditLogSchema>;
+
+export const rctiStatusEnum = pgEnum("rcti_status", ["DRAFT", "RECEIVED", "PAID"]);
+
+export const rctis = pgTable("rctis", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").references(() => clients.id),
+  employeeId: varchar("employee_id").references(() => employees.id),
+  month: smallint("month").notNull(),
+  year: smallint("year").notNull(),
+  hours: numeric("hours", { precision: 6, scale: 2 }),
+  hourlyRate: numeric("hourly_rate", { precision: 10, scale: 2 }),
+  amountExclGst: numeric("amount_excl_gst", { precision: 10, scale: 2 }).notNull().default("0"),
+  gstAmount: numeric("gst_amount", { precision: 10, scale: 2 }).notNull().default("0"),
+  amountInclGst: numeric("amount_incl_gst", { precision: 10, scale: 2 }).notNull().default("0"),
+  description: text("description"),
+  reference: text("reference"),
+  receivedDate: date("received_date"),
+  bankTransactionId: varchar("bank_transaction_id"),
+  status: rctiStatusEnum("status").notNull().default("DRAFT"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertRctiSchema = createInsertSchema(rctis).omit({ id: true, createdAt: true, updatedAt: true });
+export type Rcti = typeof rctis.$inferSelect;
+export type InsertRcti = z.infer<typeof insertRctiSchema>;
 
 export const invoiceEmployees = pgTable("invoice_employees", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
