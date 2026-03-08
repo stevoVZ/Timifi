@@ -1465,12 +1465,12 @@ export async function registerRoutes(
         storage.getEmployees(),
       ]);
 
-      const activePlacements = allPlacements.filter(p => p.status === "ACTIVE");
+      const linkablePlacements = allPlacements.filter(p => p.status === "ACTIVE" || p.status === "ENDED");
       const clients = await storage.getClients();
       let linked = 0;
       const claimedInvoiceIds = new Set<string>();
 
-      for (const placement of activePlacements) {
+      for (const placement of linkablePlacements) {
         const employee = allEmployees.find(e => e.id === placement.employeeId);
         if (!employee) continue;
 
@@ -1517,7 +1517,22 @@ export async function registerRoutes(
         storage.getClients(),
       ]);
 
-      const activePlacements = allPlacements.filter(p => p.status === "ACTIVE");
+      const relevantPlacements = allPlacements.filter(p => {
+        if (p.status === "ACTIVE") return true;
+        if (p.status !== "ENDED") return false;
+        const periodStart = new Date(year, month - 1, 1);
+        const periodEnd = new Date(year, month, 0);
+        if (p.startDate) {
+          const start = new Date(p.startDate);
+          if (start > periodEnd) return false;
+        }
+        if (p.endDate) {
+          const end = new Date(p.endDate);
+          const graceEnd = new Date(end.getFullYear(), end.getMonth() + 2, 0);
+          if (periodStart > graceEnd) return false;
+        }
+        return true;
+      });
 
       const periodPayRuns = allPayRuns.filter(pr => pr.month === month && pr.year === year);
       const allPayRunLines: { line: any; payRun: typeof periodPayRuns[0] }[] = [];
@@ -1533,7 +1548,7 @@ export async function registerRoutes(
       const claimedInvoiceIds = new Set<string>();
       const claimedBankTxnIds = new Set<string>();
 
-      const rows = activePlacements.map(placement => {
+      const rows = relevantPlacements.map(placement => {
         const employee = allEmployees.find(e => e.id === placement.employeeId);
         if (!employee) return null;
 
@@ -1584,6 +1599,8 @@ export async function registerRoutes(
 
         return {
           placementId: placement.id,
+          placementStatus: placement.status,
+          placementEndDate: placement.endDate || null,
           employee: {
             id: employee.id,
             firstName: employee.firstName,

@@ -17,6 +17,8 @@ const MONTHS = ["", "January", "February", "March", "April", "May", "June", "Jul
 
 interface ProfitabilityRow {
   placementId: string;
+  placementStatus: string;
+  placementEndDate: string | null;
   employee: {
     id: string;
     firstName: string;
@@ -261,11 +263,16 @@ export default function ProfitabilityPage() {
                       return (
                         <tr
                           key={row.placementId}
-                          className="border-b hover:bg-muted/30 transition-colors"
+                          className={`border-b hover:bg-muted/30 transition-colors ${row.placementStatus === "ENDED" ? "opacity-70" : ""}`}
                           data-testid={`row-profitability-${row.placementId}`}
                         >
                           <td className="px-4 py-3 font-medium" data-testid={`text-employee-${row.employee.id}`}>
-                            {row.employee.firstName} {row.employee.lastName}
+                            <div className="flex items-center gap-2">
+                              {row.employee.firstName} {row.employee.lastName}
+                              {row.placementStatus === "ENDED" && (
+                                <Badge variant="outline" className="text-[10px] font-normal" data-testid={`badge-ended-${row.placementId}`}>Ended</Badge>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-muted-foreground" data-testid={`text-client-${row.placementId}`}>
                             {row.client.name}

@@ -36,6 +36,7 @@ export default function EmployeeNewPage() {
     postcode: "",
     jobTitle: "",
     clientName: "",
+    status: "ACTIVE",
     employmentType: "LABOURHIRE",
     paymentMethod: "PAYROLL",
     companyName: "",
@@ -185,6 +186,19 @@ export default function EmployeeNewPage() {
             <div>
               <Label>Job Title</Label>
               <Input value={form.jobTitle} onChange={(e) => update("jobTitle", e.target.value)} data-testid="input-job-title" />
+            </div>
+            <div>
+              <Label>Status</Label>
+              <Select value={form.status} onValueChange={(v) => update("status", v)}>
+                <SelectTrigger data-testid="select-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ACTIVE">Active</SelectItem>
+                  <SelectItem value="OFFBOARDED">Offboarded / Resigned</SelectItem>
+                  <SelectItem value="PENDING_SETUP">Pending Setup</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Employment Type</Label>

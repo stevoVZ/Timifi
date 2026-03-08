@@ -1006,6 +1006,7 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
     chargeOutRate: "",
     payRate: "",
     notes: "",
+    status: "ACTIVE" as "ACTIVE" | "ENDED",
   });
 
   const createMutation = useMutation({
@@ -1018,7 +1019,7 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
       queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId] });
       toast({ title: "Placement Added", description: "New placement created." });
       setShowForm(false);
-      setFormData({ clientId: "", clientName: "", startDate: new Date().toISOString().split("T")[0], endDate: "", chargeOutRate: "", payRate: "", notes: "" });
+      setFormData({ clientId: "", clientName: "", startDate: new Date().toISOString().split("T")[0], endDate: "", chargeOutRate: "", payRate: "", notes: "", status: "ACTIVE" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -1049,7 +1050,7 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
       chargeOutRate: formData.chargeOutRate || null,
       payRate: formData.payRate || null,
       notes: formData.notes || null,
-      status: "ACTIVE",
+      status: formData.status,
     });
   };
 
@@ -1086,8 +1087,24 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                 </Select>
               </div>
               <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Status</label>
+                <Select value={formData.status} onValueChange={(v) => setFormData(prev => ({ ...prev, status: v as "ACTIVE" | "ENDED" }))}>
+                  <SelectTrigger className="h-8 text-sm" data-testid="select-placement-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ACTIVE">Active</SelectItem>
+                    <SelectItem value="ENDED">Ended (Historical)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
                 <Input type="date" className="h-8 text-sm" value={formData.startDate} onChange={(e) => setFormData(prev => ({ ...prev, startDate: e.target.value }))} data-testid="input-placement-start" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">End Date</label>
+                <Input type="date" className="h-8 text-sm" value={formData.endDate} onChange={(e) => setFormData(prev => ({ ...prev, endDate: e.target.value }))} data-testid="input-placement-end" />
               </div>
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Charge Out Rate</label>
