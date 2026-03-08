@@ -141,10 +141,18 @@ export async function registerRoutes(
     }
   });
 
+  const coerceDates = (data: Record<string, any>) => {
+    const copy = { ...data };
+    for (const key of ["submittedAt", "reviewedAt", "createdAt", "updatedAt"]) {
+      if (typeof copy[key] === "string") copy[key] = new Date(copy[key]);
+    }
+    return copy;
+  };
+
   app.post("/api/timesheets", async (req, res) => {
     try {
       const { fileData, fileType: uploadedFileType, files: filesList, ...timesheetData } = req.body;
-      const parsed = insertTimesheetSchema.parse(timesheetData);
+      const parsed = insertTimesheetSchema.parse(coerceDates(timesheetData));
       const timesheet = await storage.createTimesheet(parsed);
 
       if (filesList && Array.isArray(filesList) && parsed.employeeId) {
@@ -191,7 +199,7 @@ export async function registerRoutes(
       for (let i = 0; i < items.length; i++) {
         try {
           const { files: filesList, ...timesheetData } = items[i];
-          const parsed = insertTimesheetSchema.parse(timesheetData);
+          const parsed = insertTimesheetSchema.parse(coerceDates(timesheetData));
 
           const existing = allTimesheets.filter(
             (ts) => ts.employeeId === parsed.employeeId && ts.month === parsed.month && ts.year === parsed.year
@@ -261,7 +269,7 @@ export async function registerRoutes(
 
   app.patch("/api/timesheets/:id", async (req, res) => {
     try {
-      const timesheet = await storage.updateTimesheet(req.params.id, req.body);
+      const timesheet = await storage.updateTimesheet(req.params.id, coerceDates(req.body));
       if (!timesheet) return res.status(404).json({ message: "Timesheet not found" });
       res.json(timesheet);
     } catch (err: any) {
