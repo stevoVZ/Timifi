@@ -834,21 +834,32 @@ export async function syncInvoices(): Promise<{
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
 
-  const response = await fetch("https://api.xero.com/api.xro/2.0/Invoices?Statuses=AUTHORISED,PAID,SUBMITTED,DRAFT,VOIDED&page=1", {
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-      "Xero-Tenant-Id": tenantId,
-      "Accept": "application/json",
-    },
-  });
+  let page = 1;
+  let allInvoices: any[] = [];
+  let hasMore = true;
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Failed to fetch invoices from Xero (${response.status}): ${errorBody}`);
+  while (hasMore) {
+    const response = await fetch(`https://api.xero.com/api.xro/2.0/Invoices?Statuses=AUTHORISED,PAID,SUBMITTED,DRAFT,VOIDED&page=${page}`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Failed to fetch invoices from Xero (${response.status}): ${errorBody}`);
+    }
+
+    const data = await response.json() as { Invoices?: any[] };
+    const invoices = data.Invoices || [];
+    allInvoices = allInvoices.concat(invoices);
+    hasMore = invoices.length === 100;
+    page++;
   }
 
-  const data = await response.json() as { Invoices?: any[] };
-  const xeroInvoices = data.Invoices || [];
+  const xeroInvoices = allInvoices;
 
   let created = 0;
   let updated = 0;
@@ -921,6 +932,7 @@ export async function syncInvoices(): Promise<{
           amountExclGst: String(amountExclGst),
           gstAmount: String(gstAmount),
           amountInclGst: String(amountInclGst),
+          paidDate: localStatus === "PAID" ? (parseXeroDate(inv.FullyPaidOnDate) || existing.paidDate) : existing.paidDate,
         });
         updated++;
       } else {
