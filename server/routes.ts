@@ -890,7 +890,8 @@ export async function registerRoutes(
 
   app.get("/api/xero/callback", async (req, res) => {
     try {
-      const fullUrl = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+      const proto = req.get("x-forwarded-proto") || req.protocol;
+      const fullUrl = `${proto}://${req.get("host")}${req.originalUrl}`;
       await handleCallback(fullUrl);
       res.redirect("/settings?tab=xero&connected=true");
     } catch (err: any) {

@@ -639,13 +639,29 @@ const tabs = [
 
 export default function SettingsPage() {
   const { data: settings, isLoading } = useSettings();
+  const { toast } = useToast();
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const tabFromUrl = urlParams.get("tab");
+  const connectedFromUrl = urlParams.get("connected");
+  const errorFromUrl = urlParams.get("error");
+
+  useEffect(() => {
+    if (connectedFromUrl === "true") {
+      toast({ title: "Successfully connected to Xero" });
+      window.history.replaceState({}, "", "/settings");
+    } else if (errorFromUrl) {
+      toast({ title: `Xero connection failed: ${errorFromUrl}`, variant: "destructive" });
+      window.history.replaceState({}, "", "/settings");
+    }
+  }, []);
 
   return (
     <div className="flex flex-col h-full">
       <TopBar title="Settings" subtitle="Configure your recruitment portal" />
       <main className="flex-1 overflow-auto p-6 bg-muted/30">
         <div className="max-w-3xl mx-auto">
-          <Tabs defaultValue="branding">
+          <Tabs defaultValue={tabFromUrl || "branding"}>
             <TabsList className="mb-6 flex-wrap" data-testid="tabs-settings">
               {tabs.map((tab) => (
                 <TabsTrigger key={tab.id} value={tab.id} className="gap-1.5" data-testid={`tab-${tab.id}`}>

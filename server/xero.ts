@@ -3,7 +3,6 @@ import { storage } from "./storage";
 import crypto from "crypto";
 
 let xeroClient: XeroClient | null = null;
-let oauthState: string | null = null;
 
 async function getSettingValue(key: string): Promise<string> {
   const s = await storage.getSetting(key);
@@ -57,20 +56,22 @@ export async function getXeroClient(): Promise<XeroClient> {
 
 export async function getConsentUrl(): Promise<string> {
   const client = await getXeroClient();
-  oauthState = crypto.randomBytes(32).toString("hex");
+  const state = crypto.randomBytes(32).toString("hex");
+  await saveSetting("xero.oauthState", state);
   const url = await client.buildConsentUrl();
   const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}state=${oauthState}`;
+  return `${url}${separator}state=${state}`;
 }
 
 export async function handleCallback(callbackUrl: string): Promise<void> {
   const urlObj = new URL(callbackUrl);
   const returnedState = urlObj.searchParams.get("state");
-  if (!oauthState || returnedState !== oauthState) {
-    oauthState = null;
+  const savedState = await getSettingValue("xero.oauthState");
+  if (!savedState || returnedState !== savedState) {
+    await saveSetting("xero.oauthState", "");
     throw new Error("OAuth state mismatch. Please try connecting again.");
   }
-  oauthState = null;
+  await saveSetting("xero.oauthState", "");
 
   const client = await getXeroClient();
   const tokenSet = await client.apiCallback(callbackUrl);
