@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { contractors, timesheets, invoices, payRuns } from "@shared/schema";
+import { contractors, timesheets, invoices, payRuns, notifications, messages, settings } from "@shared/schema";
 import { sql } from "drizzle-orm";
 
 export async function seedDatabase() {
@@ -258,6 +258,107 @@ export async function seedDatabase() {
       employeeCount: 4,
       status: "DRAFT",
     },
+  ]);
+
+  await db.insert(notifications).values([
+    {
+      type: "TIMESHEET",
+      priority: "HIGH",
+      title: "Timesheet returned — Marcus Chen",
+      body: "Missing signature on Week 3. Please resubmit.",
+      actionLabel: "View timesheet",
+      actionRoute: "/timesheets",
+      read: false,
+      contractorId: c3.id,
+    },
+    {
+      type: "INVOICE",
+      priority: "URGENT",
+      title: "Invoice overdue — INV-0043",
+      body: "Marcus Chen — February 2026 — $25,520 — overdue.",
+      actionLabel: "View invoice",
+      actionRoute: "/invoices",
+      read: false,
+      contractorId: c3.id,
+    },
+    {
+      type: "PAYRUN",
+      priority: "MEDIUM",
+      title: "Pay run due — March 2026",
+      body: "3 approved timesheets ready. File before 31 March to meet pay date.",
+      actionLabel: "Open pay run",
+      actionRoute: "/payroll",
+      read: false,
+    },
+    {
+      type: "CLEARANCE",
+      priority: "HIGH",
+      title: "Clearance expiring — Marcus Chen",
+      body: "NV2 clearance expires 30 Nov 2026. Renew 60 days in advance.",
+      actionLabel: "View contractor",
+      actionRoute: `/contractors/${c3.id}`,
+      read: true,
+      contractorId: c3.id,
+    },
+    {
+      type: "SYSTEM",
+      priority: "LOW",
+      title: "System update completed",
+      body: "Portal version 2.4 deployed successfully.",
+      read: true,
+    },
+    {
+      type: "SUPER",
+      priority: "MEDIUM",
+      title: "Superannuation due — Q1 2026",
+      body: "Quarterly super guarantee payments due by 28 April 2026.",
+      actionLabel: "View payroll",
+      actionRoute: "/payroll",
+      read: false,
+    },
+  ]);
+
+  await db.insert(messages).values([
+    {
+      contractorId: c1.id,
+      senderRole: "admin",
+      subject: "March timesheet reminder",
+      body: "Hi Alex, just a reminder that your March timesheet is due by the 28th. Please submit it at your earliest convenience.",
+      read: true,
+    },
+    {
+      contractorId: c1.id,
+      senderRole: "contractor",
+      subject: "Re: March timesheet reminder",
+      body: "Thanks Sarah, I've submitted it today. Let me know if anything needs updating.",
+      read: true,
+    },
+    {
+      contractorId: c3.id,
+      senderRole: "admin",
+      subject: "Clearance renewal",
+      body: "Hi Marcus, your NV2 clearance is expiring in November. We'll need to start the renewal process soon. I'll send through the forms next week.",
+      read: false,
+    },
+    {
+      contractorId: c2.id,
+      senderRole: "contractor",
+      subject: "Leave request",
+      body: "Hi, I'd like to request leave for the week of April 14-18. Could you let me know the process for this?",
+      read: false,
+    },
+  ]);
+
+  await db.insert(settings).values([
+    { key: "company_name", value: "Recruitment Portal" },
+    { key: "company_abn", value: "12 345 678 901" },
+    { key: "company_email", value: "admin@recruitmentportal.com.au" },
+    { key: "company_phone", value: "02 1234 5678" },
+    { key: "pay_calendar", value: "MONTHLY" },
+    { key: "super_rate", value: "11.5" },
+    { key: "default_pay_day", value: "28" },
+    { key: "portal_enabled", value: "true" },
+    { key: "portal_self_service", value: "true" },
   ]);
 
   console.log("Database seeded successfully!");

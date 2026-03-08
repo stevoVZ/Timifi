@@ -2,10 +2,14 @@ import { db } from "./db";
 import { eq, desc, sql, and } from "drizzle-orm";
 import {
   contractors, timesheets, invoices, payRuns,
+  notifications, messages, settings,
   type Contractor, type InsertContractor,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
   type PayRun, type InsertPayRun,
+  type Notification, type InsertNotification,
+  type Message, type InsertMessage,
+  type Setting, type InsertSetting,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -21,6 +25,7 @@ export interface IStorage {
   updateTimesheet(id: string, data: Partial<InsertTimesheet>): Promise<Timesheet | undefined>;
 
   getInvoices(): Promise<Invoice[]>;
+  getInvoicesByContractor(contractorId: string): Promise<Invoice[]>;
   getInvoice(id: string): Promise<Invoice | undefined>;
   createInvoice(data: InsertInvoice): Promise<Invoice>;
   updateInvoice(id: string, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
@@ -38,6 +43,21 @@ export interface IStorage {
     nextPayRunDate: string | null;
     nextPayRunCount: number;
   }>;
+
+  getNotifications(): Promise<Notification[]>;
+  getUnreadNotificationCount(): Promise<number>;
+  markNotificationRead(id: string): Promise<Notification | undefined>;
+  markAllNotificationsRead(): Promise<void>;
+  createNotification(data: InsertNotification): Promise<Notification>;
+
+  getMessages(): Promise<Message[]>;
+  getMessagesByContractor(contractorId: string): Promise<Message[]>;
+  createMessage(data: InsertMessage): Promise<Message>;
+  markMessageRead(id: string): Promise<Message | undefined>;
+
+  getSettings(): Promise<Setting[]>;
+  getSetting(key: string): Promise<Setting | undefined>;
+  upsertSetting(key: string, value: string): Promise<Setting>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -95,6 +115,12 @@ export class DatabaseStorage implements IStorage {
 
   async getInvoices(): Promise<Invoice[]> {
     return db.select().from(invoices).orderBy(desc(invoices.createdAt));
+  }
+
+  async getInvoicesByContractor(contractorId: string): Promise<Invoice[]> {
+    return db.select().from(invoices)
+      .where(eq(invoices.contractorId, contractorId))
+      .orderBy(desc(invoices.createdAt));
   }
 
   async getInvoice(id: string): Promise<Invoice | undefined> {
@@ -179,6 +205,83 @@ export class DatabaseStorage implements IStorage {
       nextPayRunDate: nextPayRun[0]?.payDate || null,
       nextPayRunCount: nextPayRun[0]?.employeeCount || 0,
     };
+  }
+
+  async getNotifications(): Promise<Notification[]> {
+    return db.select().from(notifications).orderBy(desc(notifications.createdAt));
+  }
+
+  async getUnreadNotificationCount(): Promise<number> {
+    const [result] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(notifications)
+      .where(eq(notifications.read, false));
+    return result?.count || 0;
+  }
+
+  async markNotificationRead(id: string): Promise<Notification | undefined> {
+    const [notification] = await db
+      .update(notifications)
+      .set({ read: true })
+      .where(eq(notifications.id, id))
+      .returning();
+    return notification;
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    await db.update(notifications).set({ read: true }).where(eq(notifications.read, false));
+  }
+
+  async createNotification(data: InsertNotification): Promise<Notification> {
+    const [notification] = await db.insert(notifications).values(data).returning();
+    return notification;
+  }
+
+  async getMessages(): Promise<Message[]> {
+    return db.select().from(messages).orderBy(desc(messages.createdAt));
+  }
+
+  async getMessagesByContractor(contractorId: string): Promise<Message[]> {
+    return db.select().from(messages)
+      .where(eq(messages.contractorId, contractorId))
+      .orderBy(desc(messages.createdAt));
+  }
+
+  async createMessage(data: InsertMessage): Promise<Message> {
+    const [message] = await db.insert(messages).values(data).returning();
+    return message;
+  }
+
+  async markMessageRead(id: string): Promise<Message | undefined> {
+    const [message] = await db
+      .update(messages)
+      .set({ read: true })
+      .where(eq(messages.id, id))
+      .returning();
+    return message;
+  }
+
+  async getSettings(): Promise<Setting[]> {
+    return db.select().from(settings).orderBy(settings.key);
+  }
+
+  async getSetting(key: string): Promise<Setting | undefined> {
+    const [setting] = await db.select().from(settings).where(eq(settings.key, key));
+    return setting;
+  }
+
+  async upsertSetting(key: string, value: string): Promise<Setting> {
+    const existing = await this.getSetting(key);
+    if (existing) {
+      const [updated] = await db
+        .update(settings)
+        .set({ value, updatedAt: new Date() })
+        .where(eq(settings.key, key))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(settings).values({ key, value }).returning();
+    return created;
   }
 }
 

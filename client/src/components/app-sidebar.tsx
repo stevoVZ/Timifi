@@ -1,5 +1,6 @@
 import { useLocation, Link } from "wouter";
-import { LayoutDashboard, Users, Clock, CreditCard, FileText } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { LayoutDashboard, Users, Clock, CreditCard, FileText, Bell, Settings } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -11,6 +12,7 @@ import {
   SidebarMenuButton,
   SidebarHeader,
   SidebarFooter,
+  SidebarMenuBadge,
 } from "@/components/ui/sidebar";
 
 const navItems = [
@@ -19,10 +21,19 @@ const navItems = [
   { title: "Timesheets", url: "/timesheets", icon: Clock },
   { title: "Payroll", url: "/payroll", icon: CreditCard },
   { title: "Invoices", url: "/invoices", icon: FileText },
+  { title: "Notifications", url: "/notifications", icon: Bell },
+  { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 export function AppSidebar() {
   const [location] = useLocation();
+
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ["/api/notifications/unread-count"],
+    refetchInterval: 30000,
+  });
+
+  const unreadCount = unreadData?.count || 0;
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
@@ -66,6 +77,14 @@ export function AppSidebar() {
                       <span>{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
+                  {item.title === "Notifications" && unreadCount > 0 && (
+                    <SidebarMenuBadge
+                      className="bg-destructive text-destructive-foreground text-[10px] font-bold"
+                      data-testid="badge-notification-count"
+                    >
+                      {unreadCount}
+                    </SidebarMenuBadge>
+                  )}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
