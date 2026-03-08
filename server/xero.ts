@@ -49,8 +49,10 @@ export async function getConsentUrl(): Promise<string> {
     "accounting.invoices",
     "accounting.invoices.read",
     "accounting.contacts.read",
-    "accounting.transactions.read",
+    "accounting.banktransactions.read",
     "accounting.reports.read",
+    "accounting.journals.read",
+    "accounting.settings.read",
     "offline_access",
   ];
 
