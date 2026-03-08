@@ -61,13 +61,16 @@ export interface IStorage {
   getDashboardStats(): Promise<{
     activeContractors: number;
     pendingContractors: number;
-    timesheetsDue: number;
+    totalInvoices: number;
+    totalBilled: string;
+    totalPaid: string;
+    paidInvoiceCount: number;
     outstandingInvoiceAmount: string;
     overdueAmount: string;
-    nextPayRunDate: string | null;
-    nextPayRunCount: number;
+    payRunCount: number;
+    payRunTotalGross: string;
+    latestPayRunDate: string | null;
     submittedTimesheets: number;
-    approvedThisMonth: number;
     ytdBillings: string;
   }>;
 
@@ -294,19 +297,23 @@ export class DatabaseStorage implements IStorage {
       .from(contractors)
       .where(eq(contractors.status, "PENDING_SETUP"));
 
-    const currentMonth = new Date().getMonth() + 1;
     const currentYear = new Date().getFullYear();
 
-    const [timesheetsDueResult] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(timesheets)
-      .where(
-        and(
-          eq(timesheets.year, currentYear),
-          eq(timesheets.month, currentMonth),
-          eq(timesheets.status, "DRAFT")
-        )
-      );
+    const [totalInvoicesResult] = await db
+      .select({
+        count: sql<number>`count(*)::int`,
+        total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text`,
+      })
+      .from(invoices)
+      .where(sql`status != 'VOIDED'`);
+
+    const [paidResult] = await db
+      .select({
+        count: sql<number>`count(*)::int`,
+        total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text`,
+      })
+      .from(invoices)
+      .where(eq(invoices.status, "PAID"));
 
     const [outstandingResult] = await db
       .select({ total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text` })
@@ -318,9 +325,20 @@ export class DatabaseStorage implements IStorage {
       .from(invoices)
       .where(eq(invoices.status, "OVERDUE"));
 
-    const nextPayRun = await db.select().from(payRuns)
-      .where(eq(payRuns.status, "DRAFT"))
-      .orderBy(payRuns.payDate)
+    const fyStart = new Date().getMonth() >= 6
+      ? new Date(currentYear, 6, 1)
+      : new Date(currentYear - 1, 6, 1);
+
+    const [payRunFYResult] = await db
+      .select({
+        count: sql<number>`count(*)::int`,
+        totalGross: sql<string>`COALESCE(SUM(total_gross), 0)::text`,
+      })
+      .from(payRuns)
+      .where(sql`${payRuns.payDate} >= ${fyStart.toISOString().split("T")[0]}`);
+
+    const latestPayRun = await db.select().from(payRuns)
+      .orderBy(desc(payRuns.payDate))
       .limit(1);
 
     const [submittedResult] = await db
@@ -328,41 +346,29 @@ export class DatabaseStorage implements IStorage {
       .from(timesheets)
       .where(eq(timesheets.status, "SUBMITTED"));
 
-    const [approvedThisMonthResult] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(timesheets)
-      .where(
-        and(
-          eq(timesheets.year, currentYear),
-          eq(timesheets.month, currentMonth),
-          eq(timesheets.status, "APPROVED")
-        )
-      );
-
-    const fyStart = new Date().getMonth() >= 6
-      ? new Date(currentYear, 6, 1)
-      : new Date(currentYear - 1, 6, 1);
-
     const [ytdBillingsResult] = await db
       .select({ total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text` })
       .from(invoices)
       .where(
         and(
           eq(invoices.status, "PAID"),
-          sql`${invoices.createdAt} >= ${fyStart.toISOString()}`
+          sql`${invoices.paidDate} >= ${fyStart.toISOString().split("T")[0]}`
         )
       );
 
     return {
       activeContractors: activeResult?.count || 0,
       pendingContractors: pendingResult?.count || 0,
-      timesheetsDue: timesheetsDueResult?.count || 0,
+      totalInvoices: totalInvoicesResult?.count || 0,
+      totalBilled: totalInvoicesResult?.total || "0",
+      totalPaid: paidResult?.total || "0",
+      paidInvoiceCount: paidResult?.count || 0,
       outstandingInvoiceAmount: outstandingResult?.total || "0",
       overdueAmount: overdueResult?.total || "0",
-      nextPayRunDate: nextPayRun[0]?.payDate || null,
-      nextPayRunCount: nextPayRun[0]?.employeeCount || 0,
+      payRunCount: payRunFYResult?.count || 0,
+      payRunTotalGross: payRunFYResult?.totalGross || "0",
+      latestPayRunDate: latestPayRun[0]?.payDate || null,
       submittedTimesheets: submittedResult?.count || 0,
-      approvedThisMonth: approvedThisMonthResult?.count || 0,
       ytdBillings: ytdBillingsResult?.total || "0",
     };
   }

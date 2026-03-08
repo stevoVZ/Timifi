@@ -117,6 +117,8 @@ export default function InvoicesPage() {
   const authorised = filtered?.filter((i) => i.status === "AUTHORISED") || [];
   const sent = filtered?.filter((i) => i.status === "SENT") || [];
 
+  const voided = filtered?.filter((i) => i.status === "VOIDED") || [];
+  const totalBilled = filtered?.filter((i) => i.status !== "VOIDED").reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0) || 0;
   const totalOutstanding = outstanding.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
   const totalOverdue = overdue.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
   const totalPaid = paid.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
@@ -128,6 +130,7 @@ export default function InvoicesPage() {
       case "sent": return sent;
       case "overdue": return overdue;
       case "paid": return paid;
+      case "voided": return voided;
       default: return filtered;
     }
   })();
@@ -174,7 +177,7 @@ export default function InvoicesPage() {
     <div className="flex flex-col h-full">
       <TopBar
         title="Invoices"
-        subtitle={`${formatCurrency(totalOutstanding)} outstanding`}
+        subtitle={`${filtered?.length || 0} invoices · ${formatCurrency(totalBilled)} billed`}
         actions={
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
@@ -240,7 +243,21 @@ export default function InvoicesPage() {
       />
       <main className="flex-1 overflow-auto p-6 bg-muted/30">
         <div className="max-w-6xl mx-auto space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <Card data-testid="kpi-total-billed">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-md bg-blue-500/10 dark:bg-blue-400/10 flex items-center justify-center flex-shrink-0">
+                    <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Total billed</p>
+                    <p className="text-lg font-bold font-mono text-foreground" data-testid="text-total-billed">{formatCurrency(totalBilled)}</p>
+                    <p className="text-[11px] text-muted-foreground">{(filtered?.length || 0) - voided.length} invoice{(filtered?.length || 0) - voided.length !== 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
             <Card data-testid="kpi-outstanding">
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
@@ -255,20 +272,6 @@ export default function InvoicesPage() {
                 </div>
               </CardContent>
             </Card>
-            <Card data-testid="kpi-overdue">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-md bg-destructive/10 flex items-center justify-center flex-shrink-0">
-                    <AlertTriangle className="w-4 h-4 text-destructive" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">Overdue</p>
-                    <p className="text-lg font-bold font-mono text-foreground" data-testid="text-overdue-total">{formatCurrency(totalOverdue)}</p>
-                    <p className="text-[11px] text-muted-foreground">{overdue.length} invoice{overdue.length !== 1 ? "s" : ""}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
             <Card data-testid="kpi-paid">
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
@@ -279,6 +282,20 @@ export default function InvoicesPage() {
                     <p className="text-xs text-muted-foreground">Paid</p>
                     <p className="text-lg font-bold font-mono text-foreground" data-testid="text-paid-total">{formatCurrency(totalPaid)}</p>
                     <p className="text-[11px] text-muted-foreground">{paid.length} invoice{paid.length !== 1 ? "s" : ""}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card data-testid="kpi-voided">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                    <Ban className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Voided</p>
+                    <p className="text-lg font-bold font-mono text-foreground" data-testid="text-voided-count">{voided.length}</p>
+                    <p className="text-[11px] text-muted-foreground">cancelled invoices</p>
                   </div>
                 </div>
               </CardContent>
@@ -364,6 +381,10 @@ export default function InvoicesPage() {
                 <TabsTrigger value="paid" className="gap-1.5" data-testid="tab-paid">
                   <CheckCircle className="w-3.5 h-3.5" />
                   Paid ({paid.length})
+                </TabsTrigger>
+                <TabsTrigger value="voided" className="gap-1.5" data-testid="tab-voided">
+                  <Ban className="w-3.5 h-3.5" />
+                  Voided ({voided.length})
                 </TabsTrigger>
               </TabsList>
 

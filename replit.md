@@ -14,13 +14,12 @@ Labour hire agency management portal for contractors, timesheets, invoicing, and
 
 ### Admin Panel
 - **Admin Login**: Username/password authentication required. Default credentials: admin/admin. Sessions stored in PostgreSQL.
-- **Dashboard**: Enhanced KPI overview (active contractors, pending timesheets, outstanding invoices, next pay run, YTD billings), recent activity feed from notifications, contractors mini-table, quick action grid
+- **Dashboard**: KPI overview (active contractors, total invoices, total paid, FY pay runs), recent invoices table (last 5), recent pay runs table (last 5), contractors sidebar, quick actions (upload timesheets, view invoices, view payroll, add contractor), YTD billings card, recent activity feed
 - **Contractors**: KPI strip (Active/Pending/YTD Billings/Avg Rate), sortable table (name/rate/YTD hours/start date), search, filter by status, add new (full form + quick add), detail view with timesheet history
 - **Timesheets**: Two-tab layout (Upload/Submissions). Upload tab: drag-and-drop PDF zone, contractor + period pickers, intake source form, file queue with scanning simulation + extracted data (hours/confidence/weekly breakdown), batch summary sidebar, duplicate detection. Submissions tab: existing timesheet list with status tabs, manual entry dialog, approve/reject workflow, intake source badges
 - **Payroll**: Enhanced pay run management with contractor-level pay lines (hours, rate, gross, PAYG, super, net), file workflow (Draft → Review → Filed), ABA direct entry file download, payslip generation, month navigation
-- **Invoices**: KPI strip (Outstanding, Overdue, Paid totals), filter tabs, pending invoices from approved timesheets, create/send workflow
-- **Leave Management**: 2-column layout with request tabs (Pending/Approved/Rejected) on left and per-contractor balance sidebar cards on right with progress bars, approve/reject with review notes
-- **Pay Items**: Pay code management with type, rate, multiplier, taxable/superable flags, active toggle
+- **Invoices**: KPI strip (Total Billed, Outstanding, Paid, Voided), filter tabs including Voided tab, pending invoices from approved timesheets, create/send workflow
+- **Payroll**: Defaults to most recent pay run month (not current calendar month)
 - **Notifications**: Priority-based notification center with filtering by type/priority, mark read/unread
 - **Settings**: Tabbed settings page (Branding, Company, Payroll, Xero, Portal, Users)
 - **Xero Integration**: OAuth2 connection to Xero Payroll AU + Accounting API. Organisation (tenant) picker for multi-org support. Individual sync for: Employees, Pay Runs, Timesheets, Invoices, Payroll Settings. Sync All button. Xero-synced contractors show badge and locked fields.

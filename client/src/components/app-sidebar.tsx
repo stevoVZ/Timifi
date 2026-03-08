@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, Users, Clock, CreditCard, FileText, Bell, Settings, CalendarDays, DollarSign } from "lucide-react";
+import { LayoutDashboard, Users, Clock, CreditCard, FileText, Bell, Settings } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -21,8 +21,6 @@ const navItems = [
   { title: "Timesheets", url: "/timesheets", icon: Clock },
   { title: "Payroll", url: "/payroll", icon: CreditCard },
   { title: "Invoices", url: "/invoices", icon: FileText },
-  { title: "Leave", url: "/leave", icon: CalendarDays },
-  { title: "Pay Items", url: "/pay-items", icon: DollarSign },
   { title: "Notifications", url: "/notifications", icon: Bell },
   { title: "Settings", url: "/settings", icon: Settings },
 ];

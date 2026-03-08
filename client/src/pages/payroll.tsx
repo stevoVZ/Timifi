@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { StatusBadge } from "@/components/status-badge";
@@ -69,6 +69,7 @@ export default function PayrollPage() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [hasInitialized, setHasInitialized] = useState(false);
   const { toast } = useToast();
 
   const { data: payRunsList, isLoading: loadingPayRuns } = useQuery<PayRun[]>({
@@ -82,6 +83,19 @@ export default function PayrollPage() {
   const { data: timesheets } = useQuery<Timesheet[]>({
     queryKey: ["/api/timesheets"],
   });
+
+  useEffect(() => {
+    if (!hasInitialized && payRunsList && payRunsList.length > 0) {
+      const sorted = [...payRunsList].sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return b.month - a.month;
+      });
+      const latest = sorted[0];
+      setSelectedMonth(latest.month);
+      setSelectedYear(latest.year);
+      setHasInitialized(true);
+    }
+  }, [payRunsList, hasInitialized]);
 
   const currentPayRun = payRunsList?.find(
     (p) => p.year === selectedYear && p.month === selectedMonth

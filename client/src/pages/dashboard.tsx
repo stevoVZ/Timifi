@@ -6,21 +6,24 @@ import { StatusBadge } from "@/components/status-badge";
 import { Link } from "wouter";
 import {
   Users, Clock, FileText, CreditCard, ArrowRight,
-  Upload, Receipt, UserPlus, CalendarDays, Briefcase,
-  Bell, AlertTriangle, FileCheck, ShieldCheck,
+  Upload, Receipt, UserPlus, Briefcase,
+  Bell, ShieldCheck, DollarSign,
 } from "lucide-react";
-import type { Contractor, Notification } from "@shared/schema";
+import type { Contractor, Notification, Invoice, PayRun } from "@shared/schema";
 
 interface DashboardStats {
   activeContractors: number;
   pendingContractors: number;
-  timesheetsDue: number;
+  totalInvoices: number;
+  totalBilled: string;
+  totalPaid: string;
+  paidInvoiceCount: number;
   outstandingInvoiceAmount: string;
   overdueAmount: string;
-  nextPayRunDate: string | null;
-  nextPayRunCount: number;
+  payRunCount: number;
+  payRunTotalGross: string;
+  latestPayRunDate: string | null;
   submittedTimesheets: number;
-  approvedThisMonth: number;
   ytdBillings: string;
 }
 
@@ -30,8 +33,8 @@ function formatCurrency(amount: string | number) {
 }
 
 function formatDate(dateStr: string | null) {
-  if (!dateStr) return "Not scheduled";
-  return new Date(dateStr).toLocaleDateString("en-AU", { day: "numeric", month: "short" });
+  if (!dateStr) return "N/A";
+  return new Date(dateStr).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
 }
 
 function getInitials(firstName: string, lastName: string) {
@@ -77,8 +80,32 @@ export default function DashboardPage() {
     queryKey: ["/api/notifications"],
   });
 
+  const { data: invoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
+  });
+
+  const { data: payRuns } = useQuery<PayRun[]>({
+    queryKey: ["/api/pay-runs"],
+  });
+
   const activeContractors = contractors?.filter((c) => c.status === "ACTIVE" || c.status === "PENDING_SETUP").slice(0, 6) || [];
   const recentActivity = notifications?.slice(0, 8) || [];
+
+  const recentInvoices = invoices
+    ? [...invoices]
+        .sort((a, b) => {
+          const dateA = a.paidDate || a.issueDate || a.createdAt;
+          const dateB = b.paidDate || b.issueDate || b.createdAt;
+          return new Date(dateB).getTime() - new Date(dateA).getTime();
+        })
+        .slice(0, 5)
+    : [];
+
+  const recentPayRuns = payRuns
+    ? [...payRuns]
+        .sort((a, b) => new Date(b.payDate).getTime() - new Date(a.payDate).getTime())
+        .slice(0, 5)
+    : [];
 
   const kpis = stats ? [
     {
@@ -91,41 +118,39 @@ export default function DashboardPage() {
       href: "/contractors",
     },
     {
-      label: "Pending timesheets",
-      value: String(stats.submittedTimesheets),
-      sub: `${stats.approvedThisMonth} approved this month`,
-      icon: Clock,
-      color: "text-amber-600 dark:text-amber-400",
-      bgColor: "bg-amber-50 dark:bg-amber-900/20",
-      href: "/timesheets",
-    },
-    {
-      label: "Invoices outstanding",
-      value: formatCurrency(stats.outstandingInvoiceAmount),
-      sub: `Overdue: ${formatCurrency(stats.overdueAmount)}`,
+      label: "Total invoices",
+      value: String(stats.totalInvoices),
+      sub: `${formatCurrency(stats.totalBilled)} billed`,
       icon: FileText,
-      color: parseFloat(stats.overdueAmount) > 0 ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400",
-      bgColor: parseFloat(stats.overdueAmount) > 0 ? "bg-red-50 dark:bg-red-900/20" : "bg-green-50 dark:bg-green-900/20",
+      color: "text-blue-600 dark:text-blue-400",
+      bgColor: "bg-blue-50 dark:bg-blue-900/20",
       href: "/invoices",
     },
     {
-      label: "Next pay run",
-      value: formatDate(stats.nextPayRunDate),
-      sub: `${stats.nextPayRunCount} contractors`,
-      icon: CreditCard,
+      label: "Total paid",
+      value: formatCurrency(stats.totalPaid),
+      sub: `${stats.paidInvoiceCount} invoices paid`,
+      icon: DollarSign,
       color: "text-green-600 dark:text-green-400",
       bgColor: "bg-green-50 dark:bg-green-900/20",
+      href: "/invoices",
+    },
+    {
+      label: `Pay runs (${fy})`,
+      value: String(stats.payRunCount),
+      sub: `${formatCurrency(stats.payRunTotalGross)} gross`,
+      icon: CreditCard,
+      color: "text-amber-600 dark:text-amber-400",
+      bgColor: "bg-amber-50 dark:bg-amber-900/20",
       href: "/payroll",
     },
   ] : [];
 
   const quickLinks = [
     { title: "Upload timesheets", desc: "Drop PDFs for one or more contractors", href: "/timesheets", icon: Upload, color: "text-primary", bgColor: "bg-primary/10" },
-    { title: "Create invoice", desc: "Create and email invoices", href: "/invoices", icon: Receipt, color: "text-amber-600", bgColor: "bg-amber-50 dark:bg-amber-900/20" },
-    { title: "Run payroll", desc: "Review and file this month's payroll", href: "/payroll", icon: CreditCard, color: "text-green-600", bgColor: "bg-green-50 dark:bg-green-900/20" },
+    { title: "View invoices", desc: "Browse all synced Xero invoices", href: "/invoices", icon: Receipt, color: "text-amber-600", bgColor: "bg-amber-50 dark:bg-amber-900/20" },
+    { title: "View payroll", desc: "Review pay runs and payroll history", href: "/payroll", icon: CreditCard, color: "text-green-600", bgColor: "bg-green-50 dark:bg-green-900/20" },
     { title: "Add contractor", desc: "Set up a new contractor profile", href: "/contractors/new", icon: UserPlus, color: "text-primary", bgColor: "bg-primary/10" },
-    { title: "Leave requests", desc: "Review pending leave requests", href: "/leave", icon: CalendarDays, color: "text-violet-600", bgColor: "bg-violet-50 dark:bg-violet-900/20" },
-    { title: "Pay items", desc: "Manage pay codes and rates", href: "/pay-items", icon: Briefcase, color: "text-muted-foreground", bgColor: "bg-muted" },
   ];
 
   return (
@@ -171,10 +196,10 @@ export default function DashboardPage() {
               <Card>
                 <CardContent className="p-5">
                   <div className="text-sm font-semibold text-foreground mb-4" data-testid="text-quick-actions-title">Quick actions</div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {quickLinks.map((q) => (
                       <Link key={q.href} href={q.href} data-testid={`link-quick-${q.title.replace(/\s/g, "-").toLowerCase()}`}>
-                        <div className={`p-3 rounded-lg border cursor-pointer hover:shadow-sm transition-all flex items-center gap-2.5`}>
+                        <div className="p-3 rounded-lg border cursor-pointer hover:shadow-sm transition-all flex items-center gap-2.5">
                           <div className={`w-8 h-8 rounded-md ${q.bgColor} flex items-center justify-center flex-shrink-0`}>
                             <q.icon className={`w-4 h-4 ${q.color}`} />
                           </div>
@@ -188,46 +213,77 @@ export default function DashboardPage() {
 
               <Card>
                 <div className="flex items-center justify-between px-5 py-3.5 border-b">
-                  <span className="text-sm font-semibold text-foreground" data-testid="text-contractors-table-title">Contractors</span>
-                  <Link href="/contractors" className="text-xs font-semibold text-primary hover:underline" data-testid="link-view-all-contractors">
-                    View all →
+                  <span className="text-sm font-semibold text-foreground" data-testid="text-recent-invoices-title">Recent invoices</span>
+                  <Link href="/invoices" className="text-xs font-semibold text-primary hover:underline" data-testid="link-view-all-invoices">
+                    View all <ArrowRight className="w-3 h-3 inline" />
                   </Link>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className="border-b bg-muted/30">
-                        <th className="px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Contractor</th>
+                        <th className="px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Invoice</th>
                         <th className="px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Client</th>
-                        <th className="px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Rate</th>
+                        <th className="px-4 py-2.5 text-right text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Amount</th>
                         <th className="px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Status</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {activeContractors.length === 0 ? (
+                      {recentInvoices.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="p-6 text-center text-sm text-muted-foreground">No contractors</td>
+                          <td colSpan={4} className="p-6 text-center text-sm text-muted-foreground">No invoices</td>
                         </tr>
                       ) : (
-                        activeContractors.map((c) => (
-                          <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                        recentInvoices.map((inv) => (
+                          <tr key={inv.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors" data-testid={`row-invoice-${inv.id}`}>
                             <td className="px-4 py-3">
-                              <Link href={`/contractors/${c.id}`} data-testid={`link-contractor-${c.id}`}>
-                                <div className="flex items-center gap-2.5 cursor-pointer">
-                                  <div
-                                    className="w-8 h-8 rounded-md flex items-center justify-center text-[11px] font-bold flex-shrink-0"
-                                    style={{ backgroundColor: `${c.accentColour || "#2563eb"}15`, color: c.accentColour || "#2563eb" }}
-                                  >
-                                    {getInitials(c.firstName, c.lastName)}
-                                  </div>
-                                  <span className="text-[13px] font-semibold text-foreground">{c.firstName} {c.lastName}</span>
-                                </div>
-                              </Link>
+                              <span className="text-[13px] font-mono font-semibold text-foreground">{inv.invoiceNumber || "\u2014"}</span>
                             </td>
-                            <td className="px-4 py-3 text-[13px] text-muted-foreground">{c.clientName || "—"}</td>
-                            <td className="px-4 py-3 text-[13px] font-mono text-foreground">${c.hourlyRate}/hr</td>
+                            <td className="px-4 py-3 text-[13px] text-muted-foreground">{inv.contactName || "\u2014"}</td>
+                            <td className="px-4 py-3 text-[13px] font-mono font-medium text-foreground text-right">{formatCurrency(inv.amountInclGst)}</td>
                             <td className="px-4 py-3">
-                              <StatusBadge status={c.status} />
+                              <StatusBadge status={inv.status} />
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+
+              <Card>
+                <div className="flex items-center justify-between px-5 py-3.5 border-b">
+                  <span className="text-sm font-semibold text-foreground" data-testid="text-recent-payruns-title">Recent pay runs</span>
+                  <Link href="/payroll" className="text-xs font-semibold text-primary hover:underline" data-testid="link-view-all-payruns">
+                    View all <ArrowRight className="w-3 h-3 inline" />
+                  </Link>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b bg-muted/30">
+                        <th className="px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Pay date</th>
+                        <th className="px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Employees</th>
+                        <th className="px-4 py-2.5 text-right text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Gross</th>
+                        <th className="px-4 py-2.5 text-right text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Net</th>
+                        <th className="px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recentPayRuns.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="p-6 text-center text-sm text-muted-foreground">No pay runs</td>
+                        </tr>
+                      ) : (
+                        recentPayRuns.map((pr) => (
+                          <tr key={pr.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors" data-testid={`row-payrun-${pr.id}`}>
+                            <td className="px-4 py-3 text-[13px] text-foreground">{formatDate(pr.payDate)}</td>
+                            <td className="px-4 py-3 text-[13px] text-muted-foreground">{pr.employeeCount}</td>
+                            <td className="px-4 py-3 text-[13px] font-mono font-medium text-foreground text-right">{formatCurrency(pr.totalGross || "0")}</td>
+                            <td className="px-4 py-3 text-[13px] font-mono font-medium text-foreground text-right">{formatCurrency(pr.totalNet || "0")}</td>
+                            <td className="px-4 py-3">
+                              <StatusBadge status={pr.status} />
                             </td>
                           </tr>
                         ))
@@ -241,9 +297,45 @@ export default function DashboardPage() {
             <div className="space-y-6">
               <Card>
                 <div className="flex items-center justify-between px-5 py-3.5 border-b">
+                  <span className="text-sm font-semibold text-foreground" data-testid="text-contractors-table-title">Contractors</span>
+                  <Link href="/contractors" className="text-xs font-semibold text-primary hover:underline" data-testid="link-view-all-contractors">
+                    View all <ArrowRight className="w-3 h-3 inline" />
+                  </Link>
+                </div>
+                <CardContent className="p-0">
+                  {activeContractors.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-muted-foreground">No contractors</div>
+                  ) : (
+                    <div className="divide-y">
+                      {activeContractors.map((c) => (
+                        <Link key={c.id} href={`/contractors/${c.id}`} data-testid={`link-contractor-${c.id}`}>
+                          <div className="px-5 py-3 hover:bg-muted/30 transition-colors cursor-pointer">
+                            <div className="flex items-center gap-2.5">
+                              <div
+                                className="w-8 h-8 rounded-md flex items-center justify-center text-[11px] font-bold flex-shrink-0"
+                                style={{ backgroundColor: `${c.accentColour || "#2563eb"}15`, color: c.accentColour || "#2563eb" }}
+                              >
+                                {getInitials(c.firstName, c.lastName)}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <span className="text-[13px] font-semibold text-foreground">{c.firstName} {c.lastName}</span>
+                                <div className="text-[11px] text-muted-foreground">{c.clientName || "\u2014"} · ${c.hourlyRate}/hr</div>
+                              </div>
+                              <StatusBadge status={c.status} />
+                            </div>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <div className="flex items-center justify-between px-5 py-3.5 border-b">
                   <span className="text-sm font-semibold text-foreground" data-testid="text-activity-title">Recent activity</span>
                   <Link href="/notifications" className="text-xs font-semibold text-primary hover:underline" data-testid="link-view-all-activity">
-                    View all →
+                    View all <ArrowRight className="w-3 h-3 inline" />
                   </Link>
                 </div>
                 <CardContent className="p-0">
