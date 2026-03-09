@@ -53,6 +53,9 @@ import {
   Check,
   X,
   Wand2,
+  ChevronRight,
+  Eye,
+  Users,
 } from "lucide-react";
 import { Link } from "wouter";
 import type { Invoice, Employee, Timesheet, Placement } from "@shared/schema";
@@ -80,9 +83,14 @@ type AlignmentProposal = {
   invoiceRate: number | null;
   placementRate: number | null;
   amountExclGst: string | null;
+  amountInclGst: string | null;
+  gstAmount: string | null;
   hours: string | null;
+  hourlyRate: string | null;
   description: string | null;
   issueDate: string | null;
+  dueDate: string | null;
+  status: string;
 };
 
 export default function InvoicesPage() {
@@ -640,11 +648,13 @@ function AlignmentWizardDialog({
   onComplete: () => void;
 }) {
   const [proposals, setProposals] = useState<AlignmentProposal[]>([]);
-  const [decisions, setDecisions] = useState<Map<string, { action: "accept" | "skip"; employeeId: string | null }>>(new Map());
+  const [decisions, setDecisions] = useState<Map<string, { action: "accept" | "skip"; employeeIds: string[] }>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [result, setResult] = useState<{ accepted: number; skipped: number } | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const { toast } = useToast();
 
   const fetchPreview = async () => {
@@ -654,12 +664,12 @@ function AlignmentWizardDialog({
       const res = await apiRequest("POST", "/api/invoices/alignment-preview");
       const data: AlignmentProposal[] = await res.json();
       setProposals(data);
-      const newDecisions = new Map<string, { action: "accept" | "skip"; employeeId: string | null }>();
+      const newDecisions = new Map<string, { action: "accept" | "skip"; employeeIds: string[] }>();
       for (const p of data) {
         if (p.proposedEmployeeId && (p.confidence === "high" || p.confidence === "medium")) {
-          newDecisions.set(p.invoiceId, { action: "accept", employeeId: p.proposedEmployeeId });
+          newDecisions.set(p.invoiceId, { action: "accept", employeeIds: [p.proposedEmployeeId] });
         } else {
-          newDecisions.set(p.invoiceId, { action: "skip", employeeId: p.proposedEmployeeId });
+          newDecisions.set(p.invoiceId, { action: "skip", employeeIds: p.proposedEmployeeId ? [p.proposedEmployeeId] : [] });
         }
       }
       setDecisions(newDecisions);
@@ -677,7 +687,7 @@ function AlignmentWizardDialog({
     try {
       const items = Array.from(decisions.entries()).map(([invoiceId, d]) => ({
         invoiceId,
-        employeeId: d.employeeId,
+        employeeIds: d.employeeIds,
         action: d.action,
       }));
       const res = await apiRequest("POST", "/api/invoices/alignment-commit", { decisions: items });
@@ -701,18 +711,44 @@ function AlignmentWizardDialog({
     });
   };
 
-  const setEmployeeForProposal = (invoiceId: string, employeeId: string) => {
+  const toggleEmployeeForProposal = (invoiceId: string, employeeId: string) => {
     setDecisions(prev => {
       const next = new Map(prev);
-      next.set(invoiceId, { action: "accept", employeeId });
+      const current = next.get(invoiceId);
+      const currentIds = current?.employeeIds || [];
+      const hasId = currentIds.includes(employeeId);
+      const newIds = hasId ? currentIds.filter(id => id !== employeeId) : [...currentIds, employeeId];
+      next.set(invoiceId, { action: newIds.length > 0 ? "accept" : "skip", employeeIds: newIds });
       return next;
     });
   };
 
-  const matched = proposals.filter(p => p.matchMethod !== "unmatched");
-  const unmatched = proposals.filter(p => p.matchMethod === "unmatched");
-  const acceptCount = Array.from(decisions.values()).filter(d => d.action === "accept" && d.employeeId).length;
+  const statusCounts = proposals.reduce((acc, p) => {
+    const s = (p.status || "UNKNOWN").toUpperCase();
+    acc[s] = (acc[s] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const statusTabs = ["ALL", ...Object.keys(statusCounts).sort()];
+
+  const filteredProposals = statusFilter === "ALL"
+    ? proposals
+    : proposals.filter(p => (p.status || "UNKNOWN").toUpperCase() === statusFilter);
+
+  const matched = filteredProposals.filter(p => p.matchMethod !== "unmatched");
+  const unmatched = filteredProposals.filter(p => p.matchMethod === "unmatched");
+  const acceptCount = Array.from(decisions.values()).filter(d => d.action === "accept" && d.employeeIds.length > 0).length;
   const skipCount = proposals.length - acceptCount;
+
+  const statusBadgeColor = (status: string) => {
+    const s = status.toUpperCase();
+    if (s === "PAID") return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+    if (s === "AUTHORISED" || s === "AUTHORIZED") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+    if (s === "SENT" || s === "SUBMITTED") return "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400";
+    if (s === "VOIDED" || s === "DELETED") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+    if (s === "DRAFT") return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400";
+    return "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400";
+  };
 
   const methodBadge = (method: string, confidence: string) => {
     const colors: Record<string, string> = {
@@ -758,7 +794,7 @@ function AlignmentWizardDialog({
 
   return (
     <Dialog open onOpenChange={() => onClose()}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col" data-testid="dialog-alignment-wizard">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" data-testid="dialog-alignment-wizard">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Wand2 className="w-5 h-5" />
@@ -788,8 +824,25 @@ function AlignmentWizardDialog({
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground border-b pb-3">
-              <span>{proposals.length} unlinked invoice{proposals.length !== 1 ? "s" : ""}</span>
+            <div className="flex flex-wrap items-center gap-1.5 pb-2 border-b" data-testid="alignment-status-filter">
+              {statusTabs.map(s => (
+                <button
+                  key={s}
+                  onClick={() => setStatusFilter(s)}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                    statusFilter === s
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-background text-muted-foreground border-border hover:border-foreground"
+                  }`}
+                  data-testid={`filter-status-${s.toLowerCase()}`}
+                >
+                  {s === "ALL" ? `All (${proposals.length})` : `${s.charAt(0) + s.slice(1).toLowerCase()} (${statusCounts[s] || 0})`}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3 text-xs text-muted-foreground pb-2">
+              <span>{filteredProposals.length} invoice{filteredProposals.length !== 1 ? "s" : ""}</span>
               <span className="text-emerald-600 font-medium">{matched.length} auto-matched</span>
               <span className="text-red-500 font-medium">{unmatched.length} need review</span>
               <div className="ml-auto flex gap-2 text-xs">
@@ -799,9 +852,10 @@ function AlignmentWizardDialog({
             </div>
 
             <div className="flex-1 overflow-y-auto min-h-0 divide-y" data-testid="alignment-proposals-list">
-              {proposals.map((p) => {
+              {filteredProposals.map((p) => {
                 const decision = decisions.get(p.invoiceId);
-                const isAccepted = decision?.action === "accept" && decision.employeeId;
+                const isAccepted = decision?.action === "accept" && decision.employeeIds.length > 0;
+                const isExpanded = expandedId === p.invoiceId;
 
                 const relevantEmployees = p.clientId
                   ? placements
@@ -811,59 +865,151 @@ function AlignmentWizardDialog({
                   : employees;
 
                 const uniqueEmployees = Array.from(new Map(relevantEmployees.map(e => [e.id, e])).values());
+                const employeeList = uniqueEmployees.length > 0 ? uniqueEmployees : employees;
+                const selectedIds = decision?.employeeIds || [];
 
                 return (
-                  <div key={p.invoiceId} className={`py-2.5 px-1 flex items-start gap-3 text-sm ${isAccepted ? "bg-emerald-50/50 dark:bg-emerald-900/10" : ""}`} data-testid={`alignment-row-${p.invoiceId}`}>
-                    <button
-                      onClick={() => toggleDecision(p.invoiceId)}
-                      className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border transition-colors ${
-                        isAccepted
-                          ? "bg-emerald-600 border-emerald-600 text-white"
-                          : "border-border hover:border-foreground"
-                      }`}
-                      data-testid={`toggle-${p.invoiceId}`}
-                    >
-                      {isAccepted && <Check className="w-3 h-3" />}
-                    </button>
+                  <div key={p.invoiceId} className={`${isAccepted ? "bg-emerald-50/50 dark:bg-emerald-900/10" : ""}`} data-testid={`alignment-row-${p.invoiceId}`}>
+                    <div className="py-2.5 px-1 flex items-start gap-3 text-sm">
+                      <button
+                        onClick={() => toggleDecision(p.invoiceId)}
+                        className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border transition-colors ${
+                          isAccepted
+                            ? "bg-emerald-600 border-emerald-600 text-white"
+                            : "border-border hover:border-foreground"
+                        }`}
+                        data-testid={`toggle-${p.invoiceId}`}
+                      >
+                        {isAccepted && <Check className="w-3 h-3" />}
+                      </button>
 
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-xs font-medium" data-testid={`text-inv-number-${p.invoiceId}`}>{p.invoiceNumber || "—"}</span>
-                        {methodBadge(p.matchMethod, p.confidence)}
-                        {p.issueDate && <span className="text-[10px] text-muted-foreground">{new Date(p.issueDate).toLocaleDateString("en-AU")}</span>}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {p.contactName || "Unknown contact"} · {p.amountExclGst ? formatCurrency(p.amountExclGst) : "—"} {p.hours ? `· ${p.hours}h` : ""}
-                      </div>
-                      {p.description && (
-                        <div className="text-[10px] text-muted-foreground truncate max-w-md">{p.description}</div>
-                      )}
-                    </div>
+                      <button
+                        onClick={() => setExpandedId(isExpanded ? null : p.invoiceId)}
+                        className="mt-0.5 w-5 h-5 flex items-center justify-center flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                        data-testid={`expand-${p.invoiceId}`}
+                      >
+                        <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                      </button>
 
-                    <div className="flex-shrink-0 w-44">
-                      {p.matchMethod !== "unmatched" && isAccepted ? (
-                        <div className="text-xs">
-                          <span className="font-medium">{p.proposedEmployeeName}</span>
-                          {p.placementRate && <span className="text-muted-foreground ml-1">${p.placementRate.toFixed(0)}/hr</span>}
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-xs font-medium" data-testid={`text-inv-number-${p.invoiceId}`}>{p.invoiceNumber || "—"}</span>
+                          {methodBadge(p.matchMethod, p.confidence)}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${statusBadgeColor(p.status)}`} data-testid={`badge-status-${p.invoiceId}`}>
+                            {p.status}
+                          </span>
+                          {p.issueDate && <span className="text-[10px] text-muted-foreground">{new Date(p.issueDate).toLocaleDateString("en-AU")}</span>}
                         </div>
-                      ) : (
-                        <select
-                          className="w-full text-xs border rounded px-2 py-1 bg-background"
-                          value={decision?.employeeId || ""}
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              setEmployeeForProposal(p.invoiceId, e.target.value);
-                            }
-                          }}
-                          data-testid={`select-employee-${p.invoiceId}`}
-                        >
-                          <option value="">Select employee...</option>
-                          {(uniqueEmployees.length > 0 ? uniqueEmployees : employees).map(e => (
-                            <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>
-                          ))}
-                        </select>
-                      )}
+                        <div className="text-xs text-muted-foreground truncate">
+                          {p.contactName || "Unknown contact"} · {p.amountExclGst ? formatCurrency(p.amountExclGst) : "—"} {p.hours ? `· ${p.hours}h` : ""}
+                          {p.hourlyRate ? ` · $${parseFloat(p.hourlyRate).toFixed(0)}/hr` : ""}
+                        </div>
+                        {!isExpanded && p.description && (
+                          <div className="text-[10px] text-muted-foreground truncate max-w-md">{p.description}</div>
+                        )}
+                      </div>
+
+                      <div className="flex-shrink-0 w-48">
+                        {selectedIds.length > 0 ? (
+                          <div className="text-xs space-y-0.5">
+                            {selectedIds.map(id => {
+                              const emp = employees.find(e => e.id === id);
+                              return emp ? (
+                                <div key={id} className="flex items-center gap-1">
+                                  <Users className="w-3 h-3 text-muted-foreground" />
+                                  <span className="font-medium">{emp.firstName} {emp.lastName}</span>
+                                  <button onClick={() => toggleEmployeeForProposal(p.invoiceId, id)} className="ml-auto text-muted-foreground hover:text-destructive">
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ) : null;
+                            })}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">No employee selected</span>
+                        )}
+                      </div>
                     </div>
+
+                    {isExpanded && (
+                      <div className="pb-3 pl-12 pr-2 space-y-3" data-testid={`detail-panel-${p.invoiceId}`}>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs bg-muted/50 rounded-md p-3">
+                          <div>
+                            <span className="text-muted-foreground">Amount (excl GST):</span>
+                            <span className="ml-2 font-medium">{p.amountExclGst ? formatCurrency(p.amountExclGst) : "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Amount (incl GST):</span>
+                            <span className="ml-2 font-medium">{p.amountInclGst ? formatCurrency(p.amountInclGst) : "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">GST:</span>
+                            <span className="ml-2 font-medium">{p.gstAmount ? formatCurrency(p.gstAmount) : "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Hourly Rate:</span>
+                            <span className="ml-2 font-medium">{p.hourlyRate ? `$${parseFloat(p.hourlyRate).toFixed(2)}/hr` : "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Hours:</span>
+                            <span className="ml-2 font-medium">{p.hours || "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Status:</span>
+                            <span className={`ml-2 px-1.5 py-0.5 rounded font-medium ${statusBadgeColor(p.status)}`}>{p.status}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Issue Date:</span>
+                            <span className="ml-2 font-medium">{p.issueDate ? new Date(p.issueDate).toLocaleDateString("en-AU") : "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Due Date:</span>
+                            <span className="ml-2 font-medium">{p.dueDate ? new Date(p.dueDate).toLocaleDateString("en-AU") : "—"}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Client:</span>
+                            <span className="ml-2 font-medium">{p.clientName || p.contactName || "—"}</span>
+                          </div>
+                          {p.placementRate && (
+                            <div>
+                              <span className="text-muted-foreground">Placement Rate:</span>
+                              <span className="ml-2 font-medium">${p.placementRate.toFixed(2)}/hr</span>
+                            </div>
+                          )}
+                        </div>
+                        {p.description && (
+                          <div className="text-xs">
+                            <span className="text-muted-foreground font-medium">Description:</span>
+                            <p className="mt-1 whitespace-pre-wrap text-muted-foreground bg-muted/50 rounded-md p-2">{p.description}</p>
+                          </div>
+                        )}
+                        <div className="text-xs">
+                          <span className="text-muted-foreground font-medium mb-1.5 block">Assign Employees:</span>
+                          <div className="grid grid-cols-2 gap-1 max-h-36 overflow-y-auto bg-muted/30 rounded-md p-2">
+                            {employeeList.map(e => {
+                              const isSelected = selectedIds.includes(e.id);
+                              return (
+                                <label
+                                  key={e.id}
+                                  className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer transition-colors ${
+                                    isSelected ? "bg-emerald-100 dark:bg-emerald-900/30" : "hover:bg-muted"
+                                  }`}
+                                  data-testid={`employee-check-${p.invoiceId}-${e.id}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleEmployeeForProposal(p.invoiceId, e.id)}
+                                    className="rounded border-border"
+                                  />
+                                  <span className={isSelected ? "font-medium" : ""}>{e.firstName} {e.lastName}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

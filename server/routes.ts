@@ -1739,9 +1739,14 @@ export async function registerRoutes(
       invoiceRate: number | null;
       placementRate: number | null;
       amountExclGst: string | null;
+      amountInclGst: string | null;
+      gstAmount: string | null;
       hours: string | null;
+      hourlyRate: string | null;
       description: string | null;
       issueDate: string | null;
+      dueDate: string | null;
+      status: string;
     }> = [];
 
     const clientByName = new Map(clients.map((c: any) => [c.name.toLowerCase().trim(), c]));
@@ -1759,28 +1764,41 @@ export async function registerRoutes(
         || placementsByClientName.get((inv.contactName || "").toLowerCase().trim())
         || [];
 
-      const invRate = inv.hours && parseFloat(inv.hours) > 0
+      const derivedRate = inv.hours && parseFloat(inv.hours) > 0
         ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
         : 0;
+      const storedRate = inv.hourlyRate ? parseFloat(inv.hourlyRate) : 0;
+      const invRate = derivedRate > 0 ? derivedRate : storedRate;
+
+      const invHourlyRate = invRate > 0 ? invRate.toFixed(2) : null;
+
+      const baseProposal = {
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        contactName: inv.contactName,
+        clientId: clientRecord?.id || inv.clientId || null,
+        clientName: clientRecord?.name || inv.contactName || null,
+        currentEmployeeId: null,
+        amountExclGst: inv.amountExclGst,
+        amountInclGst: inv.amountInclGst || null,
+        gstAmount: inv.gstAmount || null,
+        hours: inv.hours,
+        hourlyRate: invHourlyRate,
+        description: inv.description,
+        issueDate: inv.issueDate,
+        dueDate: inv.dueDate || null,
+        status: inv.status || "UNKNOWN",
+      };
 
       if (clientPlacements.length === 1) {
         proposals.push({
-          invoiceId: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          contactName: inv.contactName,
-          clientId: clientRecord?.id || inv.clientId || null,
-          clientName: clientRecord?.name || inv.contactName || null,
-          currentEmployeeId: null,
+          ...baseProposal,
           proposedEmployeeId: clientPlacements[0].employeeId,
           proposedEmployeeName: `${clientPlacements[0].employee.firstName} ${clientPlacements[0].employee.lastName}`,
           matchMethod: "placement",
           confidence: "high",
           invoiceRate: invRate || null,
           placementRate: clientPlacements[0].rate || null,
-          amountExclGst: inv.amountExclGst,
-          hours: inv.hours,
-          description: inv.description,
-          issueDate: inv.issueDate,
         });
         continue;
       }
@@ -1789,22 +1807,13 @@ export async function registerRoutes(
         const rateMatches = clientPlacements.filter(p => p.rate > 0 && Math.abs(invRate - p.rate) < 0.01);
         if (rateMatches.length === 1) {
           proposals.push({
-            invoiceId: inv.id,
-            invoiceNumber: inv.invoiceNumber,
-            contactName: inv.contactName,
-            clientId: clientRecord?.id || inv.clientId || null,
-            clientName: clientRecord?.name || inv.contactName || null,
-            currentEmployeeId: null,
+            ...baseProposal,
             proposedEmployeeId: rateMatches[0].employeeId,
             proposedEmployeeName: `${rateMatches[0].employee.firstName} ${rateMatches[0].employee.lastName}`,
             matchMethod: "rate",
             confidence: "high",
             invoiceRate: invRate,
             placementRate: rateMatches[0].rate,
-            amountExclGst: inv.amountExclGst,
-            hours: inv.hours,
-            description: inv.description,
-            issueDate: inv.issueDate,
           });
           continue;
         }
@@ -1820,44 +1829,26 @@ export async function registerRoutes(
         });
         if (nameMatches.length === 1) {
           proposals.push({
-            invoiceId: inv.id,
-            invoiceNumber: inv.invoiceNumber,
-            contactName: inv.contactName,
-            clientId: clientRecord?.id || inv.clientId || null,
-            clientName: clientRecord?.name || inv.contactName || null,
-            currentEmployeeId: null,
+            ...baseProposal,
             proposedEmployeeId: nameMatches[0].employeeId,
             proposedEmployeeName: `${nameMatches[0].employee.firstName} ${nameMatches[0].employee.lastName}`,
             matchMethod: "description",
             confidence: "medium",
             invoiceRate: invRate || null,
             placementRate: nameMatches[0].rate || null,
-            amountExclGst: inv.amountExclGst,
-            hours: inv.hours,
-            description: inv.description,
-            issueDate: inv.issueDate,
           });
           continue;
         }
       }
 
       proposals.push({
-        invoiceId: inv.id,
-        invoiceNumber: inv.invoiceNumber,
-        contactName: inv.contactName,
-        clientId: clientRecord?.id || inv.clientId || null,
-        clientName: clientRecord?.name || inv.contactName || null,
-        currentEmployeeId: null,
+        ...baseProposal,
         proposedEmployeeId: null,
         proposedEmployeeName: null,
         matchMethod: "unmatched",
         confidence: "low",
         invoiceRate: invRate || null,
         placementRate: null,
-        amountExclGst: inv.amountExclGst,
-        hours: inv.hours,
-        description: inv.description,
-        issueDate: inv.issueDate,
       });
     }
 
@@ -1881,12 +1872,12 @@ export async function registerRoutes(
 
   app.post("/api/invoices/alignment-commit", async (req, res) => {
     try {
-      const decisions: Array<{ invoiceId: string; employeeId: string | null; action: "accept" | "skip" }> = req.body.decisions || [];
+      const decisions: Array<{ invoiceId: string; employeeId?: string | null; employeeIds?: string[]; action: "accept" | "skip" }> = req.body.decisions || [];
       if (!Array.isArray(decisions)) {
         return res.status(400).json({ message: "decisions must be an array" });
       }
       const allEmployees = await storage.getEmployees();
-      const employeeIds = new Set(allEmployees.map(e => e.id));
+      const validEmployeeIds = new Set(allEmployees.map(e => e.id));
 
       let accepted = 0;
       let skipped = 0;
@@ -1894,12 +1885,15 @@ export async function registerRoutes(
 
       for (const d of decisions) {
         if (!d.invoiceId || typeof d.invoiceId !== "string") continue;
-        if (d.action !== "accept" || !d.employeeId) {
+        const rawIds: string[] = d.employeeIds?.length ? d.employeeIds : (d.employeeId ? [d.employeeId] : []);
+        const resolvedIds = Array.from(new Set(rawIds));
+        if (d.action !== "accept" || resolvedIds.length === 0) {
           skipped++;
           continue;
         }
-        if (!employeeIds.has(d.employeeId)) {
-          errors.push(`Unknown employee ${d.employeeId}`);
+        const validIds = resolvedIds.filter(id => validEmployeeIds.has(id));
+        if (validIds.length === 0) {
+          errors.push(`No valid employees for invoice ${d.invoiceId}`);
           skipped++;
           continue;
         }
@@ -1913,9 +1907,9 @@ export async function registerRoutes(
           skipped++;
           continue;
         }
-        const updated = await storage.updateInvoice(d.invoiceId, { employeeId: d.employeeId });
+        const updated = await storage.updateInvoice(d.invoiceId, { employeeId: validIds[0] });
         if (updated) {
-          await storage.setInvoiceEmployees(d.invoiceId, [d.employeeId]);
+          await storage.setInvoiceEmployees(d.invoiceId, validIds);
           accepted++;
         } else {
           skipped++;
