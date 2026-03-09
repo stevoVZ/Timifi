@@ -1058,12 +1058,38 @@ export async function syncInvoices(): Promise<{
     allEmployees.filter(c => c.companyName).map(c => [c.companyName!.toLowerCase(), c])
   );
 
+  const allClients = await storage.getClients();
+  const clientByXeroContactId = new Map(
+    allClients.filter(c => c.xeroContactId).map(c => [c.xeroContactId!, c])
+  );
+  const clientByName = new Map(
+    allClients.map(c => [c.name.toLowerCase().trim(), c])
+  );
+
+  const allPlacements = await storage.getAllPlacements();
+  const placementsByClientId = new Map<string, typeof allPlacements>();
+  for (const p of allPlacements) {
+    if (!p.clientId) continue;
+    const existing = placementsByClientId.get(p.clientId) || [];
+    existing.push(p);
+    placementsByClientId.set(p.clientId, existing);
+  }
+
   for (const inv of xeroInvoices) {
     try {
       if (inv.Type !== "ACCPAY" && inv.Type !== "ACCREC") continue;
 
       const contactEmail = inv.Contact?.EmailAddress?.toLowerCase();
       const contactName = inv.Contact?.Name || "";
+      const xeroContactId = inv.Contact?.ContactID || null;
+
+      let client = xeroContactId
+        ? clientByXeroContactId.get(xeroContactId)
+        : undefined;
+      if (!client && contactName) {
+        client = clientByName.get(contactName.toLowerCase().trim());
+      }
+      const clientId = client?.id || null;
 
       let employee = contactEmail ? employeeByEmail.get(contactEmail) : undefined;
 
@@ -1078,6 +1104,14 @@ export async function syncInvoices(): Promise<{
             c => c.firstName.toLowerCase() === nameParts[0].toLowerCase() &&
                  c.lastName.toLowerCase() === nameParts[nameParts.length - 1].toLowerCase()
           );
+        }
+      }
+
+      if (!employee && clientId) {
+        const clientPlacements = placementsByClientId.get(clientId) || [];
+        const activePlacements = clientPlacements.filter(p => p.status === "ACTIVE");
+        if (activePlacements.length === 1) {
+          employee = allEmployees.find(e => e.id === activePlacements[0].employeeId);
         }
       }
 
@@ -1125,6 +1159,8 @@ export async function syncInvoices(): Promise<{
           contactName: contactName || existing.contactName,
           employeeId: employee?.id || existing.employeeId,
           xeroInvoiceId: xeroInvoiceId || existing.xeroInvoiceId,
+          xeroContactId: xeroContactId || existing.xeroContactId,
+          clientId: clientId || existing.clientId,
           status: localStatus,
           amountExclGst: String(amountExclGst),
           gstAmount: String(gstAmount),
@@ -1144,6 +1180,8 @@ export async function syncInvoices(): Promise<{
           employeeId: employee?.id || null,
           contactName: contactName || null,
           xeroInvoiceId: xeroInvoiceId,
+          xeroContactId: xeroContactId,
+          clientId: clientId,
           year,
           month,
           invoiceNumber: invNumber,

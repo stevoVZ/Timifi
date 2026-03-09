@@ -1574,6 +1574,15 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/placements", async (_req, res) => {
+    try {
+      const data = await storage.getAllPlacements();
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch placements" });
+    }
+  });
+
   app.get("/api/employees/:id/placements", async (req, res) => {
     try {
       const data = await storage.getPlacements(req.params.id);
@@ -1774,21 +1783,28 @@ export async function registerRoutes(
         storage.getInvoices(),
         storage.getClients(),
       ]);
+      const clientByXeroContactId = new Map<string, typeof allClients[0]>();
       const clientByName = new Map<string, typeof allClients[0]>();
       for (const c of allClients) {
+        if (c.xeroContactId) clientByXeroContactId.set(c.xeroContactId, c);
         clientByName.set(c.name.toLowerCase().trim(), c);
       }
       let linked = 0;
       for (const inv of allInvoices) {
         if (inv.clientId) continue;
-        if (!inv.contactName) continue;
-        const client = clientByName.get(inv.contactName.toLowerCase().trim());
+        let client: typeof allClients[0] | undefined;
+        if (inv.xeroContactId) {
+          client = clientByXeroContactId.get(inv.xeroContactId);
+        }
+        if (!client && inv.contactName) {
+          client = clientByName.get(inv.contactName.toLowerCase().trim());
+        }
         if (client) {
           await storage.updateInvoice(inv.id, { clientId: client.id });
           linked++;
         }
       }
-      res.json({ linked, message: `Linked ${linked} invoices to clients by contact name` });
+      res.json({ linked, message: `Linked ${linked} invoices to clients` });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to link invoices to clients" });
     }

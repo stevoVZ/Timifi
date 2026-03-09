@@ -75,6 +75,7 @@ export const invoices = pgTable("invoices", {
   employeeId: varchar("employee_id").references(() => employees.id),
   clientId: varchar("client_id"),
   contactName: text("contact_name"),
+  xeroContactId: text("xero_contact_id"),
   xeroInvoiceId: text("xero_invoice_id").unique(),
   timesheetId: varchar("timesheet_id").references(() => timesheets.id),
   year: smallint("year").notNull(),

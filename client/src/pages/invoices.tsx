@@ -49,7 +49,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { Building2 } from "lucide-react";
-import type { Invoice, Employee, Timesheet } from "@shared/schema";
+import type { Invoice, Employee, Timesheet, Placement } from "@shared/schema";
 
 type ClientRecord = { id: string; name: string };
 
@@ -83,6 +83,10 @@ export default function InvoicesPage() {
 
   const { data: clients } = useQuery<ClientRecord[]>({
     queryKey: ["/api/clients"],
+  });
+
+  const { data: allPlacements } = useQuery<Placement[]>({
+    queryKey: ["/api/placements"],
   });
 
   const employeeMap = new Map(employees?.map((c) => [c.id, c]) || []);
@@ -554,6 +558,7 @@ export default function InvoicesPage() {
         <InvoiceDetailDialog
           invoice={detailInvoice}
           employees={employees || []}
+          placements={allPlacements || []}
           clientMap={clientMap}
           onClose={() => setDetailInvoice(null)}
           onSave={(id, data) => {
@@ -571,6 +576,7 @@ export default function InvoicesPage() {
 function InvoiceDetailDialog({
   invoice,
   employees,
+  placements,
   clientMap,
   onClose,
   onSave,
@@ -578,6 +584,7 @@ function InvoiceDetailDialog({
 }: {
   invoice: Invoice & { linkedEmployeeIds?: string[] };
   employees: Employee[];
+  placements: Placement[];
   clientMap: Map<string, ClientRecord>;
   onClose: () => void;
   onSave: (id: string, data: Record<string, any>) => void;
@@ -602,6 +609,20 @@ function InvoiceDetailDialog({
       prev.includes(empId) ? prev.filter(id => id !== empId) : [...prev, empId]
     );
   };
+
+  const invoiceClientId = (invoice as any).clientId as string | null;
+
+  const placementRateMap = new Map<string, string>();
+  if (invoiceClientId) {
+    const clientPlacements = placements.filter(
+      p => p.clientId === invoiceClientId && p.chargeOutRate
+    );
+    const activePlacements = clientPlacements.filter(p => p.status === "ACTIVE");
+    const endedPlacements = clientPlacements.filter(p => p.status !== "ACTIVE");
+    for (const p of [...endedPlacements, ...activePlacements]) {
+      placementRateMap.set(p.employeeId, p.chargeOutRate!);
+    }
+  }
 
   const filteredEmps = employees.filter(e => {
     if (!empSearch) return true;
@@ -719,7 +740,16 @@ function InvoiceDetailDialog({
                     data-testid={`checkbox-employee-${e.id}`}
                   />
                   <span>{e.firstName} {e.lastName}</span>
-                  {e.chargeOutRate && <span className="text-xs text-muted-foreground ml-auto">${parseFloat(e.chargeOutRate).toFixed(0)}/hr</span>}
+                  {(() => {
+                    const placementRate = placementRateMap.get(e.id);
+                    const rate = placementRate || e.chargeOutRate;
+                    if (!rate) return null;
+                    return (
+                      <span className={`text-xs ml-auto ${placementRate ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                        ${parseFloat(rate).toFixed(0)}/hr
+                      </span>
+                    );
+                  })()}
                 </label>
               ))}
             </div>
