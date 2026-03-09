@@ -443,7 +443,7 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries();
-      toast({ title: "Organisation switched. Previous data has been cleared — please run Sync All to load data for the new organisation." });
+      toast({ title: "Organisation switched. All views now show data for the selected organisation." });
     },
     onError: (err: Error) => {
       toast({ title: err.message || "Failed to switch organisation", variant: "destructive" });

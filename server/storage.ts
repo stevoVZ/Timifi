@@ -35,6 +35,19 @@ import {
   monthlyExpectedHours,
 } from "@shared/schema";
 
+let _cachedTenantId: string | null = null;
+
+export async function getActiveTenantId(): Promise<string | null> {
+  if (_cachedTenantId) return _cachedTenantId;
+  const [row] = await db.select().from(settings).where(eq(settings.key, "xero.tenantId"));
+  _cachedTenantId = row?.value || null;
+  return _cachedTenantId;
+}
+
+export function setActiveTenantId(id: string | null) {
+  _cachedTenantId = id;
+}
+
 export interface IStorage {
   getEmployees(): Promise<Employee[]>;
   getEmployee(id: string): Promise<Employee | undefined>;
@@ -189,32 +202,53 @@ export interface IStorage {
   getMonthlyExpectedHours(filters?: { employeeId?: string; month?: number; year?: number }): Promise<MonthlyExpectedHours[]>;
   upsertMonthlyExpectedHours(data: InsertMonthlyExpectedHours): Promise<MonthlyExpectedHours>;
   deleteMonthlyExpectedHours(id: string): Promise<void>;
-
-  clearAllSyncedData(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
+  private async tid() {
+    return getActiveTenantId();
+  }
+
+  private tenantFilter(table: any) {
+    return async () => {
+      const t = await this.tid();
+      return t ? eq(table.tenantId, t) : undefined;
+    };
+  }
+
   async getEmployees(): Promise<Employee[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(employees).where(eq(employees.tenantId, t)).orderBy(desc(employees.createdAt));
     return db.select().from(employees).orderBy(desc(employees.createdAt));
   }
 
   async getEmployee(id: string): Promise<Employee | undefined> {
-    const [employee] = await db.select().from(employees).where(eq(employees.id, id));
+    const t = await this.tid();
+    const conds = [eq(employees.id, id)];
+    if (t) conds.push(eq(employees.tenantId, t));
+    const [employee] = await db.select().from(employees).where(and(...conds));
     return employee;
   }
 
   async getEmployeeByEmail(email: string): Promise<Employee | undefined> {
-    const [employee] = await db.select().from(employees).where(eq(employees.email, email));
+    const t = await this.tid();
+    const conds = [eq(employees.email, email)];
+    if (t) conds.push(eq(employees.tenantId, t));
+    const [employee] = await db.select().from(employees).where(and(...conds));
     return employee;
   }
 
   async getEmployeeByXeroId(xeroEmployeeId: string): Promise<Employee | undefined> {
-    const [employee] = await db.select().from(employees).where(eq(employees.xeroEmployeeId, xeroEmployeeId));
+    const t = await this.tid();
+    const conds = [eq(employees.xeroEmployeeId, xeroEmployeeId)];
+    if (t) conds.push(eq(employees.tenantId, t));
+    const [employee] = await db.select().from(employees).where(and(...conds));
     return employee;
   }
 
   async createEmployee(data: InsertEmployee): Promise<Employee> {
-    const [employee] = await db.insert(employees).values(data).returning();
+    const t = await this.tid();
+    const [employee] = await db.insert(employees).values({ ...data, tenantId: t }).returning();
     return employee;
   }
 
@@ -228,22 +262,29 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTimesheets(): Promise<Timesheet[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(timesheets).where(eq(timesheets.tenantId, t)).orderBy(desc(timesheets.createdAt));
     return db.select().from(timesheets).orderBy(desc(timesheets.createdAt));
   }
 
   async getTimesheetsByEmployee(employeeId: string): Promise<Timesheet[]> {
-    return db.select().from(timesheets)
-      .where(eq(timesheets.employeeId, employeeId))
-      .orderBy(desc(timesheets.createdAt));
+    const t = await this.tid();
+    const conds = [eq(timesheets.employeeId, employeeId)];
+    if (t) conds.push(eq(timesheets.tenantId, t));
+    return db.select().from(timesheets).where(and(...conds)).orderBy(desc(timesheets.createdAt));
   }
 
   async getTimesheet(id: string): Promise<Timesheet | undefined> {
-    const [timesheet] = await db.select().from(timesheets).where(eq(timesheets.id, id));
+    const t = await this.tid();
+    const conds = [eq(timesheets.id, id)];
+    if (t) conds.push(eq(timesheets.tenantId, t));
+    const [timesheet] = await db.select().from(timesheets).where(and(...conds));
     return timesheet;
   }
 
   async createTimesheet(data: InsertTimesheet): Promise<Timesheet> {
-    const [timesheet] = await db.insert(timesheets).values(data).returning();
+    const t = await this.tid();
+    const [timesheet] = await db.insert(timesheets).values({ ...data, tenantId: t }).returning();
     return timesheet;
   }
 
@@ -264,48 +305,65 @@ export class DatabaseStorage implements IStorage {
 
   async createTimesheetAuditLogs(entries: InsertTimesheetAuditLog[]): Promise<TimesheetAuditLog[]> {
     if (entries.length === 0) return [];
-    return db.insert(timesheetAuditLog).values(entries).returning();
+    const t = await this.tid();
+    const stamped = entries.map(e => ({ ...e, tenantId: t }));
+    return db.insert(timesheetAuditLog).values(stamped).returning();
   }
 
   async getTimesheetAuditLogs(timesheetId: string): Promise<TimesheetAuditLog[]> {
-    return db.select().from(timesheetAuditLog)
-      .where(eq(timesheetAuditLog.timesheetId, timesheetId))
-      .orderBy(desc(timesheetAuditLog.createdAt));
+    const t = await this.tid();
+    const conds = [eq(timesheetAuditLog.timesheetId, timesheetId)];
+    if (t) conds.push(eq(timesheetAuditLog.tenantId, t));
+    return db.select().from(timesheetAuditLog).where(and(...conds)).orderBy(desc(timesheetAuditLog.createdAt));
   }
 
   async getTimesheetAuditLogsByEmployee(employeeId: string): Promise<TimesheetAuditLog[]> {
-    return db.select().from(timesheetAuditLog)
-      .where(eq(timesheetAuditLog.employeeId, employeeId))
-      .orderBy(desc(timesheetAuditLog.createdAt));
+    const t = await this.tid();
+    const conds = [eq(timesheetAuditLog.employeeId, employeeId)];
+    if (t) conds.push(eq(timesheetAuditLog.tenantId, t));
+    return db.select().from(timesheetAuditLog).where(and(...conds)).orderBy(desc(timesheetAuditLog.createdAt));
   }
 
   async getInvoices(): Promise<Invoice[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(invoices).where(eq(invoices.tenantId, t)).orderBy(desc(invoices.createdAt));
     return db.select().from(invoices).orderBy(desc(invoices.createdAt));
   }
 
   async getInvoicesByEmployee(employeeId: string): Promise<Invoice[]> {
-    return db.select().from(invoices)
-      .where(eq(invoices.employeeId, employeeId))
-      .orderBy(desc(invoices.createdAt));
+    const t = await this.tid();
+    const conds = [eq(invoices.employeeId, employeeId)];
+    if (t) conds.push(eq(invoices.tenantId, t));
+    return db.select().from(invoices).where(and(...conds)).orderBy(desc(invoices.createdAt));
   }
 
   async getInvoice(id: string): Promise<Invoice | undefined> {
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id));
+    const t = await this.tid();
+    const conds = [eq(invoices.id, id)];
+    if (t) conds.push(eq(invoices.tenantId, t));
+    const [invoice] = await db.select().from(invoices).where(and(...conds));
     return invoice;
   }
 
   async getInvoiceByNumber(invoiceNumber: string): Promise<Invoice | undefined> {
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.invoiceNumber, invoiceNumber));
+    const t = await this.tid();
+    const conds = [eq(invoices.invoiceNumber, invoiceNumber)];
+    if (t) conds.push(eq(invoices.tenantId, t));
+    const [invoice] = await db.select().from(invoices).where(and(...conds));
     return invoice;
   }
 
   async getInvoiceByXeroId(xeroInvoiceId: string): Promise<Invoice | undefined> {
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.xeroInvoiceId, xeroInvoiceId));
+    const t = await this.tid();
+    const conds = [eq(invoices.xeroInvoiceId, xeroInvoiceId)];
+    if (t) conds.push(eq(invoices.tenantId, t));
+    const [invoice] = await db.select().from(invoices).where(and(...conds));
     return invoice;
   }
 
   async createInvoice(data: InsertInvoice): Promise<Invoice> {
-    const [invoice] = await db.insert(invoices).values(data).returning();
+    const t = await this.tid();
+    const [invoice] = await db.insert(invoices).values({ ...data, tenantId: t }).returning();
     return invoice;
   }
 
@@ -319,16 +377,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPayRuns(): Promise<PayRun[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(payRuns).where(eq(payRuns.tenantId, t)).orderBy(desc(payRuns.createdAt));
     return db.select().from(payRuns).orderBy(desc(payRuns.createdAt));
   }
 
   async getPayRun(id: string): Promise<PayRun | undefined> {
-    const [payRun] = await db.select().from(payRuns).where(eq(payRuns.id, id));
+    const t = await this.tid();
+    const conds = [eq(payRuns.id, id)];
+    if (t) conds.push(eq(payRuns.tenantId, t));
+    const [payRun] = await db.select().from(payRuns).where(and(...conds));
     return payRun;
   }
 
   async createPayRun(data: InsertPayRun): Promise<PayRun> {
-    const [payRun] = await db.insert(payRuns).values(data).returning();
+    const t = await this.tid();
+    const [payRun] = await db.insert(payRuns).values({ ...data, tenantId: t }).returning();
     return payRun;
   }
 
@@ -342,30 +406,38 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPayRunLines(payRunId: string): Promise<PayRunLine[]> {
-    return db.select().from(payRunLines)
-      .where(eq(payRunLines.payRunId, payRunId))
-      .orderBy(desc(payRunLines.createdAt));
+    const t = await this.tid();
+    const conds = [eq(payRunLines.payRunId, payRunId)];
+    if (t) conds.push(eq(payRunLines.tenantId, t));
+    return db.select().from(payRunLines).where(and(...conds)).orderBy(desc(payRunLines.createdAt));
   }
 
   async getPayRunLinesByEmployee(employeeId: string): Promise<PayRunLine[]> {
-    return db.select().from(payRunLines)
-      .where(eq(payRunLines.employeeId, employeeId))
-      .orderBy(desc(payRunLines.createdAt));
+    const t = await this.tid();
+    const conds = [eq(payRunLines.employeeId, employeeId)];
+    if (t) conds.push(eq(payRunLines.tenantId, t));
+    return db.select().from(payRunLines).where(and(...conds)).orderBy(desc(payRunLines.createdAt));
   }
 
   async getPayRunLine(id: string): Promise<PayRunLine | undefined> {
-    const [line] = await db.select().from(payRunLines).where(eq(payRunLines.id, id));
+    const t = await this.tid();
+    const conds = [eq(payRunLines.id, id)];
+    if (t) conds.push(eq(payRunLines.tenantId, t));
+    const [line] = await db.select().from(payRunLines).where(and(...conds));
     return line;
   }
 
   async createPayRunLine(data: InsertPayRunLine): Promise<PayRunLine> {
-    const [line] = await db.insert(payRunLines).values(data).returning();
+    const t = await this.tid();
+    const [line] = await db.insert(payRunLines).values({ ...data, tenantId: t }).returning();
     return line;
   }
 
   async createPayRunLines(data: InsertPayRunLine[]): Promise<PayRunLine[]> {
     if (data.length === 0) return [];
-    return db.insert(payRunLines).values(data).returning();
+    const t = await this.tid();
+    const stamped = data.map(d => ({ ...d, tenantId: t }));
+    return db.insert(payRunLines).values(stamped).returning();
   }
 
   async deletePayRunLines(payRunId: string): Promise<void> {
@@ -378,19 +450,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDocuments(employeeId: string): Promise<Document[]> {
-    return db.select().from(documents)
-      .where(eq(documents.employeeId, employeeId))
-      .orderBy(desc(documents.createdAt));
+    const t = await this.tid();
+    const conds = [eq(documents.employeeId, employeeId)];
+    if (t) conds.push(eq(documents.tenantId, t));
+    return db.select().from(documents).where(and(...conds)).orderBy(desc(documents.createdAt));
   }
 
   async getDocumentsByTimesheetId(timesheetId: string): Promise<Document[]> {
-    return db.select().from(documents)
-      .where(eq(documents.timesheetId, timesheetId))
-      .orderBy(desc(documents.createdAt));
+    const t = await this.tid();
+    const conds = [eq(documents.timesheetId, timesheetId)];
+    if (t) conds.push(eq(documents.tenantId, t));
+    return db.select().from(documents).where(and(...conds)).orderBy(desc(documents.createdAt));
   }
 
   async createDocument(data: InsertDocument): Promise<Document> {
-    const [doc] = await db.insert(documents).values(data).returning();
+    const t = await this.tid();
+    const [doc] = await db.insert(documents).values({ ...data, tenantId: t }).returning();
     return doc;
   }
 
@@ -399,15 +474,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDashboardStats() {
+    const t = await this.tid();
+    const tCond = (table: any) => t ? eq(table.tenantId, t) : undefined;
+
     const [activeResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(employees)
-      .where(eq(employees.status, "ACTIVE"));
+      .where(and(eq(employees.status, "ACTIVE"), tCond(employees)));
 
     const [pendingResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(employees)
-      .where(eq(employees.status, "PENDING_SETUP"));
+      .where(and(eq(employees.status, "PENDING_SETUP"), tCond(employees)));
 
     const currentYear = new Date().getFullYear();
 
@@ -417,7 +495,7 @@ export class DatabaseStorage implements IStorage {
         total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text`,
       })
       .from(invoices)
-      .where(sql`status != 'VOIDED'`);
+      .where(and(sql`status != 'VOIDED'`, tCond(invoices)));
 
     const [paidResult] = await db
       .select({
@@ -425,17 +503,17 @@ export class DatabaseStorage implements IStorage {
         total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text`,
       })
       .from(invoices)
-      .where(eq(invoices.status, "PAID"));
+      .where(and(eq(invoices.status, "PAID"), tCond(invoices)));
 
     const [outstandingResult] = await db
       .select({ total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text` })
       .from(invoices)
-      .where(sql`status IN ('AUTHORISED', 'SENT', 'OVERDUE')`);
+      .where(and(sql`status IN ('AUTHORISED', 'SENT', 'OVERDUE')`, tCond(invoices)));
 
     const [overdueResult] = await db
       .select({ total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text` })
       .from(invoices)
-      .where(eq(invoices.status, "OVERDUE"));
+      .where(and(eq(invoices.status, "OVERDUE"), tCond(invoices)));
 
     const fyStart = new Date().getMonth() >= 6
       ? new Date(currentYear, 6, 1)
@@ -447,16 +525,17 @@ export class DatabaseStorage implements IStorage {
         totalGross: sql<string>`COALESCE(SUM(total_gross), 0)::text`,
       })
       .from(payRuns)
-      .where(sql`${payRuns.payDate} >= ${fyStart.toISOString().split("T")[0]}`);
+      .where(and(sql`${payRuns.payDate} >= ${fyStart.toISOString().split("T")[0]}`, tCond(payRuns)));
 
-    const latestPayRun = await db.select().from(payRuns)
-      .orderBy(desc(payRuns.payDate))
-      .limit(1);
+    const latestPayRunQuery = t
+      ? db.select().from(payRuns).where(eq(payRuns.tenantId, t)).orderBy(desc(payRuns.payDate)).limit(1)
+      : db.select().from(payRuns).orderBy(desc(payRuns.payDate)).limit(1);
+    const latestPayRun = await latestPayRunQuery;
 
     const [submittedResult] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(timesheets)
-      .where(eq(timesheets.status, "SUBMITTED"));
+      .where(and(eq(timesheets.status, "SUBMITTED"), tCond(timesheets)));
 
     const [ytdBillingsResult] = await db
       .select({ total: sql<string>`COALESCE(SUM(amount_incl_gst), 0)::text` })
@@ -464,7 +543,8 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(invoices.status, "PAID"),
-          sql`${invoices.paidDate} >= ${fyStart.toISOString().split("T")[0]}`
+          sql`${invoices.paidDate} >= ${fyStart.toISOString().split("T")[0]}`,
+          tCond(invoices)
         )
       );
 
@@ -486,14 +566,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getNotifications(): Promise<Notification[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(notifications).where(eq(notifications.tenantId, t)).orderBy(desc(notifications.createdAt));
     return db.select().from(notifications).orderBy(desc(notifications.createdAt));
   }
 
   async getUnreadNotificationCount(): Promise<number> {
+    const t = await this.tid();
+    const conds = [eq(notifications.read, false)];
+    if (t) conds.push(eq(notifications.tenantId, t));
     const [result] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(notifications)
-      .where(eq(notifications.read, false));
+      .where(and(...conds));
     return result?.count || 0;
   }
 
@@ -507,26 +592,34 @@ export class DatabaseStorage implements IStorage {
   }
 
   async markAllNotificationsRead(): Promise<void> {
-    await db.update(notifications).set({ read: true }).where(eq(notifications.read, false));
+    const t = await this.tid();
+    const conds = [eq(notifications.read, false)];
+    if (t) conds.push(eq(notifications.tenantId, t));
+    await db.update(notifications).set({ read: true }).where(and(...conds));
   }
 
   async createNotification(data: InsertNotification): Promise<Notification> {
-    const [notification] = await db.insert(notifications).values(data).returning();
+    const t = await this.tid();
+    const [notification] = await db.insert(notifications).values({ ...data, tenantId: t }).returning();
     return notification;
   }
 
   async getMessages(): Promise<Message[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(messages).where(eq(messages.tenantId, t)).orderBy(desc(messages.createdAt));
     return db.select().from(messages).orderBy(desc(messages.createdAt));
   }
 
   async getMessagesByEmployee(employeeId: string): Promise<Message[]> {
-    return db.select().from(messages)
-      .where(eq(messages.employeeId, employeeId))
-      .orderBy(desc(messages.createdAt));
+    const t = await this.tid();
+    const conds = [eq(messages.employeeId, employeeId)];
+    if (t) conds.push(eq(messages.tenantId, t));
+    return db.select().from(messages).where(and(...conds)).orderBy(desc(messages.createdAt));
   }
 
   async createMessage(data: InsertMessage): Promise<Message> {
-    const [message] = await db.insert(messages).values(data).returning();
+    const t = await this.tid();
+    const [message] = await db.insert(messages).values({ ...data, tenantId: t }).returning();
     return message;
   }
 
@@ -563,17 +656,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getLeaveRequests(): Promise<LeaveRequest[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(leaveRequests).where(eq(leaveRequests.tenantId, t)).orderBy(desc(leaveRequests.createdAt));
     return db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
   }
 
   async getLeaveRequestsByEmployee(employeeId: string): Promise<LeaveRequest[]> {
-    return db.select().from(leaveRequests)
-      .where(eq(leaveRequests.employeeId, employeeId))
-      .orderBy(desc(leaveRequests.createdAt));
+    const t = await this.tid();
+    const conds = [eq(leaveRequests.employeeId, employeeId)];
+    if (t) conds.push(eq(leaveRequests.tenantId, t));
+    return db.select().from(leaveRequests).where(and(...conds)).orderBy(desc(leaveRequests.createdAt));
   }
 
   async createLeaveRequest(data: InsertLeaveRequest): Promise<LeaveRequest> {
-    const [leave] = await db.insert(leaveRequests).values(data).returning();
+    const t = await this.tid();
+    const [leave] = await db.insert(leaveRequests).values({ ...data, tenantId: t }).returning();
     return leave;
   }
 
@@ -587,11 +684,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPayItems(): Promise<PayItem[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(payItems).where(eq(payItems.tenantId, t)).orderBy(payItems.code);
     return db.select().from(payItems).orderBy(payItems.code);
   }
 
   async createPayItem(data: InsertPayItem): Promise<PayItem> {
-    const [item] = await db.insert(payItems).values(data).returning();
+    const t = await this.tid();
+    const [item] = await db.insert(payItems).values({ ...data, tenantId: t }).returning();
     return item;
   }
 
@@ -605,62 +705,71 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTaxDeclaration(employeeId: string): Promise<TaxDeclaration | undefined> {
-    const [dec] = await db.select().from(taxDeclarations)
-      .where(and(eq(taxDeclarations.employeeId, employeeId), eq(taxDeclarations.isCurrent, true)));
+    const t = await this.tid();
+    const conds = [eq(taxDeclarations.employeeId, employeeId), eq(taxDeclarations.isCurrent, true)];
+    if (t) conds.push(eq(taxDeclarations.tenantId, t));
+    const [dec] = await db.select().from(taxDeclarations).where(and(...conds));
     return dec;
   }
 
   async upsertTaxDeclaration(data: InsertTaxDeclaration): Promise<TaxDeclaration> {
+    const t = await this.tid();
     const existing = await this.getTaxDeclaration(data.employeeId);
     if (existing) {
       const [updated] = await db
         .update(taxDeclarations)
-        .set({ ...data })
+        .set({ ...data, tenantId: t })
         .where(eq(taxDeclarations.id, existing.id))
         .returning();
       return updated;
     }
-    const [created] = await db.insert(taxDeclarations).values(data).returning();
+    const [created] = await db.insert(taxDeclarations).values({ ...data, tenantId: t }).returning();
     return created;
   }
 
   async getBankAccount(employeeId: string): Promise<BankAccount | undefined> {
-    const [acc] = await db.select().from(bankAccounts)
-      .where(and(eq(bankAccounts.employeeId, employeeId), eq(bankAccounts.isPrimary, true)));
+    const t = await this.tid();
+    const conds = [eq(bankAccounts.employeeId, employeeId), eq(bankAccounts.isPrimary, true)];
+    if (t) conds.push(eq(bankAccounts.tenantId, t));
+    const [acc] = await db.select().from(bankAccounts).where(and(...conds));
     return acc;
   }
 
   async upsertBankAccount(data: InsertBankAccount): Promise<BankAccount> {
+    const t = await this.tid();
     const existing = await this.getBankAccount(data.employeeId);
     if (existing) {
       const [updated] = await db
         .update(bankAccounts)
-        .set({ ...data })
+        .set({ ...data, tenantId: t })
         .where(eq(bankAccounts.id, existing.id))
         .returning();
       return updated;
     }
-    const [created] = await db.insert(bankAccounts).values(data).returning();
+    const [created] = await db.insert(bankAccounts).values({ ...data, tenantId: t }).returning();
     return created;
   }
 
   async getSuperMembership(employeeId: string): Promise<SuperMembership | undefined> {
-    const [mem] = await db.select().from(superMemberships)
-      .where(and(eq(superMemberships.employeeId, employeeId), eq(superMemberships.isDefault, true)));
+    const t = await this.tid();
+    const conds = [eq(superMemberships.employeeId, employeeId), eq(superMemberships.isDefault, true)];
+    if (t) conds.push(eq(superMemberships.tenantId, t));
+    const [mem] = await db.select().from(superMemberships).where(and(...conds));
     return mem;
   }
 
   async upsertSuperMembership(data: InsertSuperMembership): Promise<SuperMembership> {
+    const t = await this.tid();
     const existing = await this.getSuperMembership(data.employeeId);
     if (existing) {
       const [updated] = await db
         .update(superMemberships)
-        .set({ ...data })
+        .set({ ...data, tenantId: t })
         .where(eq(superMemberships.id, existing.id))
         .returning();
       return updated;
     }
-    const [created] = await db.insert(superMemberships).values(data).returning();
+    const [created] = await db.insert(superMemberships).values({ ...data, tenantId: t }).returning();
     return created;
   }
 
@@ -712,21 +821,30 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getClients(): Promise<Client[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(clients).where(eq(clients.tenantId, t)).orderBy(clients.name);
     return db.select().from(clients).orderBy(clients.name);
   }
 
   async getClient(id: string): Promise<Client | undefined> {
-    const [client] = await db.select().from(clients).where(eq(clients.id, id));
+    const t = await this.tid();
+    const conds = [eq(clients.id, id)];
+    if (t) conds.push(eq(clients.tenantId, t));
+    const [client] = await db.select().from(clients).where(and(...conds));
     return client;
   }
 
   async getClientByXeroId(xeroContactId: string): Promise<Client | undefined> {
-    const [client] = await db.select().from(clients).where(eq(clients.xeroContactId, xeroContactId));
+    const t = await this.tid();
+    const conds = [eq(clients.xeroContactId, xeroContactId)];
+    if (t) conds.push(eq(clients.tenantId, t));
+    const [client] = await db.select().from(clients).where(and(...conds));
     return client;
   }
 
   async createClient(data: InsertClient): Promise<Client> {
-    const [client] = await db.insert(clients).values(data).returning();
+    const t = await this.tid();
+    const [client] = await db.insert(clients).values({ ...data, tenantId: t }).returning();
     return client;
   }
 
@@ -736,20 +854,29 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllPlacements(): Promise<Placement[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(placements).where(eq(placements.tenantId, t)).orderBy(desc(placements.createdAt));
     return db.select().from(placements).orderBy(desc(placements.createdAt));
   }
 
   async getPlacements(employeeId: string): Promise<Placement[]> {
-    return db.select().from(placements).where(eq(placements.employeeId, employeeId)).orderBy(desc(placements.createdAt));
+    const t = await this.tid();
+    const conds = [eq(placements.employeeId, employeeId)];
+    if (t) conds.push(eq(placements.tenantId, t));
+    return db.select().from(placements).where(and(...conds)).orderBy(desc(placements.createdAt));
   }
 
   async getPlacement(id: string): Promise<Placement | undefined> {
-    const [placement] = await db.select().from(placements).where(eq(placements.id, id));
+    const t = await this.tid();
+    const conds = [eq(placements.id, id)];
+    if (t) conds.push(eq(placements.tenantId, t));
+    const [placement] = await db.select().from(placements).where(and(...conds));
     return placement;
   }
 
   async createPlacement(data: InsertPlacement): Promise<Placement> {
-    const [placement] = await db.insert(placements).values(data).returning();
+    const t = await this.tid();
+    const [placement] = await db.insert(placements).values({ ...data, tenantId: t }).returning();
     return placement;
   }
 
@@ -759,16 +886,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getBankTransactions(): Promise<BankTransaction[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(bankTransactions).where(eq(bankTransactions.tenantId, t)).orderBy(desc(bankTransactions.date));
     return db.select().from(bankTransactions).orderBy(desc(bankTransactions.date));
   }
 
   async getBankTransactionByXeroId(xeroId: string): Promise<BankTransaction | undefined> {
-    const [txn] = await db.select().from(bankTransactions).where(eq(bankTransactions.xeroBankTransactionId, xeroId));
+    const t = await this.tid();
+    const conds = [eq(bankTransactions.xeroBankTransactionId, xeroId)];
+    if (t) conds.push(eq(bankTransactions.tenantId, t));
+    const [txn] = await db.select().from(bankTransactions).where(and(...conds));
     return txn;
   }
 
   async createBankTransaction(data: InsertBankTransaction): Promise<BankTransaction> {
-    const [txn] = await db.insert(bankTransactions).values(data).returning();
+    const t = await this.tid();
+    const [txn] = await db.insert(bankTransactions).values({ ...data, tenantId: t }).returning();
     return txn;
   }
 
@@ -778,14 +911,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPayslipLines(payRunLineId: string): Promise<PayslipLine[]> {
-    return db.select().from(payslipLines)
-      .where(eq(payslipLines.payRunLineId, payRunLineId))
-      .orderBy(payslipLines.lineType);
+    const t = await this.tid();
+    const conds = [eq(payslipLines.payRunLineId, payRunLineId)];
+    if (t) conds.push(eq(payslipLines.tenantId, t));
+    return db.select().from(payslipLines).where(and(...conds)).orderBy(payslipLines.lineType);
   }
 
   async createPayslipLines(data: InsertPayslipLine[]): Promise<PayslipLine[]> {
     if (data.length === 0) return [];
-    return db.insert(payslipLines).values(data).returning();
+    const t = await this.tid();
+    const stamped = data.map(d => ({ ...d, tenantId: t }));
+    return db.insert(payslipLines).values(stamped).returning();
   }
 
   async deletePayslipLinesByPayRunLine(payRunLineId: string): Promise<void> {
@@ -793,62 +929,83 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getRateHistory(employeeId: string): Promise<RateHistory[]> {
-    return db.select().from(rateHistory)
-      .where(eq(rateHistory.employeeId, employeeId))
-      .orderBy(desc(rateHistory.effectiveDate));
+    const t = await this.tid();
+    const conds = [eq(rateHistory.employeeId, employeeId)];
+    if (t) conds.push(eq(rateHistory.tenantId, t));
+    return db.select().from(rateHistory).where(and(...conds)).orderBy(desc(rateHistory.effectiveDate));
   }
 
   async getLatestRateHistory(employeeId: string): Promise<RateHistory | undefined> {
-    const [latest] = await db.select().from(rateHistory)
-      .where(eq(rateHistory.employeeId, employeeId))
-      .orderBy(desc(rateHistory.effectiveDate))
-      .limit(1);
+    const t = await this.tid();
+    const conds = [eq(rateHistory.employeeId, employeeId)];
+    if (t) conds.push(eq(rateHistory.tenantId, t));
+    const [latest] = await db.select().from(rateHistory).where(and(...conds)).orderBy(desc(rateHistory.effectiveDate)).limit(1);
     return latest;
   }
 
   async createRateHistory(data: InsertRateHistory): Promise<RateHistory> {
-    const [record] = await db.insert(rateHistory).values(data).returning();
+    const t = await this.tid();
+    const [record] = await db.insert(rateHistory).values({ ...data, tenantId: t }).returning();
     return record;
   }
 
   async getInvoiceEmployees(invoiceId: string): Promise<InvoiceEmployee[]> {
-    return db.select().from(invoiceEmployees).where(eq(invoiceEmployees.invoiceId, invoiceId));
+    const t = await this.tid();
+    const conds = [eq(invoiceEmployees.invoiceId, invoiceId)];
+    if (t) conds.push(eq(invoiceEmployees.tenantId, t));
+    return db.select().from(invoiceEmployees).where(and(...conds));
   }
 
   async getInvoiceEmployeesByInvoice(invoiceIds: string[]): Promise<InvoiceEmployee[]> {
     if (invoiceIds.length === 0) return [];
-    return db.select().from(invoiceEmployees).where(inArray(invoiceEmployees.invoiceId, invoiceIds));
+    const t = await this.tid();
+    const conds = [inArray(invoiceEmployees.invoiceId, invoiceIds)];
+    if (t) conds.push(eq(invoiceEmployees.tenantId, t));
+    return db.select().from(invoiceEmployees).where(and(...conds));
   }
 
   async setInvoiceEmployees(invoiceId: string, employeeIds: string[]): Promise<InvoiceEmployee[]> {
     await db.delete(invoiceEmployees).where(eq(invoiceEmployees.invoiceId, invoiceId));
     if (employeeIds.length === 0) return [];
+    const t = await this.tid();
     return db.insert(invoiceEmployees)
-      .values(employeeIds.map(employeeId => ({ invoiceId, employeeId })))
+      .values(employeeIds.map(employeeId => ({ invoiceId, employeeId, tenantId: t })))
       .returning();
   }
 
   async getInvoiceIdsByEmployee(employeeId: string): Promise<string[]> {
+    const t = await this.tid();
+    const conds = [eq(invoiceEmployees.employeeId, employeeId)];
+    if (t) conds.push(eq(invoiceEmployees.tenantId, t));
     const rows = await db.select({ invoiceId: invoiceEmployees.invoiceId })
       .from(invoiceEmployees)
-      .where(eq(invoiceEmployees.employeeId, employeeId));
+      .where(and(...conds));
     return rows.map(r => r.invoiceId);
   }
 
   async getRctis(): Promise<Rcti[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(rctis).where(eq(rctis.tenantId, t)).orderBy(desc(rctis.year), desc(rctis.month));
     return db.select().from(rctis).orderBy(desc(rctis.year), desc(rctis.month));
   }
 
   async getRctisByEmployee(employeeId: string): Promise<Rcti[]> {
-    return db.select().from(rctis).where(eq(rctis.employeeId, employeeId)).orderBy(desc(rctis.year), desc(rctis.month));
+    const t = await this.tid();
+    const conds = [eq(rctis.employeeId, employeeId)];
+    if (t) conds.push(eq(rctis.tenantId, t));
+    return db.select().from(rctis).where(and(...conds)).orderBy(desc(rctis.year), desc(rctis.month));
   }
 
   async getRctisByClient(clientId: string): Promise<Rcti[]> {
-    return db.select().from(rctis).where(eq(rctis.clientId, clientId)).orderBy(desc(rctis.year), desc(rctis.month));
+    const t = await this.tid();
+    const conds = [eq(rctis.clientId, clientId)];
+    if (t) conds.push(eq(rctis.tenantId, t));
+    return db.select().from(rctis).where(and(...conds)).orderBy(desc(rctis.year), desc(rctis.month));
   }
 
   async createRcti(data: InsertRcti): Promise<Rcti> {
-    const [rcti] = await db.insert(rctis).values(data).returning();
+    const t = await this.tid();
+    const [rcti] = await db.insert(rctis).values({ ...data, tenantId: t }).returning();
     return rcti;
   }
 
@@ -862,31 +1019,45 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getInvoiceLineItems(invoiceId: string): Promise<InvoiceLineItem[]> {
-    return db.select().from(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, invoiceId));
+    const t = await this.tid();
+    const conds = [eq(invoiceLineItems.invoiceId, invoiceId)];
+    if (t) conds.push(eq(invoiceLineItems.tenantId, t));
+    return db.select().from(invoiceLineItems).where(and(...conds));
   }
 
   async setInvoiceLineItems(invoiceId: string, items: InsertInvoiceLineItem[]): Promise<InvoiceLineItem[]> {
     await db.delete(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, invoiceId));
     if (items.length === 0) return [];
-    return db.insert(invoiceLineItems).values(items).returning();
+    const t = await this.tid();
+    const stamped = items.map(i => ({ ...i, tenantId: t }));
+    return db.insert(invoiceLineItems).values(stamped).returning();
   }
 
   async getInvoicePayments(invoiceId: string): Promise<InvoicePayment[]> {
-    return db.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
+    const t = await this.tid();
+    const conds = [eq(invoicePayments.invoiceId, invoiceId)];
+    if (t) conds.push(eq(invoicePayments.tenantId, t));
+    return db.select().from(invoicePayments).where(and(...conds));
   }
 
   async getAllInvoicePayments(): Promise<InvoicePayment[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(invoicePayments).where(eq(invoicePayments.tenantId, t));
     return db.select().from(invoicePayments);
   }
 
   async setInvoicePayments(invoiceId: string, payments: InsertInvoicePayment[]): Promise<InvoicePayment[]> {
     await db.delete(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
     if (payments.length === 0) return [];
-    return db.insert(invoicePayments).values(payments).returning();
+    const t = await this.tid();
+    const stamped = payments.map(p => ({ ...p, tenantId: t }));
+    return db.insert(invoicePayments).values(stamped).returning();
   }
 
   async getMonthlyExpectedHours(filters?: { employeeId?: string; month?: number; year?: number }): Promise<MonthlyExpectedHours[]> {
+    const t = await this.tid();
     const conditions = [];
+    if (t) conditions.push(eq(monthlyExpectedHours.tenantId, t));
     if (filters?.employeeId) conditions.push(eq(monthlyExpectedHours.employeeId, filters.employeeId));
     if (filters?.month) conditions.push(eq(monthlyExpectedHours.month, filters.month));
     if (filters?.year) conditions.push(eq(monthlyExpectedHours.year, filters.year));
@@ -897,58 +1068,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertMonthlyExpectedHours(data: InsertMonthlyExpectedHours): Promise<MonthlyExpectedHours> {
-    const existing = await db.select().from(monthlyExpectedHours).where(
-      and(
-        eq(monthlyExpectedHours.employeeId, data.employeeId),
-        eq(monthlyExpectedHours.month, data.month),
-        eq(monthlyExpectedHours.year, data.year),
-      )
-    );
+    const t = await this.tid();
+    const lookupConds = [
+      eq(monthlyExpectedHours.employeeId, data.employeeId),
+      eq(monthlyExpectedHours.month, data.month),
+      eq(monthlyExpectedHours.year, data.year),
+    ];
+    if (t) lookupConds.push(eq(monthlyExpectedHours.tenantId, t));
+    const existing = await db.select().from(monthlyExpectedHours).where(and(...lookupConds));
     if (existing.length > 0) {
       const [updated] = await db.update(monthlyExpectedHours)
-        .set({ ...data, updatedAt: new Date() })
+        .set({ ...data, tenantId: t, updatedAt: new Date() })
         .where(eq(monthlyExpectedHours.id, existing[0].id))
         .returning();
       return updated;
     }
-    const [created] = await db.insert(monthlyExpectedHours).values(data).returning();
+    const [created] = await db.insert(monthlyExpectedHours).values({ ...data, tenantId: t }).returning();
     return created;
   }
 
   async deleteMonthlyExpectedHours(id: string): Promise<void> {
     await db.delete(monthlyExpectedHours).where(eq(monthlyExpectedHours.id, id));
-  }
-
-  async clearAllSyncedData(): Promise<void> {
-    await db.transaction(async (tx) => {
-      await tx.delete(invoicePayments);
-      await tx.delete(invoiceLineItems);
-      await tx.delete(invoiceEmployees);
-      await tx.delete(payslipLines);
-      await tx.delete(payRunLines);
-      await tx.delete(timesheetAuditLog);
-      await tx.delete(monthlyExpectedHours);
-      await tx.delete(rateHistory);
-      await tx.delete(rctis);
-      await tx.delete(documents);
-      await tx.delete(leaveRequests);
-      await tx.delete(bankAccounts);
-      await tx.delete(taxDeclarations);
-      await tx.delete(superMemberships);
-      await tx.delete(placements);
-      await tx.delete(payRuns);
-      await tx.delete(invoices);
-      await tx.delete(timesheets);
-      await tx.delete(bankTransactions);
-      await tx.delete(payItems);
-      await tx.delete(notifications);
-      await tx.delete(messages);
-      await tx.delete(employees);
-      await tx.delete(clients);
-      await tx.delete(settings).where(
-        sql`${settings.key} LIKE 'xero.lastSyncAt' OR ${settings.key} LIKE 'xero.last%SyncAt'`
-      );
-    });
   }
 }
 

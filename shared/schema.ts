@@ -48,6 +48,7 @@ export const employees = pgTable("employees", {
   paymentMethod: paymentMethodEnum("payment_method").notNull().default("PAYROLL"),
   payrollFeePercent: numeric("payroll_fee_percent", { precision: 5, scale: 2 }).default("0"),
   xeroEmployeeId: text("xero_employee_id"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -68,6 +69,7 @@ export const timesheets = pgTable("timesheets", {
   fileName: text("file_name"),
   submittedAt: timestamp("submitted_at"),
   reviewedAt: timestamp("reviewed_at"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -96,6 +98,7 @@ export const invoices = pgTable("invoices", {
   invoiceType: text("invoice_type"),
   category: text("category"),
   reference: text("reference"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -117,6 +120,7 @@ export const payRuns = pgTable("pay_runs", {
   employeeCount: smallint("employee_count").notNull().default(0),
   calendarName: text("calendar_name"),
   status: text("status").notNull().default("DRAFT"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -133,6 +137,7 @@ export const payRunLines = pgTable("pay_run_lines", {
   superAmount: numeric("super_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   netPay: numeric("net_pay", { precision: 12, scale: 2 }).notNull().default("0"),
   status: payRunLineStatusEnum("status").notNull().default("INCLUDED"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -147,6 +152,7 @@ export const documents = pgTable("documents", {
   fileType: text("file_type"),
   fileSize: integer("file_size"),
   metadata: text("metadata"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -169,6 +175,7 @@ export const notifications = pgTable("notifications", {
   actionRoute: text("action_route"),
   read: boolean("read").notNull().default(false),
   employeeId: varchar("employee_id").references(() => employees.id),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -179,6 +186,7 @@ export const messages = pgTable("messages", {
   subject: text("subject"),
   body: text("body").notNull(),
   read: boolean("read").notNull().default(false),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -200,6 +208,7 @@ export const leaveRequests = pgTable("leave_requests", {
   status: leaveStatusEnum("status").notNull().default("PENDING"),
   reviewedBy: text("reviewed_by"),
   reviewNote: text("review_note"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -216,6 +225,7 @@ export const payItems = pgTable("pay_items", {
   isSuperable: boolean("is_superable").notNull().default(true),
   isDefault: boolean("is_default").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -230,6 +240,7 @@ export const taxDeclarations = pgTable("tax_declarations", {
   seniorsOffset: boolean("seniors_offset").notNull().default(false),
   declarationDate: date("declaration_date"),
   isCurrent: boolean("is_current").notNull().default(true),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -241,6 +252,7 @@ export const bankAccounts = pgTable("bank_accounts", {
   accountName: text("account_name").notNull(),
   bankName: text("bank_name"),
   isPrimary: boolean("is_primary").notNull().default(true),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -252,6 +264,7 @@ export const superMemberships = pgTable("super_memberships", {
   memberNumber: text("member_number"),
   usiNumber: text("usi_number"),
   isDefault: boolean("is_default").notNull().default(true),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -274,6 +287,7 @@ export const clients = pgTable("clients", {
   postalCode: text("postal_code"),
   country: text("country"),
   isRcti: boolean("is_rcti").notNull().default(false),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -290,6 +304,7 @@ export const placements = pgTable("placements", {
   payrollFeePercent: numeric("payroll_fee_percent", { precision: 5, scale: 2 }).default("0"),
   status: placementStatusEnum("status").notNull().default("ACTIVE"),
   notes: text("notes"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -310,6 +325,7 @@ export const bankTransactions = pgTable("bank_transactions", {
   isReconciled: boolean("is_reconciled").notNull().default(false),
   month: smallint("month").notNull(),
   year: smallint("year").notNull(),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -323,6 +339,7 @@ export const payslipLines = pgTable("payslip_lines", {
   rate: numeric("rate", { precision: 10, scale: 4 }),
   amount: numeric("amount", { precision: 12, scale: 2 }).notNull().default("0"),
   percentage: numeric("percentage", { precision: 6, scale: 4 }),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -336,6 +353,7 @@ export const rateHistory = pgTable("rate_history", {
   source: text("source").notNull().default("PAYROLL_SYNC"),
   payRunId: varchar("pay_run_id").references(() => payRuns.id),
   notes: text("notes"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -349,6 +367,7 @@ export const timesheetAuditLog = pgTable("timesheet_audit_log", {
   changeSource: varchar("change_source", { length: 30 }).notNull().default("MANUAL_EDIT"),
   changedBy: varchar("changed_by", { length: 100 }),
   notes: text("notes"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -518,6 +537,7 @@ export const monthlyExpectedHours = pgTable("monthly_expected_hours", {
   year: smallint("year").notNull(),
   expectedDays: numeric("expected_days", { precision: 5, scale: 1 }),
   expectedHours: numeric("expected_hours", { precision: 6, scale: 1 }).notNull(),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -544,6 +564,7 @@ export const rctis = pgTable("rctis", {
   receivedDate: date("received_date"),
   bankTransactionId: varchar("bank_transaction_id"),
   status: rctiStatusEnum("status").notNull().default("DRAFT"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -556,6 +577,7 @@ export const invoiceEmployees = pgTable("invoice_employees", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   invoiceId: varchar("invoice_id").notNull(),
   employeeId: varchar("employee_id").notNull(),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -575,6 +597,7 @@ export const invoiceLineItems = pgTable("invoice_line_items", {
   taxType: text("tax_type"),
   taxAmount: numeric("tax_amount", { precision: 10, scale: 2 }),
   tracking: jsonb("tracking"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -593,6 +616,7 @@ export const invoicePayments = pgTable("invoice_payments", {
   bankAccountName: text("bank_account_name"),
   reference: text("reference"),
   status: text("status"),
+  tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

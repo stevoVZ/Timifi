@@ -171,6 +171,8 @@ export async function handleCallback(url: string): Promise<void> {
       if (!stillExists) {
         await saveSetting("xero.tenantId", tenants[0].tenantId);
         await saveSetting("xero.tenantName", tenants[0].tenantName || "");
+        const { setActiveTenantId } = await import("./storage");
+        setActiveTenantId(tenants[0].tenantId);
       }
     }
   }
@@ -201,14 +203,10 @@ export async function selectTenant(tenantId: string): Promise<void> {
   if (!tenant) {
     throw new Error("Tenant not found. Please reconnect to Xero.");
   }
-  const currentTenantId = await getSettingValue("xero.tenantId");
-  if (currentTenantId && currentTenantId !== tenantId) {
-    console.log(`Switching org from ${currentTenantId} to ${tenantId} — clearing synced data...`);
-    await storage.clearAllSyncedData();
-    console.log("Synced data cleared for org switch.");
-  }
   await saveSetting("xero.tenantId", tenant.tenantId);
   await saveSetting("xero.tenantName", tenant.tenantName || "");
+  const { setActiveTenantId } = await import("./storage");
+  setActiveTenantId(tenant.tenantId);
 }
 
 async function getXeroClientForApi(): Promise<XeroClient> {
@@ -317,6 +315,8 @@ export async function disconnect(): Promise<void> {
   for (const key of keys) {
     await saveSetting(key, "");
   }
+  const { setActiveTenantId } = await import("./storage");
+  setActiveTenantId(null);
 }
 
 function parseXeroDate(dateStr: string | undefined | null): string | null {
