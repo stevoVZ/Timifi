@@ -21,7 +21,7 @@ export const employees = pgTable("employees", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
-  email: text("email").notNull().unique(),
+  email: text("email").notNull(),
   phone: text("phone"),
   jobTitle: text("job_title"),
   clientName: text("client_name"),
@@ -80,11 +80,11 @@ export const invoices = pgTable("invoices", {
   clientId: varchar("client_id"),
   contactName: text("contact_name"),
   xeroContactId: text("xero_contact_id"),
-  xeroInvoiceId: text("xero_invoice_id").unique(),
+  xeroInvoiceId: text("xero_invoice_id"),
   timesheetId: varchar("timesheet_id").references(() => timesheets.id),
   year: smallint("year").notNull(),
   month: smallint("month").notNull(),
-  invoiceNumber: text("invoice_number").unique(),
+  invoiceNumber: text("invoice_number"),
   amountExclGst: numeric("amount_excl_gst", { precision: 10, scale: 2 }).notNull(),
   gstAmount: numeric("gst_amount", { precision: 10, scale: 2 }).notNull().default("0"),
   amountInclGst: numeric("amount_incl_gst", { precision: 10, scale: 2 }).notNull(),
@@ -215,7 +215,7 @@ export const leaveRequests = pgTable("leave_requests", {
 
 export const payItems = pgTable("pay_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  code: text("code").notNull().unique(),
+  code: text("code").notNull(),
   name: text("name").notNull(),
   description: text("description"),
   itemType: text("item_type").notNull().default("EARNINGS"),
@@ -276,7 +276,7 @@ export const bankTxnTypeEnum = pgEnum("bank_txn_type", ["RECEIVE", "SPEND"]);
 export const clients = pgTable("clients", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  xeroContactId: text("xero_contact_id").unique(),
+  xeroContactId: text("xero_contact_id"),
   email: text("email"),
   phone: text("phone"),
   isCustomer: boolean("is_customer").notNull().default(false),
@@ -311,7 +311,7 @@ export const placements = pgTable("placements", {
 
 export const bankTransactions = pgTable("bank_transactions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  xeroBankTransactionId: text("xero_bank_transaction_id").unique(),
+  xeroBankTransactionId: text("xero_bank_transaction_id"),
   bankAccountId: text("bank_account_id"),
   bankAccountName: text("bank_account_name"),
   contactName: text("contact_name"),
@@ -608,7 +608,7 @@ export type InsertInvoiceLineItem = z.infer<typeof insertInvoiceLineItemSchema>;
 export const invoicePayments = pgTable("invoice_payments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   invoiceId: varchar("invoice_id").notNull(),
-  xeroPaymentId: text("xero_payment_id").unique(),
+  xeroPaymentId: text("xero_payment_id"),
   paymentDate: date("payment_date"),
   amount: numeric("amount", { precision: 12, scale: 2 }).notNull().default("0"),
   currencyCode: text("currency_code"),
