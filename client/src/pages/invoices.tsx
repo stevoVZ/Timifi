@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { StatusBadge } from "@/components/status-badge";
@@ -46,9 +46,15 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronsUpDown,
+  Building2,
+  LinkIcon,
+  Unlink,
+  Loader2,
+  Check,
+  X,
+  Wand2,
 } from "lucide-react";
 import { Link } from "wouter";
-import { Building2 } from "lucide-react";
 import type { Invoice, Employee, Timesheet, Placement } from "@shared/schema";
 
 type ClientRecord = { id: string; name: string };
@@ -60,6 +66,25 @@ function formatCurrency(amount: string | number) {
   return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", minimumFractionDigits: 2 }).format(num);
 }
 
+type AlignmentProposal = {
+  invoiceId: string;
+  invoiceNumber: string | null;
+  contactName: string | null;
+  clientId: string | null;
+  clientName: string | null;
+  currentEmployeeId: string | null;
+  proposedEmployeeId: string | null;
+  proposedEmployeeName: string | null;
+  matchMethod: "rate" | "description" | "placement" | "unmatched";
+  confidence: "high" | "medium" | "low";
+  invoiceRate: number | null;
+  placementRate: number | null;
+  amountExclGst: string | null;
+  hours: string | null;
+  description: string | null;
+  issueDate: string | null;
+};
+
 export default function InvoicesPage() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -67,6 +92,7 @@ export default function InvoicesPage() {
   const [sortField, setSortField] = useState<string>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
+  const [alignmentOpen, setAlignmentOpen] = useState(false);
   const { toast } = useToast();
 
   const { data: invoicesList, isLoading } = useQuery<Invoice[]>({
@@ -148,6 +174,7 @@ export default function InvoicesPage() {
   const sent = filtered?.filter((i) => i.status === "SENT") || [];
 
   const voided = filtered?.filter((i) => i.status === "VOIDED") || [];
+  const unlinked = filtered?.filter((i) => !i.employeeId && i.status !== "VOIDED") || [];
   const totalBilled = filtered?.filter((i) => i.status !== "VOIDED").reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0) || 0;
   const totalOutstanding = outstanding.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
   const totalOverdue = overdue.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
@@ -161,6 +188,7 @@ export default function InvoicesPage() {
       case "overdue": return overdue;
       case "paid": return paid;
       case "voided": return voided;
+      case "unlinked": return unlinked;
       default: return filtered;
     }
   })();
@@ -239,13 +267,20 @@ export default function InvoicesPage() {
         title="Invoices"
         subtitle={`${filtered?.length || 0} invoices · ${formatCurrency(totalBilled)} billed`}
         actions={
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-create-invoice">
-                <Plus className="w-4 h-4" />
-                New Invoice
+          <div className="flex gap-2">
+            {unlinked.length > 0 && (
+              <Button variant="outline" onClick={() => setAlignmentOpen(true)} data-testid="button-align-invoices">
+                <Wand2 className="w-4 h-4" />
+                Align ({unlinked.length})
               </Button>
-            </DialogTrigger>
+            )}
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button data-testid="button-create-invoice">
+                  <Plus className="w-4 h-4" />
+                  New Invoice
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>Create Invoice</DialogTitle>
@@ -299,6 +334,7 @@ export default function InvoicesPage() {
               </form>
             </DialogContent>
           </Dialog>
+          </div>
         }
       />
       <main className="flex-1 overflow-auto p-6 bg-muted/30">
@@ -446,6 +482,12 @@ export default function InvoicesPage() {
                   <Ban className="w-3.5 h-3.5" />
                   Voided ({voided.length})
                 </TabsTrigger>
+                {unlinked.length > 0 && (
+                  <TabsTrigger value="unlinked" className="gap-1.5" data-testid="tab-unlinked">
+                    <Unlink className="w-3.5 h-3.5" />
+                    Unlinked ({unlinked.length})
+                  </TabsTrigger>
+                )}
               </TabsList>
 
               <TabsContent value={activeTab} className="mt-3">
@@ -569,7 +611,286 @@ export default function InvoicesPage() {
           isPending={updateMutation.isPending}
         />
       )}
+
+      {alignmentOpen && (
+        <AlignmentWizardDialog
+          employees={employees || []}
+          placements={allPlacements || []}
+          onClose={() => setAlignmentOpen(false)}
+          onComplete={() => {
+            setAlignmentOpen(false);
+            queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+            toast({ title: "Alignment complete" });
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function AlignmentWizardDialog({
+  employees,
+  placements,
+  onClose,
+  onComplete,
+}: {
+  employees: Employee[];
+  placements: Placement[];
+  onClose: () => void;
+  onComplete: () => void;
+}) {
+  const [proposals, setProposals] = useState<AlignmentProposal[]>([]);
+  const [decisions, setDecisions] = useState<Map<string, { action: "accept" | "skip"; employeeId: string | null }>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [committing, setCommitting] = useState(false);
+  const [result, setResult] = useState<{ accepted: number; skipped: number } | null>(null);
+  const { toast } = useToast();
+
+  const fetchPreview = async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await apiRequest("POST", "/api/invoices/alignment-preview");
+      const data: AlignmentProposal[] = await res.json();
+      setProposals(data);
+      const newDecisions = new Map<string, { action: "accept" | "skip"; employeeId: string | null }>();
+      for (const p of data) {
+        if (p.proposedEmployeeId && (p.confidence === "high" || p.confidence === "medium")) {
+          newDecisions.set(p.invoiceId, { action: "accept", employeeId: p.proposedEmployeeId });
+        } else {
+          newDecisions.set(p.invoiceId, { action: "skip", employeeId: p.proposedEmployeeId });
+        }
+      }
+      setDecisions(newDecisions);
+    } catch (err: any) {
+      setLoadError(err.message || "Failed to load alignment preview");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchPreview(); }, []);
+
+  const handleCommit = async () => {
+    setCommitting(true);
+    try {
+      const items = Array.from(decisions.entries()).map(([invoiceId, d]) => ({
+        invoiceId,
+        employeeId: d.employeeId,
+        action: d.action,
+      }));
+      const res = await apiRequest("POST", "/api/invoices/alignment-commit", { decisions: items });
+      const data = await res.json();
+      setResult({ accepted: data.accepted, skipped: data.skipped });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const toggleDecision = (invoiceId: string) => {
+    setDecisions(prev => {
+      const next = new Map(prev);
+      const current = next.get(invoiceId);
+      if (current) {
+        next.set(invoiceId, { ...current, action: current.action === "accept" ? "skip" : "accept" });
+      }
+      return next;
+    });
+  };
+
+  const setEmployeeForProposal = (invoiceId: string, employeeId: string) => {
+    setDecisions(prev => {
+      const next = new Map(prev);
+      next.set(invoiceId, { action: "accept", employeeId });
+      return next;
+    });
+  };
+
+  const matched = proposals.filter(p => p.matchMethod !== "unmatched");
+  const unmatched = proposals.filter(p => p.matchMethod === "unmatched");
+  const acceptCount = Array.from(decisions.values()).filter(d => d.action === "accept" && d.employeeId).length;
+  const skipCount = proposals.length - acceptCount;
+
+  const methodBadge = (method: string, confidence: string) => {
+    const colors: Record<string, string> = {
+      placement: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+      rate: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+      description: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+      unmatched: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    };
+    return (
+      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${colors[method] || colors.unmatched}`} data-testid={`badge-method-${method}`}>
+        {method === "placement" ? "Placement" : method === "rate" ? "Rate Match" : method === "description" ? "Name Match" : "No Match"}
+      </span>
+    );
+  };
+
+  if (result) {
+    return (
+      <Dialog open onOpenChange={() => onComplete()}>
+        <DialogContent className="max-w-md" data-testid="dialog-alignment-result">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Check className="w-5 h-5 text-emerald-600" />
+              Alignment Complete
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-md bg-emerald-50 dark:bg-emerald-900/20 text-center">
+                <p className="text-2xl font-bold text-emerald-600" data-testid="text-accepted-count">{result.accepted}</p>
+                <p className="text-xs text-muted-foreground">Linked</p>
+              </div>
+              <div className="p-3 rounded-md bg-muted text-center">
+                <p className="text-2xl font-bold text-muted-foreground" data-testid="text-skipped-count">{result.skipped}</p>
+                <p className="text-xs text-muted-foreground">Skipped</p>
+              </div>
+            </div>
+            <Button className="w-full" onClick={onComplete} data-testid="button-alignment-done">Done</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog open onOpenChange={() => onClose()}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col" data-testid="dialog-alignment-wizard">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Wand2 className="w-5 h-5" />
+            Invoice Alignment
+          </DialogTitle>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-sm text-muted-foreground">Analyzing invoices...</span>
+          </div>
+        ) : loadError ? (
+          <div className="text-center py-8 text-sm text-destructive">
+            {loadError}
+            <div className="mt-4 flex gap-2 justify-center">
+              <Button variant="outline" onClick={onClose}>Close</Button>
+              <Button variant="outline" onClick={fetchPreview}>Retry</Button>
+            </div>
+          </div>
+        ) : proposals.length === 0 ? (
+          <div className="text-center py-8 text-sm text-muted-foreground">
+            All invoices are already linked to employees.
+            <div className="mt-4">
+              <Button variant="outline" onClick={onClose}>Close</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground border-b pb-3">
+              <span>{proposals.length} unlinked invoice{proposals.length !== 1 ? "s" : ""}</span>
+              <span className="text-emerald-600 font-medium">{matched.length} auto-matched</span>
+              <span className="text-red-500 font-medium">{unmatched.length} need review</span>
+              <div className="ml-auto flex gap-2 text-xs">
+                <span className="text-emerald-600">{acceptCount} to link</span>
+                <span className="text-muted-foreground">{skipCount} to skip</span>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto min-h-0 divide-y" data-testid="alignment-proposals-list">
+              {proposals.map((p) => {
+                const decision = decisions.get(p.invoiceId);
+                const isAccepted = decision?.action === "accept" && decision.employeeId;
+
+                const relevantEmployees = p.clientId
+                  ? placements
+                      .filter(pl => pl.clientId === p.clientId)
+                      .map(pl => employees.find(e => e.id === pl.employeeId))
+                      .filter((e): e is Employee => !!e)
+                  : employees;
+
+                const uniqueEmployees = Array.from(new Map(relevantEmployees.map(e => [e.id, e])).values());
+
+                return (
+                  <div key={p.invoiceId} className={`py-2.5 px-1 flex items-start gap-3 text-sm ${isAccepted ? "bg-emerald-50/50 dark:bg-emerald-900/10" : ""}`} data-testid={`alignment-row-${p.invoiceId}`}>
+                    <button
+                      onClick={() => toggleDecision(p.invoiceId)}
+                      className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border transition-colors ${
+                        isAccepted
+                          ? "bg-emerald-600 border-emerald-600 text-white"
+                          : "border-border hover:border-foreground"
+                      }`}
+                      data-testid={`toggle-${p.invoiceId}`}
+                    >
+                      {isAccepted && <Check className="w-3 h-3" />}
+                    </button>
+
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs font-medium" data-testid={`text-inv-number-${p.invoiceId}`}>{p.invoiceNumber || "—"}</span>
+                        {methodBadge(p.matchMethod, p.confidence)}
+                        {p.issueDate && <span className="text-[10px] text-muted-foreground">{new Date(p.issueDate).toLocaleDateString("en-AU")}</span>}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {p.contactName || "Unknown contact"} · {p.amountExclGst ? formatCurrency(p.amountExclGst) : "—"} {p.hours ? `· ${p.hours}h` : ""}
+                      </div>
+                      {p.description && (
+                        <div className="text-[10px] text-muted-foreground truncate max-w-md">{p.description}</div>
+                      )}
+                    </div>
+
+                    <div className="flex-shrink-0 w-44">
+                      {p.matchMethod !== "unmatched" && isAccepted ? (
+                        <div className="text-xs">
+                          <span className="font-medium">{p.proposedEmployeeName}</span>
+                          {p.placementRate && <span className="text-muted-foreground ml-1">${p.placementRate.toFixed(0)}/hr</span>}
+                        </div>
+                      ) : (
+                        <select
+                          className="w-full text-xs border rounded px-2 py-1 bg-background"
+                          value={decision?.employeeId || ""}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              setEmployeeForProposal(p.invoiceId, e.target.value);
+                            }
+                          }}
+                          data-testid={`select-employee-${p.invoiceId}`}
+                        >
+                          <option value="">Select employee...</option>
+                          {(uniqueEmployees.length > 0 ? uniqueEmployees : employees).map(e => (
+                            <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center gap-3 pt-3 border-t">
+              <Button variant="outline" onClick={onClose} data-testid="button-alignment-cancel">Cancel</Button>
+              <div className="flex-1" />
+              <Button
+                onClick={handleCommit}
+                disabled={committing || acceptCount === 0}
+                data-testid="button-alignment-apply"
+              >
+                {committing ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Applying...</>
+                ) : (
+                  <>
+                    <LinkIcon className="w-4 h-4" />
+                    Apply {acceptCount} Link{acceptCount !== 1 ? "s" : ""}
+                  </>
+                )}
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

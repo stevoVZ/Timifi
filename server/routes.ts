@@ -1694,6 +1694,239 @@ export async function registerRoutes(
     }
   });
 
+  function buildAlignmentPreview(
+    allInvoices: any[],
+    allPlacements: any[],
+    allEmployees: any[],
+    clients: any[],
+  ) {
+    const linkablePlacements = allPlacements.filter((p: any) => p.status === "ACTIVE" || p.status === "ENDED");
+
+    type PlacementEntry = { employeeId: string; rate: number; employee: any; placement: any };
+    const placementsByClientId = new Map<string, PlacementEntry[]>();
+    const placementsByClientName = new Map<string, PlacementEntry[]>();
+    for (const placement of linkablePlacements) {
+      const employee = allEmployees.find((e: any) => e.id === placement.employeeId);
+      if (!employee) continue;
+      const client = clients.find((c: any) => c.id === placement.clientId);
+      if (!client) continue;
+      const rate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
+      const entry: PlacementEntry = { employeeId: employee.id, rate, employee, placement };
+      if (!placementsByClientId.has(client.id)) placementsByClientId.set(client.id, []);
+      placementsByClientId.get(client.id)!.push(entry);
+      const normalName = client.name.toLowerCase().trim();
+      if (!placementsByClientName.has(normalName)) placementsByClientName.set(normalName, []);
+      placementsByClientName.get(normalName)!.push(entry);
+    }
+
+    const wordBoundaryMatch = (text: string, term: string) => {
+      if (term.length < 2) return false;
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+    };
+
+    const proposals: Array<{
+      invoiceId: string;
+      invoiceNumber: string | null;
+      contactName: string | null;
+      clientId: string | null;
+      clientName: string | null;
+      currentEmployeeId: string | null;
+      proposedEmployeeId: string | null;
+      proposedEmployeeName: string | null;
+      matchMethod: "rate" | "description" | "placement" | "unmatched";
+      confidence: "high" | "medium" | "low";
+      invoiceRate: number | null;
+      placementRate: number | null;
+      amountExclGst: string | null;
+      hours: string | null;
+      description: string | null;
+      issueDate: string | null;
+    }> = [];
+
+    const clientByName = new Map(clients.map((c: any) => [c.name.toLowerCase().trim(), c]));
+
+    for (const inv of allInvoices) {
+      if (inv.employeeId) continue;
+
+      const clientRecord = inv.clientId
+        ? clients.find((c: any) => c.id === inv.clientId)
+        : inv.contactName
+          ? clientByName.get(inv.contactName.toLowerCase().trim())
+          : undefined;
+
+      const clientPlacements = (inv.clientId ? placementsByClientId.get(inv.clientId) : undefined)
+        || placementsByClientName.get((inv.contactName || "").toLowerCase().trim())
+        || [];
+
+      const invRate = inv.hours && parseFloat(inv.hours) > 0
+        ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
+        : 0;
+
+      if (clientPlacements.length === 1) {
+        proposals.push({
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          contactName: inv.contactName,
+          clientId: clientRecord?.id || inv.clientId || null,
+          clientName: clientRecord?.name || inv.contactName || null,
+          currentEmployeeId: null,
+          proposedEmployeeId: clientPlacements[0].employeeId,
+          proposedEmployeeName: `${clientPlacements[0].employee.firstName} ${clientPlacements[0].employee.lastName}`,
+          matchMethod: "placement",
+          confidence: "high",
+          invoiceRate: invRate || null,
+          placementRate: clientPlacements[0].rate || null,
+          amountExclGst: inv.amountExclGst,
+          hours: inv.hours,
+          description: inv.description,
+          issueDate: inv.issueDate,
+        });
+        continue;
+      }
+
+      if (invRate > 0 && clientPlacements.length > 0) {
+        const rateMatches = clientPlacements.filter(p => p.rate > 0 && Math.abs(invRate - p.rate) < 0.01);
+        if (rateMatches.length === 1) {
+          proposals.push({
+            invoiceId: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            contactName: inv.contactName,
+            clientId: clientRecord?.id || inv.clientId || null,
+            clientName: clientRecord?.name || inv.contactName || null,
+            currentEmployeeId: null,
+            proposedEmployeeId: rateMatches[0].employeeId,
+            proposedEmployeeName: `${rateMatches[0].employee.firstName} ${rateMatches[0].employee.lastName}`,
+            matchMethod: "rate",
+            confidence: "high",
+            invoiceRate: invRate,
+            placementRate: rateMatches[0].rate,
+            amountExclGst: inv.amountExclGst,
+            hours: inv.hours,
+            description: inv.description,
+            issueDate: inv.issueDate,
+          });
+          continue;
+        }
+      }
+
+      const desc = (inv.description || "").toLowerCase();
+      if (desc && clientPlacements.length > 0) {
+        const nameMatches = clientPlacements.filter(p => {
+          const first = (p.employee.firstName || "").toLowerCase().trim();
+          const last = (p.employee.lastName || "").toLowerCase().trim();
+          if (!first || !last || last.length < 3) return false;
+          return wordBoundaryMatch(desc, last) && wordBoundaryMatch(desc, first);
+        });
+        if (nameMatches.length === 1) {
+          proposals.push({
+            invoiceId: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            contactName: inv.contactName,
+            clientId: clientRecord?.id || inv.clientId || null,
+            clientName: clientRecord?.name || inv.contactName || null,
+            currentEmployeeId: null,
+            proposedEmployeeId: nameMatches[0].employeeId,
+            proposedEmployeeName: `${nameMatches[0].employee.firstName} ${nameMatches[0].employee.lastName}`,
+            matchMethod: "description",
+            confidence: "medium",
+            invoiceRate: invRate || null,
+            placementRate: nameMatches[0].rate || null,
+            amountExclGst: inv.amountExclGst,
+            hours: inv.hours,
+            description: inv.description,
+            issueDate: inv.issueDate,
+          });
+          continue;
+        }
+      }
+
+      proposals.push({
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        contactName: inv.contactName,
+        clientId: clientRecord?.id || inv.clientId || null,
+        clientName: clientRecord?.name || inv.contactName || null,
+        currentEmployeeId: null,
+        proposedEmployeeId: null,
+        proposedEmployeeName: null,
+        matchMethod: "unmatched",
+        confidence: "low",
+        invoiceRate: invRate || null,
+        placementRate: null,
+        amountExclGst: inv.amountExclGst,
+        hours: inv.hours,
+        description: inv.description,
+        issueDate: inv.issueDate,
+      });
+    }
+
+    return proposals;
+  }
+
+  app.post("/api/invoices/alignment-preview", async (_req, res) => {
+    try {
+      const [allPlacements, allInvoices, allEmployees, clients] = await Promise.all([
+        storage.getAllPlacements(),
+        storage.getInvoices(),
+        storage.getEmployees(),
+        storage.getClients(),
+      ]);
+      const proposals = buildAlignmentPreview(allInvoices, allPlacements, allEmployees, clients);
+      res.json(proposals);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to generate alignment preview" });
+    }
+  });
+
+  app.post("/api/invoices/alignment-commit", async (req, res) => {
+    try {
+      const decisions: Array<{ invoiceId: string; employeeId: string | null; action: "accept" | "skip" }> = req.body.decisions || [];
+      if (!Array.isArray(decisions)) {
+        return res.status(400).json({ message: "decisions must be an array" });
+      }
+      const allEmployees = await storage.getEmployees();
+      const employeeIds = new Set(allEmployees.map(e => e.id));
+
+      let accepted = 0;
+      let skipped = 0;
+      const errors: string[] = [];
+
+      for (const d of decisions) {
+        if (!d.invoiceId || typeof d.invoiceId !== "string") continue;
+        if (d.action !== "accept" || !d.employeeId) {
+          skipped++;
+          continue;
+        }
+        if (!employeeIds.has(d.employeeId)) {
+          errors.push(`Unknown employee ${d.employeeId}`);
+          skipped++;
+          continue;
+        }
+        const invoice = await storage.getInvoice(d.invoiceId);
+        if (!invoice) {
+          errors.push(`Invoice ${d.invoiceId} not found`);
+          skipped++;
+          continue;
+        }
+        if (invoice.employeeId) {
+          skipped++;
+          continue;
+        }
+        const updated = await storage.updateInvoice(d.invoiceId, { employeeId: d.employeeId });
+        if (updated) {
+          await storage.setInvoiceEmployees(d.invoiceId, [d.employeeId]);
+          accepted++;
+        } else {
+          skipped++;
+        }
+      }
+      res.json({ accepted, skipped, errors, message: `Applied ${accepted} links, skipped ${skipped}` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to commit alignment" });
+    }
+  });
+
   app.post("/api/invoices/auto-link", async (_req, res) => {
     try {
       const [allPlacements, allInvoices, allEmployees, clients] = await Promise.all([
@@ -1703,74 +1936,27 @@ export async function registerRoutes(
         storage.getClients(),
       ]);
 
-      const linkablePlacements = allPlacements.filter(p => p.status === "ACTIVE" || p.status === "ENDED");
+      const proposals = buildAlignmentPreview(allInvoices, allPlacements, allEmployees, clients);
       let linkedByRate = 0;
       let linkedByName = 0;
-      const claimedInvoiceIds = new Set<string>();
+      let linkedByPlacement = 0;
 
-      const placementsByClient = new Map<string, Array<{ employeeId: string; rate: number; employee: typeof allEmployees[0] }>>();
-      for (const placement of linkablePlacements) {
-        const employee = allEmployees.find(e => e.id === placement.employeeId);
-        if (!employee) continue;
-        const client = clients.find(c => c.id === placement.clientId);
-        if (!client) continue;
-        const rate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
-        if (!placementsByClient.has(client.name)) {
-          placementsByClient.set(client.name, []);
-        }
-        placementsByClient.get(client.name)!.push({ employeeId: employee.id, rate, employee });
+      for (const p of proposals) {
+        if (!p.proposedEmployeeId || p.matchMethod === "unmatched") continue;
+        await storage.updateInvoice(p.invoiceId, { employeeId: p.proposedEmployeeId });
+        await storage.setInvoiceEmployees(p.invoiceId, [p.proposedEmployeeId]);
+        if (p.matchMethod === "rate") linkedByRate++;
+        else if (p.matchMethod === "description") linkedByName++;
+        else if (p.matchMethod === "placement") linkedByPlacement++;
       }
 
-      for (const inv of allInvoices) {
-        if (inv.employeeId) continue;
-        if (claimedInvoiceIds.has(inv.id)) continue;
-
-        const clientPlacements = placementsByClient.get(inv.contactName || "");
-        if (!clientPlacements || clientPlacements.length === 0) continue;
-
-        const invRate = inv.hours && parseFloat(inv.hours) > 0
-          ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
-          : 0;
-        const rateMatches = invRate > 0
-          ? clientPlacements.filter(p => p.rate > 0 && Math.abs(invRate - p.rate) < 0.01)
-          : [];
-
-        if (rateMatches.length === 1) {
-          claimedInvoiceIds.add(inv.id);
-          await storage.updateInvoice(inv.id, { employeeId: rateMatches[0].employeeId });
-          await storage.setInvoiceEmployees(inv.id, [rateMatches[0].employeeId]);
-          linkedByRate++;
-          continue;
-        }
-
-        const desc = (inv.description || "").toLowerCase();
-        if (!desc) continue;
-        const wordBoundaryMatch = (text: string, term: string) => {
-          if (term.length < 2) return false;
-          const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          return new RegExp(`\\b${escaped}\\b`, "i").test(text);
-        };
-        const nameMatches = clientPlacements.filter(p => {
-          const first = (p.employee.firstName || "").toLowerCase().trim();
-          const last = (p.employee.lastName || "").toLowerCase().trim();
-          if (!first || !last || last.length < 3) return false;
-          return wordBoundaryMatch(desc, last) && wordBoundaryMatch(desc, first);
-        });
-
-        if (nameMatches.length === 1) {
-          claimedInvoiceIds.add(inv.id);
-          await storage.updateInvoice(inv.id, { employeeId: nameMatches[0].employeeId });
-          await storage.setInvoiceEmployees(inv.id, [nameMatches[0].employeeId]);
-          linkedByName++;
-        }
-      }
-
-      const total = linkedByRate + linkedByName;
+      const total = linkedByRate + linkedByName + linkedByPlacement;
       res.json({
         linked: total,
         linkedByRate,
         linkedByName,
-        message: `Auto-linked ${total} invoices (${linkedByRate} by rate, ${linkedByName} by employee name in description)`,
+        linkedByPlacement,
+        message: `Auto-linked ${total} invoices (${linkedByRate} by rate, ${linkedByName} by name, ${linkedByPlacement} by placement)`,
       });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to auto-link invoices" });
