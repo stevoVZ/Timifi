@@ -1771,6 +1771,7 @@ export async function registerRoutes(
 
     for (const inv of allInvoices) {
       if (inv.employeeId) continue;
+      if ((inv as any).invoiceType && (inv as any).invoiceType !== "ACCREC") continue;
 
       const clientRecord = inv.clientId
         ? clients.find((c: any) => c.id === inv.clientId)
@@ -2789,6 +2790,127 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to delete expected hours" });
+    }
+  });
+
+  app.get("/api/bank-transactions/linkage", async (req, res) => {
+    try {
+      const month = parseInt(req.query.month as string);
+      const year = parseInt(req.query.year as string);
+      if (!month || !year) return res.status(400).json({ message: "month and year required" });
+
+      const allBankTxns = await storage.getBankTransactions();
+      const bankTxns = allBankTxns.filter(t => {
+        const d = new Date(t.date);
+        return d.getMonth() + 1 === month && d.getFullYear() === year;
+      });
+      const allInvoices = await storage.getInvoices();
+      const allRctis = await storage.getRctis();
+      const allClients = await storage.getClients();
+      const allInvoicePayments = await storage.getAllInvoicePayments();
+      const allPlacements = await storage.getAllPlacements();
+
+      const rctiClientIds = new Set(allClients.filter(c => c.isRcti).map(c => c.id));
+      const rctiClientNames = new Set(allClients.filter(c => c.isRcti).map(c => c.name.toLowerCase().trim()));
+
+      const rctiBankTxnIds = new Set(allRctis.filter(r => r.bankTransactionId).map(r => r.bankTransactionId!));
+
+      const invoicePaymentsByKey = new Map<string, { invoiceId: string; invoiceNumber: string | null; contactName: string | null }>();
+      for (const ip of allInvoicePayments) {
+        const inv = allInvoices.find(i => i.id === ip.invoiceId);
+        if (!inv) continue;
+        const key = `${ip.bankAccountId || ""}__${ip.paymentDate || ""}__${parseFloat(String(ip.amount)).toFixed(2)}`;
+        invoicePaymentsByKey.set(key, {
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          contactName: inv.contactName,
+        });
+      }
+
+      const invoicesByContact = new Map<string, typeof allInvoices>();
+      for (const inv of allInvoices) {
+        if (!inv.contactName) continue;
+        if (inv.invoiceType && inv.invoiceType !== "ACCREC") continue;
+        if (inv.status === "VOIDED") continue;
+        const key = inv.contactName.toLowerCase().trim();
+        if (!invoicesByContact.has(key)) invoicesByContact.set(key, []);
+        invoicesByContact.get(key)!.push(inv);
+      }
+
+      const linkage: Record<string, {
+        status: "linked_invoice" | "linked_rcti" | "matched_contact" | "unlinked";
+        invoiceId?: string;
+        invoiceNumber?: string;
+        rctiId?: string;
+        contactName?: string;
+        isRctiClient?: boolean;
+        employees?: { id: string; name: string; placementId: string }[];
+      }> = {};
+
+      for (const txn of bankTxns) {
+        const txnId = txn.id;
+
+        if (rctiBankTxnIds.has(txnId)) {
+          const rcti = allRctis.find(r => r.bankTransactionId === txnId);
+          linkage[txnId] = { status: "linked_rcti", rctiId: rcti?.id };
+          continue;
+        }
+
+        const paymentKey = `${txn.bankAccountId || ""}__${txn.date || ""}__${Math.abs(parseFloat(String(txn.amount))).toFixed(2)}`;
+        const paymentMatch = invoicePaymentsByKey.get(paymentKey);
+        if (paymentMatch) {
+          linkage[txnId] = {
+            status: "linked_invoice",
+            invoiceId: paymentMatch.invoiceId,
+            invoiceNumber: paymentMatch.invoiceNumber,
+          };
+          continue;
+        }
+
+        const contactNorm = (txn.contactName || "").toLowerCase().trim();
+        const isRctiClient = rctiClientNames.has(contactNorm);
+        const contactInvoices = invoicesByContact.get(contactNorm) || [];
+        const amountMatch = contactInvoices.find(inv => {
+          const invAmt = Math.abs(parseFloat(inv.amountInclGst || "0"));
+          const txnAmt = Math.abs(parseFloat(String(txn.amount)));
+          return Math.abs(invAmt - txnAmt) < 0.02;
+        });
+
+        if (amountMatch) {
+          linkage[txnId] = {
+            status: "matched_contact",
+            invoiceId: amountMatch.id,
+            invoiceNumber: amountMatch.invoiceNumber,
+            contactName: txn.contactName,
+            isRctiClient,
+          };
+          continue;
+        }
+
+        if (isRctiClient && txn.type === "RECEIVE") {
+          const client = allClients.find(c => c.name.toLowerCase().trim() === contactNorm);
+          const clientPlacements = client ? allPlacements.filter(p => p.clientId === client.id) : [];
+
+          const empDetails = await Promise.all(clientPlacements.map(async p => {
+            const emp = await storage.getEmployee(p.employeeId);
+            return emp ? { id: emp.id, name: `${emp.firstName} ${emp.lastName}`, placementId: p.id } : null;
+          }));
+
+          linkage[txnId] = {
+            status: "unlinked",
+            isRctiClient: true,
+            contactName: txn.contactName,
+            employees: empDetails.filter(Boolean) as { id: string; name: string; placementId: string }[],
+          };
+          continue;
+        }
+
+        linkage[txnId] = { status: "unlinked", isRctiClient: false };
+      }
+
+      res.json(linkage);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to compute linkage" });
     }
   });
 

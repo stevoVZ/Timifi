@@ -11,9 +11,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown,
   Search, CheckCircle, XCircle, ChevronDown, ChevronUp, Wallet,
-  Landmark, CreditCard,
+  Landmark, CreditCard, Link2, Unlink, FileText, Receipt,
 } from "lucide-react";
 import type { BankTransaction } from "@shared/schema";
+
+interface LinkageInfo {
+  status: "linked_invoice" | "linked_rcti" | "matched_contact" | "unlinked";
+  invoiceId?: string;
+  invoiceNumber?: string;
+  rctiId?: string;
+  contactName?: string;
+  isRctiClient?: boolean;
+  employees?: { id: string; name: string; placementId: string }[];
+}
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -54,6 +64,10 @@ export default function BankStatementsPage() {
   const [search, setSearch] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedAccount, setSelectedAccount] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "RECEIVE" | "SPEND">("all");
+  const [linkageFilter, setLinkageFilter] = useState<"all" | "linked" | "unlinked">("all");
+  const [amountMin, setAmountMin] = useState("");
+  const [amountMax, setAmountMax] = useState("");
   const [initialPeriodSet, setInitialPeriodSet] = useState(false);
 
   const { data: latestPeriod } = useQuery<{ month: number; year: number }>({
@@ -78,6 +92,15 @@ export default function BankStatementsPage() {
     queryFn: async () => {
       const res = await fetch(`/api/bank-transactions?month=${month}&year=${year}`, { credentials: "include" });
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+  });
+
+  const { data: linkageData } = useQuery<Record<string, LinkageInfo>>({
+    queryKey: ["/api/bank-transactions/linkage", month, year],
+    queryFn: async () => {
+      const res = await fetch(`/api/bank-transactions/linkage?month=${month}&year=${year}`, { credentials: "include" });
+      if (!res.ok) return {};
       return res.json();
     },
   });
@@ -112,16 +135,42 @@ export default function BankStatementsPage() {
     return transactions.filter(t => (t.bankAccountId || "unknown") === selectedAccount);
   }, [transactions, selectedAccount]);
 
+  const typeFiltered = useMemo(() => {
+    if (typeFilter === "all") return accountFiltered;
+    return accountFiltered.filter(t => t.type === typeFilter);
+  }, [accountFiltered, typeFilter]);
+
+  const amountFiltered = useMemo(() => {
+    const min = amountMin ? parseFloat(amountMin) : null;
+    const max = amountMax ? parseFloat(amountMax) : null;
+    if (min === null && max === null) return typeFiltered;
+    return typeFiltered.filter(t => {
+      const amt = safeAmount(t.amount);
+      if (min !== null && amt < min) return false;
+      if (max !== null && amt > max) return false;
+      return true;
+    });
+  }, [typeFiltered, amountMin, amountMax]);
+
+  const linkageFiltered = useMemo(() => {
+    if (linkageFilter === "all" || !linkageData) return amountFiltered;
+    return amountFiltered.filter(t => {
+      const info = linkageData[t.id];
+      const isLinked = info && (info.status === "linked_invoice" || info.status === "linked_rcti" || info.status === "matched_contact");
+      return linkageFilter === "linked" ? isLinked : !isLinked;
+    });
+  }, [amountFiltered, linkageFilter, linkageData]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return accountFiltered;
+    if (!search.trim()) return linkageFiltered;
     const s = search.toLowerCase();
-    return accountFiltered.filter(t =>
+    return linkageFiltered.filter(t =>
       (t.contactName || "").toLowerCase().includes(s) ||
       (t.description || "").toLowerCase().includes(s) ||
       (t.reference || "").toLowerCase().includes(s) ||
       (t.bankAccountName || "").toLowerCase().includes(s)
     );
-  }, [accountFiltered, search]);
+  }, [linkageFiltered, search]);
 
   const expenses = filtered.filter(t => t.type === "SPEND");
   const income = filtered.filter(t => t.type === "RECEIVE");
@@ -210,7 +259,7 @@ export default function BankStatementsPage() {
               </Button>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Select value={selectedAccount} onValueChange={setSelectedAccount}>
                 <SelectTrigger className="h-8 w-[180px] text-sm" data-testid="select-account-filter">
                   <SelectValue placeholder="All Accounts" />
@@ -224,6 +273,57 @@ export default function BankStatementsPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <div className="flex items-center rounded-md border overflow-hidden" data-testid="filter-type-toggle">
+                {(["all", "RECEIVE", "SPEND"] as const).map((val) => (
+                  <button
+                    key={val}
+                    onClick={() => setTypeFilter(val)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      typeFilter === val
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-card hover:bg-muted/60 text-muted-foreground"
+                    }`}
+                    data-testid={`button-type-${val}`}
+                  >
+                    {val === "all" ? "All" : val === "RECEIVE" ? "Receive" : "Spend"}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center rounded-md border overflow-hidden" data-testid="filter-linkage-toggle">
+                {(["all", "linked", "unlinked"] as const).map((val) => (
+                  <button
+                    key={val}
+                    onClick={() => setLinkageFilter(val)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      linkageFilter === val
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-card hover:bg-muted/60 text-muted-foreground"
+                    }`}
+                    data-testid={`button-linkage-${val}`}
+                  >
+                    {val === "all" ? "All" : val === "linked" ? <span className="flex items-center gap-1"><Link2 className="w-3 h-3" />Linked</span> : <span className="flex items-center gap-1"><Unlink className="w-3 h-3" />Unlinked</span>}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  placeholder="Min $"
+                  className="h-8 w-[80px] text-sm"
+                  value={amountMin}
+                  onChange={(e) => setAmountMin(e.target.value)}
+                  data-testid="input-amount-min"
+                />
+                <span className="text-xs text-muted-foreground">–</span>
+                <Input
+                  type="number"
+                  placeholder="Max $"
+                  className="h-8 w-[80px] text-sm"
+                  value={amountMax}
+                  onChange={(e) => setAmountMax(e.target.value)}
+                  data-testid="input-amount-max"
+                />
+              </div>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
@@ -414,11 +514,11 @@ export default function BankStatementsPage() {
               </TabsContent>
 
               <TabsContent value="all" className="mt-4">
-                <TransactionTable transactions={filtered} title={`All Transactions — ${MONTHS[month]} ${year}`} />
+                <TransactionTable transactions={filtered} title={`All Transactions — ${MONTHS[month]} ${year}`} linkage={linkageData} />
               </TabsContent>
 
               <TabsContent value="income" className="mt-4">
-                <TransactionTable transactions={income} title={`Income — ${MONTHS[month]} ${year}`} />
+                <TransactionTable transactions={income} title={`Income — ${MONTHS[month]} ${year}`} linkage={linkageData} />
               </TabsContent>
             </Tabs>
           )}
@@ -428,8 +528,50 @@ export default function BankStatementsPage() {
   );
 }
 
-function TransactionTable({ transactions, title }: { transactions: BankTransaction[]; title: string }) {
-  const [sortField, setSortField] = useState<"date" | "amount">("date");
+function LinkageBadge({ info }: { info?: LinkageInfo }) {
+  if (!info) return <span className="text-muted-foreground/30 text-[10px]">—</span>;
+
+  if (info.status === "linked_invoice") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 gap-0.5" data-testid="badge-linked-invoice">
+        <FileText className="w-2.5 h-2.5" />
+        {info.invoiceNumber || "INV"}
+      </Badge>
+    );
+  }
+
+  if (info.status === "linked_rcti") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300 gap-0.5" data-testid="badge-linked-rcti">
+        <Receipt className="w-2.5 h-2.5" />
+        RCTI
+      </Badge>
+    );
+  }
+
+  if (info.status === "matched_contact") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 gap-0.5" data-testid="badge-matched-contact">
+        <Link2 className="w-2.5 h-2.5" />
+        {info.invoiceNumber || "Match"}
+      </Badge>
+    );
+  }
+
+  if (info.isRctiClient) {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 gap-0.5" data-testid="badge-unlinked-rcti">
+        <Unlink className="w-2.5 h-2.5" />
+        Unlinked RCTI
+      </Badge>
+    );
+  }
+
+  return <span className="text-muted-foreground/30 text-[10px]">—</span>;
+}
+
+function TransactionTable({ transactions, title, linkage }: { transactions: BankTransaction[]; title: string; linkage?: Record<string, LinkageInfo> }) {
+  const [sortField, setSortField] = useState<"date" | "amount" | "contact">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const sorted = useMemo(() => {
@@ -438,14 +580,18 @@ function TransactionTable({ transactions, title }: { transactions: BankTransacti
         const cmp = new Date(a.date).getTime() - new Date(b.date).getTime();
         return sortDir === "asc" ? cmp : -cmp;
       }
+      if (sortField === "contact") {
+        const cmp = (a.contactName || "").localeCompare(b.contactName || "");
+        return sortDir === "asc" ? cmp : -cmp;
+      }
       const cmp = safeAmount(a.amount) - safeAmount(b.amount);
       return sortDir === "asc" ? cmp : -cmp;
     });
   }, [transactions, sortField, sortDir]);
 
-  const toggleSort = (field: "date" | "amount") => {
+  const toggleSort = (field: "date" | "amount" | "contact") => {
     if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortField(field); setSortDir("desc"); }
+    else { setSortField(field); setSortDir(field === "contact" ? "asc" : "desc"); }
   };
 
   return (
@@ -465,13 +611,16 @@ function TransactionTable({ transactions, title }: { transactions: BankTransacti
                     <div className="flex items-center gap-1">Date {sortField === "date" && (sortDir === "asc" ? "↑" : "↓")}</div>
                   </th>
                   <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Type</th>
-                  <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Contact</th>
+                  <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground cursor-pointer select-none" onClick={() => toggleSort("contact")}>
+                    <div className="flex items-center gap-1">Contact {sortField === "contact" && (sortDir === "asc" ? "↑" : "↓")}</div>
+                  </th>
                   <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden md:table-cell">Description</th>
                   <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden lg:table-cell">Reference</th>
                   <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground hidden lg:table-cell">Account</th>
                   <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground cursor-pointer select-none" onClick={() => toggleSort("amount")}>
                     <div className="flex items-center justify-end gap-1">Amount {sortField === "amount" && (sortDir === "asc" ? "↑" : "↓")}</div>
                   </th>
+                  <th className="text-center py-2.5 px-2 text-xs font-semibold text-muted-foreground">Linked</th>
                   <th className="text-center py-2.5 px-2 text-xs font-semibold text-muted-foreground w-[40px]">Rec</th>
                 </tr>
               </thead>
@@ -494,6 +643,9 @@ function TransactionTable({ transactions, title }: { transactions: BankTransacti
                       <span className={`font-mono text-xs font-semibold ${t.type === "RECEIVE" ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                         {t.type === "RECEIVE" ? "+" : "-"}{fmtCurrency(safeAmount(t.amount))}
                       </span>
+                    </td>
+                    <td className="py-2.5 px-2 text-center">
+                      <LinkageBadge info={linkage?.[t.id]} />
                     </td>
                     <td className="py-2.5 px-2 text-center">
                       {t.isReconciled ? (

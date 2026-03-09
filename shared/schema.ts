@@ -94,6 +94,7 @@ export const invoices = pgTable("invoices", {
   paidDate: date("paid_date"),
   status: invoiceStatusEnum("status").notNull().default("DRAFT"),
   invoiceType: text("invoice_type"),
+  category: text("category"),
   reference: text("reference"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

@@ -172,6 +172,7 @@ export interface IStorage {
   setInvoiceLineItems(invoiceId: string, items: InsertInvoiceLineItem[]): Promise<InvoiceLineItem[]>;
 
   getInvoicePayments(invoiceId: string): Promise<InvoicePayment[]>;
+  getAllInvoicePayments(): Promise<InvoicePayment[]>;
   setInvoicePayments(invoiceId: string, payments: InsertInvoicePayment[]): Promise<InvoicePayment[]>;
 
   getRctis(): Promise<Rcti[]>;
@@ -847,6 +848,10 @@ export class DatabaseStorage implements IStorage {
 
   async getInvoicePayments(invoiceId: string): Promise<InvoicePayment[]> {
     return db.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
+  }
+
+  async getAllInvoicePayments(): Promise<InvoicePayment[]> {
+    return db.select().from(invoicePayments);
   }
 
   async setInvoicePayments(invoiceId: string, payments: InsertInvoicePayment[]): Promise<InvoicePayment[]> {

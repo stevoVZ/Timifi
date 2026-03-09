@@ -98,6 +98,7 @@ export default function InvoicesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("all");
   const [typeFilter, setTypeFilter] = useState<"all" | "ACCREC" | "ACCPAY">("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [sortField, setSortField] = useState<string>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
@@ -168,6 +169,7 @@ export default function InvoicesPage() {
 
   const filtered = invoicesList?.filter((inv) => {
     if (typeFilter !== "all" && (inv as any).invoiceType !== typeFilter) return false;
+    if (categoryFilter !== "all" && ((inv as any).category || "Other") !== categoryFilter) return false;
     const linkedIds: string[] = (inv as any).linkedEmployeeIds || (inv.employeeId ? [inv.employeeId] : []);
     const names = linkedIds.map(id => {
       const emp = employeeMap.get(id);
@@ -184,7 +186,7 @@ export default function InvoicesPage() {
   const sent = filtered?.filter((i) => i.status === "SENT") || [];
 
   const voided = filtered?.filter((i) => i.status === "VOIDED") || [];
-  const unlinked = filtered?.filter((i) => !i.employeeId && i.status !== "VOIDED") || [];
+  const unlinked = filtered?.filter((i) => !i.employeeId && i.status !== "VOIDED" && (!i.invoiceType || i.invoiceType === "ACCREC")) || [];
   const totalBilled = filtered?.filter((i) => i.status !== "VOIDED").reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0) || 0;
   const totalOutstanding = outstanding.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
   const totalOverdue = overdue.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
@@ -478,6 +480,24 @@ export default function InvoicesPage() {
                 </button>
               ))}
             </div>
+            {typeFilter === "ACCPAY" && (
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-44 h-8 text-xs" data-testid="filter-category">
+                  <SelectValue placeholder="All Categories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  <SelectItem value="Software">Software</SelectItem>
+                  <SelectItem value="Insurance">Insurance</SelectItem>
+                  <SelectItem value="Tax">Tax</SelectItem>
+                  <SelectItem value="Office">Office</SelectItem>
+                  <SelectItem value="Vehicle">Vehicle</SelectItem>
+                  <SelectItem value="Professional Services">Professional Services</SelectItem>
+                  <SelectItem value="Subscriptions">Subscriptions</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {isLoading ? (
@@ -568,7 +588,14 @@ export default function InvoicesPage() {
                                     </span>
                                   </TableCell>
                                   <TableCell>
-                                    <InvoiceTypeBadge type={(inv as any).invoiceType} testId={`badge-type-${inv.id}`} />
+                                    <div className="flex items-center gap-1">
+                                      <InvoiceTypeBadge type={(inv as any).invoiceType} testId={`badge-type-${inv.id}`} />
+                                      {(inv as any).invoiceType === "ACCPAY" && (inv as any).category && (
+                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5" data-testid={`badge-category-${inv.id}`}>
+                                          {(inv as any).category}
+                                        </Badge>
+                                      )}
+                                    </div>
                                   </TableCell>
                                   <TableCell>
                                     <div className="flex flex-col gap-0.5">
@@ -1186,6 +1213,29 @@ function InvoiceDetailDialog({
               <div className="col-span-2">
                 <span className="text-xs text-muted-foreground block">Reference</span>
                 <span className="font-medium" data-testid="text-detail-reference">{(invoice as any).reference}</span>
+              </div>
+            )}
+            {(invoice as any).invoiceType === "ACCPAY" && (
+              <div className="col-span-2">
+                <span className="text-xs text-muted-foreground block">Category</span>
+                <Select
+                  value={(invoice as any).category || ""}
+                  onValueChange={(val) => onSave(invoice.id, { category: val })}
+                >
+                  <SelectTrigger className="h-8 w-48 text-xs" data-testid="select-category">
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Software">Software</SelectItem>
+                    <SelectItem value="Insurance">Insurance</SelectItem>
+                    <SelectItem value="Tax">Tax</SelectItem>
+                    <SelectItem value="Office">Office</SelectItem>
+                    <SelectItem value="Vehicle">Vehicle</SelectItem>
+                    <SelectItem value="Professional Services">Professional Services</SelectItem>
+                    <SelectItem value="Subscriptions">Subscriptions</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             )}
           </div>
