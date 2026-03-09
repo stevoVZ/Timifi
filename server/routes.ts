@@ -12,6 +12,15 @@ import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from ".
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
+function normalizeCompanyName(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/\b(pty\.?\s*ltd\.?|limited|ltd\.?|inc\.?|incorporated)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -745,9 +754,9 @@ export async function registerRoutes(
 
         let contractorCost: { total: number; transactionCount: number; companyName: string | null } | null = null;
         if (emp.paymentMethod === "INVOICE" && emp.companyName) {
-          const companyLower = emp.companyName.toLowerCase().trim();
+          const companyNorm = normalizeCompanyName(emp.companyName);
           const matchingSpend = spendTxns.filter(t =>
-            t.contactName && t.contactName.toLowerCase().trim() === companyLower
+            t.contactName && normalizeCompanyName(t.contactName) === companyNorm
           );
           contractorCost = {
             total: matchingSpend.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0),
@@ -2074,12 +2083,12 @@ export async function registerRoutes(
         let contractorSpendTxnCount = 0;
 
         if (employee.paymentMethod === "INVOICE" && employee.companyName) {
-          const companyNameLower = employee.companyName.toLowerCase().trim();
+          const companyNorm = normalizeCompanyName(employee.companyName);
           const spendTxns = periodBankTxns.filter(t =>
             !claimedBankTxnIds.has(t.id) &&
             t.type === "SPEND" &&
             t.contactName &&
-            t.contactName.toLowerCase().trim() === companyNameLower
+            normalizeCompanyName(t.contactName) === companyNorm
           );
           spendTxns.forEach(t => claimedBankTxnIds.add(t.id));
           contractorSpend = spendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0);
