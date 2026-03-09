@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Sheet,
   SheetContent,
@@ -24,7 +26,7 @@ import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown,
   DollarSign, Percent, Users, FileText, Wallet, Link2,
   ArrowUpRight, ArrowDownRight, Minus, X, Calculator,
-  CreditCard, Receipt,
+  CreditCard, Receipt, Clock, Plus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -90,6 +92,11 @@ interface ProfitabilityRow {
     invoiceCount: number;
     rctiCount: number;
     hours: number;
+    invoicedHours: number;
+    timesheetHours: number;
+    estimatedHours: number;
+    bestAvailableHours: number;
+    hoursSource: "INVOICED" | "TIMESHEET" | "ESTIMATED";
     amountExGst: number;
     amountInclGst: number;
     rctiAmountExGst: number;
@@ -366,12 +373,27 @@ export default function ProfitabilityPage() {
                           <td className="px-4 py-3 text-right tabular-nums">
                             ${parseFloat(row.employee.chargeOutRate || "0").toFixed(0)}/hr
                           </td>
-                          <DrillDownCell
-                            value={row.revenue.hours}
-                            display={row.revenue.hours !== 0 ? row.revenue.hours.toFixed(1) : "—"}
+                          <td
+                            className="px-4 py-3 text-right tabular-nums cursor-pointer hover:bg-muted/60 transition-colors"
                             onClick={() => setDrillDown({ row, column: "hours" })}
-                            testId={`cell-hours-${row.placementId}`}
-                          />
+                            data-testid={`cell-hours-${row.placementId}`}
+                          >
+                            <span className="inline-flex items-center gap-1 border-b border-dashed border-muted-foreground/50">
+                              {row.revenue.bestAvailableHours > 0 ? (
+                                <>
+                                  <span className={row.revenue.hoursSource === "ESTIMATED" ? "text-muted-foreground" : ""}>
+                                    {row.revenue.bestAvailableHours.toFixed(1)}
+                                  </span>
+                                  {row.revenue.hoursSource === "TIMESHEET" && (
+                                    <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight" data-testid={`badge-hours-source-${row.placementId}`}>T</Badge>
+                                  )}
+                                  {row.revenue.hoursSource === "ESTIMATED" && (
+                                    <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight text-muted-foreground" data-testid={`badge-hours-source-${row.placementId}`}>E</Badge>
+                                  )}
+                                </>
+                              ) : "—"}
+                            </span>
+                          </td>
                           <DrillDownCell
                             value={row.revenue.amountExGst}
                             display={row.revenue.amountExGst !== 0 ? fmtCurrencyFull(row.revenue.amountExGst) : "—"}
@@ -519,6 +541,201 @@ const COLUMN_LABELS: Record<DrillDownColumn, string> = {
   profit: "Profit Breakdown",
 };
 
+function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { month: number; year: number } }) {
+  const { toast } = useToast();
+  const [addHours, setAddHours] = useState("");
+  const [addRegular, setAddRegular] = useState("");
+  const [addOvertime, setAddOvertime] = useState("");
+  const hasAnyHoursData = row.revenue.invoicedHours > 0 || row.revenue.timesheetHours > 0 || row.revenue.estimatedHours > 0;
+  const showAddForm = !hasAnyHoursData || (row.revenue.invoicedHours === 0 && row.revenue.timesheetHours === 0);
+
+  const addHoursMutation = useMutation({
+    mutationFn: async () => {
+      const totalHours = parseFloat(addHours) || 0;
+      const regularHours = parseFloat(addRegular) || totalHours;
+      const overtimeHours = parseFloat(addOvertime) || 0;
+      const res = await apiRequest("POST", "/api/timesheets", {
+        employeeId: row.employee.id,
+        month: period.month,
+        year: period.year,
+        totalHours: String(totalHours),
+        regularHours: String(regularHours),
+        overtimeHours: String(overtimeHours),
+        status: "DRAFT",
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Hours Added", description: "Timesheet hours saved successfully" });
+      queryClient.invalidateQueries({ queryKey: ["/api/profitability"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      setAddHours("");
+      setAddRegular("");
+      setAddOvertime("");
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to save hours", variant: "destructive" });
+    },
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-muted/50 rounded-md p-4 space-y-2">
+        <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+          <Clock className="w-3.5 h-3.5" />
+          Hours Breakdown — Three-Tier View
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-muted-foreground">Invoiced / RCTI Hours</span>
+          <span className="tabular-nums font-medium">
+            {row.revenue.invoicedHours > 0 ? row.revenue.invoicedHours.toFixed(1) : "—"}
+          </span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-muted-foreground flex items-center gap-1">
+            Timesheet Hours
+            <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight">T</Badge>
+          </span>
+          <span className="tabular-nums font-medium">
+            {row.revenue.timesheetHours > 0 ? row.revenue.timesheetHours.toFixed(1) : "—"}
+          </span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-muted-foreground flex items-center gap-1">
+            Estimated Hours
+            <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight text-muted-foreground">E</Badge>
+          </span>
+          <span className="tabular-nums font-medium text-muted-foreground">
+            {row.revenue.estimatedHours > 0 ? row.revenue.estimatedHours.toFixed(1) : "—"}
+          </span>
+        </div>
+        <div className="border-t pt-2 flex justify-between text-sm font-semibold">
+          <span>Best Available</span>
+          <span className="tabular-nums inline-flex items-center gap-1">
+            {row.revenue.bestAvailableHours > 0 ? row.revenue.bestAvailableHours.toFixed(1) : "—"}
+            {row.revenue.hoursSource === "TIMESHEET" && (
+              <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight">T</Badge>
+            )}
+            {row.revenue.hoursSource === "ESTIMATED" && (
+              <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight text-muted-foreground">E</Badge>
+            )}
+          </span>
+        </div>
+      </div>
+
+      {row.revenue.invoices.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-muted-foreground mb-2">From invoices</div>
+          <div className="border rounded-md overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="text-xs">
+                  <TableHead>Invoice #</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead className="text-right">Hours</TableHead>
+                  <TableHead className="text-right">Rate</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {row.revenue.invoices.map((inv) => (
+                  <TableRow key={inv.id} className="text-sm">
+                    <TableCell className="font-mono">{inv.invoiceNumber || "—"}</TableCell>
+                    <TableCell>{inv.contactName || "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{inv.hours > 0 ? inv.hours.toFixed(1) : "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{inv.hours > 0 ? fmtCurrencyFull(inv.amountExclGst / inv.hours) + "/hr" : "—"}</TableCell>
+                  </TableRow>
+                ))}
+                <TableRow className="bg-muted/50 font-semibold text-sm">
+                  <TableCell colSpan={2}>Total hours</TableCell>
+                  <TableCell className="text-right tabular-nums">{row.revenue.invoices.reduce((s, i) => s + i.hours, 0).toFixed(1)}</TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+      {row.revenue.rctis.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-muted-foreground mb-2">From RCTIs</div>
+          <div className="border rounded-md overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="text-xs">
+                  <TableHead>Client</TableHead>
+                  <TableHead>Period</TableHead>
+                  <TableHead className="text-right">Hours</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {row.revenue.rctis.map((r) => (
+                  <TableRow key={r.id} className="text-sm">
+                    <TableCell>{r.clientName || "—"}</TableCell>
+                    <TableCell>{MONTHS[r.month]} {r.year}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{r.hours > 0 ? r.hours.toFixed(1) : "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      {showAddForm && (
+        <div className="border rounded-md p-4 space-y-3">
+          <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5" />
+            Add Timesheet Hours
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Total Hours</Label>
+              <Input
+                type="number"
+                step="0.5"
+                min="0"
+                value={addHours}
+                onChange={(e) => setAddHours(e.target.value)}
+                data-testid="input-add-total-hours"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Regular</Label>
+              <Input
+                type="number"
+                step="0.5"
+                min="0"
+                value={addRegular}
+                onChange={(e) => setAddRegular(e.target.value)}
+                data-testid="input-add-regular-hours"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Overtime</Label>
+              <Input
+                type="number"
+                step="0.5"
+                min="0"
+                value={addOvertime}
+                onChange={(e) => setAddOvertime(e.target.value)}
+                data-testid="input-add-overtime-hours"
+              />
+            </div>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => addHoursMutation.mutate()}
+            disabled={addHoursMutation.isPending || !addHours || parseFloat(addHours) <= 0}
+            data-testid="button-save-hours"
+          >
+            {addHoursMutation.isPending ? "Saving..." : "Save Hours"}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DrillDownDialog({
   row,
   column,
@@ -535,8 +752,7 @@ function DrillDownDialog({
 
   const renderSubtitle = () => {
     switch (column) {
-      case "revenue":
-      case "hours": {
+      case "revenue": {
         const parts: string[] = [];
         if (row.revenue.invoices.length > 0)
           parts.push(`${row.revenue.invoices.length} invoice${row.revenue.invoices.length !== 1 ? "s" : ""}`);
@@ -544,6 +760,14 @@ function DrillDownDialog({
           parts.push(`${row.revenue.rctis.length} RCTI${row.revenue.rctis.length !== 1 ? "s" : ""}`);
         if (parts.length === 0) return "No matching records";
         return parts.join(" + ") + ` from ${row.client.name}`;
+      }
+      case "hours": {
+        const sourceLabel = row.revenue.hoursSource === "INVOICED" ? "invoiced/RCTI"
+          : row.revenue.hoursSource === "TIMESHEET" ? "timesheet"
+          : "estimated";
+        if (row.revenue.bestAvailableHours > 0)
+          return `Showing ${sourceLabel} hours (${row.revenue.bestAvailableHours.toFixed(1)}h) for ${row.client.name}`;
+        return `No hours data — click to add timesheet hours`;
       }
       case "grossPay":
       case "super":
@@ -649,65 +873,7 @@ function DrillDownDialog({
 
       case "hours":
         return (
-          <div className="space-y-4">
-            {row.revenue.invoices.length > 0 && (
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-2">From invoices</div>
-                <div className="border rounded-md overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="text-xs">
-                        <TableHead>Invoice #</TableHead>
-                        <TableHead>Contact</TableHead>
-                        <TableHead className="text-right">Hours</TableHead>
-                        <TableHead className="text-right">Rate</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {row.revenue.invoices.map((inv) => (
-                        <TableRow key={inv.id} className="text-sm">
-                          <TableCell className="font-mono">{inv.invoiceNumber || "—"}</TableCell>
-                          <TableCell>{inv.contactName || "—"}</TableCell>
-                          <TableCell className="text-right tabular-nums font-medium">{inv.hours > 0 ? inv.hours.toFixed(1) : "—"}</TableCell>
-                          <TableCell className="text-right tabular-nums">{inv.hours > 0 ? fmtCurrencyFull(inv.amountExclGst / inv.hours) + "/hr" : "—"}</TableCell>
-                        </TableRow>
-                      ))}
-                      <TableRow className="bg-muted/50 font-semibold text-sm">
-                        <TableCell colSpan={2}>Total hours</TableCell>
-                        <TableCell className="text-right tabular-nums">{row.revenue.invoices.reduce((s, i) => s + i.hours, 0).toFixed(1)}</TableCell>
-                        <TableCell />
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            )}
-            {row.revenue.rctis.length > 0 && (
-              <div>
-                <div className="text-xs font-medium text-muted-foreground mb-2">From RCTIs</div>
-                <div className="border rounded-md overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="text-xs">
-                        <TableHead>Client</TableHead>
-                        <TableHead>Period</TableHead>
-                        <TableHead className="text-right">Hours</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {row.revenue.rctis.map((r) => (
-                        <TableRow key={r.id} className="text-sm">
-                          <TableCell>{r.clientName || "—"}</TableCell>
-                          <TableCell>{MONTHS[r.month]} {r.year}</TableCell>
-                          <TableCell className="text-right tabular-nums font-medium">{r.hours > 0 ? r.hours.toFixed(1) : "—"}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            )}
-          </div>
+          <HoursDrillDown row={row} period={period} />
         );
 
       case "grossPay":

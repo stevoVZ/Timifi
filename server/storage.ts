@@ -31,6 +31,8 @@ import {
   type Rcti, type InsertRcti,
   type InvoiceLineItem, type InsertInvoiceLineItem,
   type InvoicePayment, type InsertInvoicePayment,
+  type MonthlyExpectedHours, type InsertMonthlyExpectedHours,
+  monthlyExpectedHours,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -178,6 +180,10 @@ export interface IStorage {
   createRcti(data: InsertRcti): Promise<Rcti>;
   updateRcti(id: string, data: Partial<InsertRcti>): Promise<Rcti | undefined>;
   deleteRcti(id: string): Promise<void>;
+
+  getMonthlyExpectedHours(filters?: { employeeId?: string; month?: number; year?: number }): Promise<MonthlyExpectedHours[]>;
+  upsertMonthlyExpectedHours(data: InsertMonthlyExpectedHours): Promise<MonthlyExpectedHours>;
+  deleteMonthlyExpectedHours(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -847,6 +853,40 @@ export class DatabaseStorage implements IStorage {
     await db.delete(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
     if (payments.length === 0) return [];
     return db.insert(invoicePayments).values(payments).returning();
+  }
+
+  async getMonthlyExpectedHours(filters?: { employeeId?: string; month?: number; year?: number }): Promise<MonthlyExpectedHours[]> {
+    const conditions = [];
+    if (filters?.employeeId) conditions.push(eq(monthlyExpectedHours.employeeId, filters.employeeId));
+    if (filters?.month) conditions.push(eq(monthlyExpectedHours.month, filters.month));
+    if (filters?.year) conditions.push(eq(monthlyExpectedHours.year, filters.year));
+    if (conditions.length > 0) {
+      return db.select().from(monthlyExpectedHours).where(and(...conditions));
+    }
+    return db.select().from(monthlyExpectedHours);
+  }
+
+  async upsertMonthlyExpectedHours(data: InsertMonthlyExpectedHours): Promise<MonthlyExpectedHours> {
+    const existing = await db.select().from(monthlyExpectedHours).where(
+      and(
+        eq(monthlyExpectedHours.employeeId, data.employeeId),
+        eq(monthlyExpectedHours.month, data.month),
+        eq(monthlyExpectedHours.year, data.year),
+      )
+    );
+    if (existing.length > 0) {
+      const [updated] = await db.update(monthlyExpectedHours)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(monthlyExpectedHours.id, existing[0].id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(monthlyExpectedHours).values(data).returning();
+    return created;
+  }
+
+  async deleteMonthlyExpectedHours(id: string): Promise<void> {
+    await db.delete(monthlyExpectedHours).where(eq(monthlyExpectedHours.id, id));
   }
 }
 

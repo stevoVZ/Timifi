@@ -504,6 +504,21 @@ export type InsertRateHistory = z.infer<typeof insertRateHistorySchema>;
 export type TimesheetAuditLog = typeof timesheetAuditLog.$inferSelect;
 export type InsertTimesheetAuditLog = z.infer<typeof insertTimesheetAuditLogSchema>;
 
+export const monthlyExpectedHours = pgTable("monthly_expected_hours", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employeeId: varchar("employee_id").notNull().references(() => employees.id),
+  month: smallint("month").notNull(),
+  year: smallint("year").notNull(),
+  expectedDays: numeric("expected_days", { precision: 5, scale: 1 }),
+  expectedHours: numeric("expected_hours", { precision: 6, scale: 1 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertMonthlyExpectedHoursSchema = createInsertSchema(monthlyExpectedHours).omit({ id: true, createdAt: true, updatedAt: true });
+export type MonthlyExpectedHours = typeof monthlyExpectedHours.$inferSelect;
+export type InsertMonthlyExpectedHours = z.infer<typeof insertMonthlyExpectedHoursSchema>;
+
 export const rctiStatusEnum = pgEnum("rcti_status", ["DRAFT", "RECEIVED", "PAID"]);
 
 export const rctis = pgTable("rctis", {

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DollarSign, Users, TrendingUp, ChevronDown, ChevronUp,
   Receipt, ArrowUpRight, ArrowDownRight, Minus, Search,
@@ -28,16 +29,30 @@ interface PayrollEntry {
   net: number;
 }
 
+interface EmployeeRevenue {
+  name: string;
+  chargeOutRate: string | null;
+  placementChargeOutRate: string | null;
+  estimatedRevenue: number;
+  hoursSource: "INVOICED" | "RCTI" | "TIMESHEET" | "ESTIMATED";
+  hours: number;
+  invoicedHours: number;
+  timesheetHours: number;
+  estimatedHours: number;
+}
+
 interface MatchedClient {
   clientId: string;
   clientName: string;
   hasPlacement: boolean;
+  isRcti: boolean;
   employeeCount: number;
-  employees: { name: string; chargeOutRate: string | null }[];
+  employees: EmployeeRevenue[];
   paymentCount: number;
   totalPaid: number;
   totalCost: number;
   net: number;
+  estimatedRevenue: number;
   payments: Payment[];
   payrollEntries: PayrollEntry[];
 }
@@ -52,7 +67,7 @@ interface UnmatchedClient {
 interface LedgerData {
   matched: MatchedClient[];
   unmatched: UnmatchedClient[];
-  totals: { totalClientPaid: number; totalEmployeeCost: number; netPosition: number };
+  totals: { totalClientPaid: number; totalEmployeeCost: number; netPosition: number; totalEstimatedRevenue: number };
   dateRange: { from: string; to: string };
 }
 
@@ -62,7 +77,7 @@ function fmtCurrency(n: number): string {
 }
 
 function fmtDate(d: string): string {
-  if (!d) return "—";
+  if (!d) return "\u2014";
   return new Date(d).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
 }
 
@@ -75,6 +90,13 @@ function getPresetDates(preset: Preset): { from: string; to: string } {
   const months = preset === "1m" ? 1 : preset === "3m" ? 3 : preset === "6m" ? 6 : 12;
   const from = new Date(now.getFullYear(), now.getMonth() - months, 1);
   return { from: from.toISOString().split("T")[0], to };
+}
+
+function SourceBadge({ source }: { source: "INVOICED" | "RCTI" | "TIMESHEET" | "ESTIMATED" }) {
+  if (source === "INVOICED") return <Badge variant="default" className="text-[10px] px-1 py-0 ml-1">INV</Badge>;
+  if (source === "RCTI") return <Badge variant="default" className="text-[10px] px-1 py-0 ml-1">RCTI</Badge>;
+  if (source === "TIMESHEET") return <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">T</Badge>;
+  return <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1 text-muted-foreground">E</Badge>;
 }
 
 export default function ClientLedgerPage() {
@@ -114,7 +136,7 @@ export default function ClientLedgerPage() {
 
   const matched = data?.matched || [];
   const unmatched = data?.unmatched || [];
-  const totals = data?.totals || { totalClientPaid: 0, totalEmployeeCost: 0, netPosition: 0 };
+  const totals = data?.totals || { totalClientPaid: 0, totalEmployeeCost: 0, netPosition: 0, totalEstimatedRevenue: 0 };
 
   const filteredMatched = useMemo(() => {
     if (!search.trim()) return matched;
@@ -189,11 +211,11 @@ export default function ClientLedgerPage() {
         )}
 
         {isLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-28" />)}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28" />)}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" data-testid="kpi-cards">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4" data-testid="kpi-cards">
             <Card>
               <CardContent className="pt-4 pb-3 px-4">
                 <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium mb-1">
@@ -203,6 +225,23 @@ export default function ClientLedgerPage() {
                 <div className="text-xl font-bold text-green-600 dark:text-green-400" data-testid="kpi-total-paid">
                   {fmtCurrency(totals.totalClientPaid)}
                 </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-4 pb-3 px-4">
+                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium mb-1">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  Estimated Revenue
+                </div>
+                <div className="text-xl font-bold text-blue-600 dark:text-blue-400" data-testid="kpi-estimated-revenue">
+                  {fmtCurrency(totals.totalEstimatedRevenue)}
+                </div>
+                {totals.totalClientPaid > 0 && totals.totalEstimatedRevenue > 0 && (
+                  <div className="text-xs text-muted-foreground mt-0.5" data-testid="text-revenue-variance">
+                    {totals.totalClientPaid >= totals.totalEstimatedRevenue ? "+" : ""}
+                    {fmtCurrency(totals.totalClientPaid - totals.totalEstimatedRevenue)} vs actual
+                  </div>
+                )}
               </CardContent>
             </Card>
             <Card>
@@ -256,6 +295,7 @@ export default function ClientLedgerPage() {
                       <th className="text-left px-4 py-2.5 font-medium">Client</th>
                       <th className="text-right px-4 py-2.5 font-medium">Employees</th>
                       <th className="text-right px-4 py-2.5 font-medium">Payments</th>
+                      <th className="text-right px-4 py-2.5 font-medium">Est. Revenue</th>
                       <th className="text-right px-4 py-2.5 font-medium">Total Paid</th>
                       <th className="text-right px-4 py-2.5 font-medium">Employee Cost</th>
                       <th className="text-right px-4 py-2.5 font-medium">Net</th>
@@ -283,6 +323,9 @@ export default function ClientLedgerPage() {
                   <tfoot>
                     <tr className="bg-muted/50 font-semibold">
                       <td className="px-4 py-3" colSpan={4}>Totals (Matched)</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-blue-600 dark:text-blue-400" data-testid="total-estimated-revenue">
+                        {fmtCurrency(filteredMatched.reduce((s, c) => s + c.estimatedRevenue, 0))}
+                      </td>
                       <td className="px-4 py-3 text-right tabular-nums">{fmtCurrency(filteredMatched.reduce((s, c) => s + c.totalPaid, 0))}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{fmtCurrency(filteredMatched.reduce((s, c) => s + c.totalCost, 0))}</td>
                       <td className={`px-4 py-3 text-right tabular-nums ${totals.netPosition >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
@@ -351,6 +394,13 @@ function MatchedClientRow({ client, isExpanded, onToggle, netColor }: {
   onToggle: () => void;
   netColor: string;
 }) {
+  const primarySource = client.employees.length > 0
+    ? client.employees.reduce((best, e) => {
+        const priority = { INVOICED: 3, RCTI: 3, TIMESHEET: 2, ESTIMATED: 1 };
+        return (priority[e.hoursSource] || 0) > (priority[best] || 0) ? e.hoursSource : best;
+      }, client.employees[0].hoursSource)
+    : "ESTIMATED";
+
   return (
     <>
       <tr
@@ -362,18 +412,27 @@ function MatchedClientRow({ client, isExpanded, onToggle, netColor }: {
           {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </td>
         <td className="px-4 py-3 font-medium">
-          <div>{client.clientName}</div>
+          <div className="flex items-center gap-1 flex-wrap">
+            {client.clientName}
+            {client.isRcti && <Badge variant="outline" className="text-[10px] px-1 py-0">RCTI</Badge>}
+          </div>
           <div className="text-xs text-muted-foreground mt-0.5">
             {client.employees.map(e => e.name).join(", ")}
           </div>
         </td>
         <td className="px-4 py-3 text-right tabular-nums">{client.employeeCount}</td>
         <td className="px-4 py-3 text-right tabular-nums">{client.paymentCount}</td>
+        <td className="px-4 py-3 text-right tabular-nums font-medium text-blue-600 dark:text-blue-400" data-testid={`estimated-revenue-${client.clientId}`}>
+          <div className="flex items-center justify-end gap-1 flex-wrap">
+            {client.estimatedRevenue > 0 ? fmtCurrency(client.estimatedRevenue) : "\u2014"}
+            {client.estimatedRevenue > 0 && <SourceBadge source={primarySource} />}
+          </div>
+        </td>
         <td className="px-4 py-3 text-right tabular-nums font-medium text-green-600 dark:text-green-400">
-          {client.totalPaid > 0 ? fmtCurrency(client.totalPaid) : "—"}
+          {client.totalPaid > 0 ? fmtCurrency(client.totalPaid) : "\u2014"}
         </td>
         <td className="px-4 py-3 text-right tabular-nums font-medium">
-          {client.totalCost > 0 ? fmtCurrency(client.totalCost) : "—"}
+          {client.totalCost > 0 ? fmtCurrency(client.totalCost) : "\u2014"}
         </td>
         <td className={`px-4 py-3 text-right tabular-nums font-semibold ${netColor}`}>
           {fmtCurrency(client.net)}
@@ -381,9 +440,42 @@ function MatchedClientRow({ client, isExpanded, onToggle, netColor }: {
       </tr>
       {isExpanded && (
         <tr data-testid={`detail-client-${client.clientId}`}>
-          <td colSpan={7} className="px-0 py-0">
+          <td colSpan={8} className="px-0 py-0">
             <div className="bg-muted/20 border-b">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 divide-x">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 divide-x">
+                <div className="p-4">
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                    Revenue Breakdown by Employee
+                  </h4>
+                  {client.employees.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No employees linked</p>
+                  ) : (
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {client.employees.map((emp, i) => {
+                        const rate = parseFloat(emp.placementChargeOutRate || emp.chargeOutRate || "0");
+                        return (
+                          <div key={i} className="text-sm border-b border-border/50 last:border-0 pb-2 last:pb-0">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="font-medium">{emp.name}</span>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <span className="font-medium tabular-nums text-blue-600 dark:text-blue-400">
+                                  {fmtCurrency(emp.estimatedRevenue)}
+                                </span>
+                                <SourceBadge source={emp.hoursSource} />
+                              </div>
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
+                              <span>{emp.hours.toFixed(1)}h @ {rate > 0 ? `$${rate}/hr` : "no rate"}</span>
+                              {emp.invoicedHours > 0 && <span>Inv: {emp.invoicedHours.toFixed(1)}h</span>}
+                              {emp.timesheetHours > 0 && <span>TS: {emp.timesheetHours.toFixed(1)}h</span>}
+                              {emp.estimatedHours > 0 && <span>Est: {emp.estimatedHours.toFixed(1)}h</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
                 <div className="p-4">
                   <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
                     Payments Received ({client.payments.length})

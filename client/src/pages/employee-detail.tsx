@@ -1000,6 +1000,17 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
   const [showForm, setShowForm] = useState(false);
   const [endingPlacementId, setEndingPlacementId] = useState<string | null>(null);
   const [endDateValue, setEndDateValue] = useState(new Date().toISOString().split("T")[0]);
+  const [editingPlacementId, setEditingPlacementId] = useState<string | null>(null);
+  const [editData, setEditData] = useState({
+    clientId: "",
+    clientName: "",
+    startDate: "",
+    endDate: "",
+    chargeOutRate: "",
+    payRate: "",
+    payrollFeePercent: "",
+    notes: "",
+  });
   const [formData, setFormData] = useState({
     clientId: "",
     clientName: "",
@@ -1010,6 +1021,25 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
     notes: "",
     status: "ACTIVE" as "ACTIVE" | "ENDED",
   });
+
+  const startEditing = (p: Placement) => {
+    setEditingPlacementId(p.id);
+    setEndingPlacementId(null);
+    setEditData({
+      clientId: p.clientId || "",
+      clientName: p.clientName || "",
+      startDate: p.startDate || "",
+      endDate: p.endDate || "",
+      chargeOutRate: p.chargeOutRate || "",
+      payRate: p.payRate || "",
+      payrollFeePercent: p.payrollFeePercent || "0",
+      notes: p.notes || "",
+    });
+  };
+
+  const cancelEditing = () => {
+    setEditingPlacementId(null);
+  };
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -1027,6 +1057,39 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  const editMutation = useMutation({
+    mutationFn: async ({ placementId, data }: { placementId: string; data: any }) => {
+      const res = await apiRequest("PATCH", `/api/placements/${placementId}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId, "placements"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId] });
+      toast({ title: "Placement Updated", description: "Placement details saved." });
+      setEditingPlacementId(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleSaveEdit = (placementId: string) => {
+    const client = clients.find(c => c.id === editData.clientId);
+    editMutation.mutate({
+      placementId,
+      data: {
+        clientId: editData.clientId || null,
+        clientName: client?.name || editData.clientName || null,
+        startDate: editData.startDate || null,
+        endDate: editData.endDate || null,
+        chargeOutRate: editData.chargeOutRate || null,
+        payRate: editData.payRate || null,
+        payrollFeePercent: editData.payrollFeePercent || "0",
+        notes: editData.notes || null,
+      },
+    });
+  };
 
   const endMutation = useMutation({
     mutationFn: async ({ placementId, endDate }: { placementId: string; endDate: string }) => {
@@ -1140,64 +1203,92 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
 
         {activePlacements.map((p) => (
           <div key={p.id} className="p-3 border rounded-lg bg-green-50/50 dark:bg-green-950/20 border-green-200 dark:border-green-800" data-testid={`placement-active-${p.id}`}>
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-[10px]">Active</Badge>
-                <span className="text-sm font-semibold">{p.clientName || "Unknown Client"}</span>
-              </div>
-              {endingPlacementId === p.id ? (
-                <div className="flex items-center gap-1.5">
-                  <Input
-                    type="date"
-                    className="h-7 text-xs w-36"
-                    value={endDateValue}
-                    onChange={(e) => setEndDateValue(e.target.value)}
-                    data-testid={`input-end-date-${p.id}`}
-                  />
-                  <Button
-                    variant="default"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => {
-                      endMutation.mutate({ placementId: p.id, endDate: endDateValue });
-                      setEndingPlacementId(null);
-                    }}
-                    disabled={endMutation.isPending || !endDateValue}
-                    data-testid={`button-confirm-end-${p.id}`}
-                  >
-                    Confirm
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => setEndingPlacementId(null)}
-                    data-testid={`button-cancel-end-${p.id}`}
-                  >
-                    Cancel
-                  </Button>
+            {editingPlacementId === p.id ? (
+              <PlacementEditForm
+                editData={editData}
+                setEditData={setEditData}
+                clients={clients}
+                onSave={() => handleSaveEdit(p.id)}
+                onCancel={cancelEditing}
+                isPending={editMutation.isPending}
+                placementId={p.id}
+              />
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-[10px]">Active</Badge>
+                    <span className="text-sm font-semibold">{p.clientName || "Unknown Client"}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {endingPlacementId === p.id ? (
+                      <>
+                        <Input
+                          type="date"
+                          className="h-7 text-xs w-36"
+                          value={endDateValue}
+                          onChange={(e) => setEndDateValue(e.target.value)}
+                          data-testid={`input-end-date-${p.id}`}
+                        />
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            endMutation.mutate({ placementId: p.id, endDate: endDateValue });
+                            setEndingPlacementId(null);
+                          }}
+                          disabled={endMutation.isPending || !endDateValue}
+                          data-testid={`button-confirm-end-${p.id}`}
+                        >
+                          Confirm
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setEndingPlacementId(null)}
+                          data-testid={`button-cancel-end-${p.id}`}
+                        >
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => startEditing(p)}
+                          data-testid={`button-edit-placement-${p.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            setEndDateValue(new Date().toISOString().split("T")[0]);
+                            setEndingPlacementId(p.id);
+                          }}
+                          disabled={endMutation.isPending}
+                          data-testid={`button-end-placement-${p.id}`}
+                        >
+                          End Placement
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs"
-                  onClick={() => {
-                    setEndDateValue(new Date().toISOString().split("T")[0]);
-                    setEndingPlacementId(p.id);
-                  }}
-                  disabled={endMutation.isPending}
-                  data-testid={`button-end-placement-${p.id}`}
-                >
-                  End Placement
-                </Button>
-              )}
-            </div>
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <span>From: {p.startDate || "N/A"}</span>
-              {p.chargeOutRate && <span>Charge: ${p.chargeOutRate}/hr</span>}
-              {p.payRate && <span>Pay: ${p.payRate}/hr</span>}
-            </div>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                  <span>From: {p.startDate || "N/A"}</span>
+                  {p.chargeOutRate && <span>Charge: ${p.chargeOutRate}/hr</span>}
+                  {p.payRate && <span>Pay: ${p.payRate}/hr</span>}
+                  {p.payrollFeePercent && parseFloat(p.payrollFeePercent) > 0 && <span>Fee: {p.payrollFeePercent}%</span>}
+                  {p.notes && <span className="truncate max-w-[200px]">Notes: {p.notes}</span>}
+                </div>
+              </>
+            )}
           </div>
         ))}
 
@@ -1205,22 +1296,163 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
           <div className="space-y-2">
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pt-2">History</div>
             {endedPlacements.map((p) => (
-              <div key={p.id} className="p-3 border rounded-lg opacity-60" data-testid={`placement-ended-${p.id}`}>
-                <div className="flex items-center gap-2 mb-1">
-                  <Badge variant="outline" className="text-[10px]">Ended</Badge>
-                  <span className="text-sm font-medium">{p.clientName || "Unknown Client"}</span>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <span>{p.startDate || "N/A"} — {p.endDate || "N/A"}</span>
-                  {p.chargeOutRate && <span>Charge: ${p.chargeOutRate}/hr</span>}
-                  {p.payRate && <span>Pay: ${p.payRate}/hr</span>}
-                </div>
+              <div key={p.id} className={`p-3 border rounded-lg ${editingPlacementId === p.id ? "" : "opacity-60"}`} data-testid={`placement-ended-${p.id}`}>
+                {editingPlacementId === p.id ? (
+                  <PlacementEditForm
+                    editData={editData}
+                    setEditData={setEditData}
+                    clients={clients}
+                    onSave={() => handleSaveEdit(p.id)}
+                    onCancel={cancelEditing}
+                    isPending={editMutation.isPending}
+                    placementId={p.id}
+                  />
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-[10px]">Ended</Badge>
+                        <span className="text-sm font-medium">{p.clientName || "Unknown Client"}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => startEditing(p)}
+                        data-testid={`button-edit-placement-${p.id}`}
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                      <span>{p.startDate || "N/A"} — {p.endDate || "N/A"}</span>
+                      {p.chargeOutRate && <span>Charge: ${p.chargeOutRate}/hr</span>}
+                      {p.payRate && <span>Pay: ${p.payRate}/hr</span>}
+                      {p.payrollFeePercent && parseFloat(p.payrollFeePercent) > 0 && <span>Fee: {p.payrollFeePercent}%</span>}
+                      {p.notes && <span className="truncate max-w-[200px]">Notes: {p.notes}</span>}
+                    </div>
+                  </>
+                )}
               </div>
             ))}
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function PlacementEditForm({
+  editData,
+  setEditData,
+  clients,
+  onSave,
+  onCancel,
+  isPending,
+  placementId,
+}: {
+  editData: { clientId: string; clientName: string; startDate: string; endDate: string; chargeOutRate: string; payRate: string; payrollFeePercent: string; notes: string };
+  setEditData: (v: any) => void;
+  clients: Client[];
+  onSave: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+  placementId: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Client</label>
+          <Select
+            value={editData.clientId || "__none__"}
+            onValueChange={(v) => setEditData((prev: any) => ({ ...prev, clientId: v === "__none__" ? "" : v }))}
+          >
+            <SelectTrigger className="h-8 text-sm" data-testid={`select-edit-client-${placementId}`}>
+              <SelectValue placeholder="Select client" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Select a client...</SelectItem>
+              {clients.map((c) => (
+                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
+          <Input
+            type="date"
+            className="h-8 text-sm"
+            value={editData.startDate}
+            onChange={(e) => setEditData((prev: any) => ({ ...prev, startDate: e.target.value }))}
+            data-testid={`input-edit-start-${placementId}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">End Date</label>
+          <Input
+            type="date"
+            className="h-8 text-sm"
+            value={editData.endDate}
+            onChange={(e) => setEditData((prev: any) => ({ ...prev, endDate: e.target.value }))}
+            data-testid={`input-edit-end-${placementId}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Charge Out Rate</label>
+          <Input
+            type="number"
+            className="h-8 text-sm"
+            placeholder="$/hr"
+            value={editData.chargeOutRate}
+            onChange={(e) => setEditData((prev: any) => ({ ...prev, chargeOutRate: e.target.value }))}
+            data-testid={`input-edit-charge-rate-${placementId}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Pay Rate</label>
+          <Input
+            type="number"
+            className="h-8 text-sm"
+            placeholder="$/hr"
+            value={editData.payRate}
+            onChange={(e) => setEditData((prev: any) => ({ ...prev, payRate: e.target.value }))}
+            data-testid={`input-edit-pay-rate-${placementId}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Payroll Fee %</label>
+          <Input
+            type="number"
+            className="h-8 text-sm"
+            placeholder="%"
+            value={editData.payrollFeePercent}
+            onChange={(e) => setEditData((prev: any) => ({ ...prev, payrollFeePercent: e.target.value }))}
+            data-testid={`input-edit-fee-${placementId}`}
+          />
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
+        <Input
+          className="h-8 text-sm"
+          placeholder="Notes..."
+          value={editData.notes}
+          onChange={(e) => setEditData((prev: any) => ({ ...prev, notes: e.target.value }))}
+          data-testid={`input-edit-notes-${placementId}`}
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={onSave} disabled={isPending} data-testid={`button-save-edit-${placementId}`}>
+          <Check className="w-4 h-4 mr-1" />
+          {isPending ? "Saving..." : "Save Changes"}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCancel} data-testid={`button-cancel-edit-${placementId}`}>
+          <X className="w-4 h-4 mr-1" />
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
 

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema } from "@shared/schema";
+import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions } from "./xero";
@@ -2207,7 +2207,7 @@ export async function registerRoutes(
       const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
 
-      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis] = await Promise.all([
+      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours] = await Promise.all([
         storage.getEmployees(),
         storage.getAllPlacements(),
         storage.getInvoices(),
@@ -2215,6 +2215,8 @@ export async function registerRoutes(
         storage.getBankTransactions(),
         storage.getClients(),
         storage.getRctis(),
+        storage.getTimesheets(),
+        storage.getMonthlyExpectedHours({ month, year }),
       ]);
 
       const periodStart = new Date(year, month - 1, 1);
@@ -2289,6 +2291,28 @@ export async function registerRoutes(
         const revenue = invoiceRevenue + rctiRevenue;
         const revenueInclGst = invoiceRevenueInclGst + rctiRevenueInclGst;
 
+        const invoicedHours = invoiceHours + rctiHours;
+
+        const empTimesheets = allTimesheets.filter(t => {
+          if (t.employeeId !== employee.id || t.month !== month || t.year !== year) return false;
+          if (t.placementId) return t.placementId === placement.id;
+          return true;
+        });
+        const timesheetHours = empTimesheets.reduce((sum, t) => sum + parseFloat(t.totalHours || "0"), 0);
+
+        const empExpected = allExpectedHours.filter(e => e.employeeId === employee.id);
+        const estimatedHours = empExpected.reduce((sum, e) => sum + parseFloat(e.expectedHours || "0"), 0);
+
+        let hoursSource: "INVOICED" | "TIMESHEET" | "ESTIMATED" = "ESTIMATED";
+        let bestAvailableHours = estimatedHours;
+        if (invoicedHours > 0) {
+          hoursSource = "INVOICED";
+          bestAvailableHours = invoicedHours;
+        } else if (timesheetHours > 0) {
+          hoursSource = "TIMESHEET";
+          bestAvailableHours = timesheetHours;
+        }
+
         const empPayLines = allPayRunLines.filter(pl => pl.line.employeeId === employee.id);
 
         const rawGrossEarnings = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.grossEarnings || "0"), 0);
@@ -2358,6 +2382,11 @@ export async function registerRoutes(
             invoiceCount: empInvoices.length,
             rctiCount: empRctis.length,
             hours: invoiceHours + rctiHours,
+            invoicedHours: Math.round(invoicedHours * 10) / 10,
+            timesheetHours: Math.round(timesheetHours * 10) / 10,
+            estimatedHours: Math.round(estimatedHours * 10) / 10,
+            bestAvailableHours: Math.round(bestAvailableHours * 10) / 10,
+            hoursSource,
             amountExGst: Math.round(revenue * 100) / 100,
             amountInclGst: Math.round(revenueInclGst * 100) / 100,
             rctiAmountExGst: Math.round(rctiRevenue * 100) / 100,
@@ -2455,12 +2484,16 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid date range. Use YYYY-MM-DD format." });
       }
 
-      const [allPlacements, allEmployees, allBankTxns, allPayRuns, allClients] = await Promise.all([
+      const [allPlacements, allEmployees, allBankTxns, allPayRuns, allClients, allInvoices, allRctis, allTimesheets, allExpectedHours] = await Promise.all([
         storage.getAllPlacements(),
         storage.getEmployees(),
         storage.getBankTransactions(),
         storage.getPayRuns(),
         storage.getClients(),
+        storage.getInvoices(),
+        storage.getRctis(),
+        storage.getTimesheets(),
+        storage.getMonthlyExpectedHours(),
       ]);
 
       const receiptTxns = allBankTxns.filter(t => {
@@ -2492,14 +2525,76 @@ export async function registerRoutes(
 
       const employeeToClient = new Map<string, string>();
       for (const p of activePlacements) {
-        employeeToClient.set(p.employeeId, p.clientId);
+        if (p.clientId) employeeToClient.set(p.employeeId, p.clientId);
       }
+
+      const fromMonth = from.getMonth() + 1;
+      const fromYear = from.getFullYear();
+      const toMonth = to.getMonth() + 1;
+      const toYear = to.getFullYear();
+
+      const isMonthInRange = (m: number, y: number): boolean => {
+        const v = y * 12 + m;
+        return v >= fromYear * 12 + fromMonth && v <= toYear * 12 + toMonth;
+      };
+
+      const getThreeTierHours = (employeeId: string, clientId: string | null, isRctiClient: boolean, placementId?: string) => {
+        let invoicedHours = 0;
+        let timesheetHours = 0;
+        let estimatedHours = 0;
+
+        if (isRctiClient) {
+          const empRctis = allRctis.filter(r =>
+            r.employeeId === employeeId &&
+            r.clientId === clientId &&
+            isMonthInRange(r.month, r.year)
+          );
+          invoicedHours = empRctis.reduce((s, r) => s + parseFloat(r.hours || "0"), 0);
+        } else {
+          const empInvoices = allInvoices.filter(inv =>
+            (inv.employeeId === employeeId || (inv.clientId && inv.clientId === clientId)) &&
+            isMonthInRange(inv.month, inv.year) &&
+            inv.status !== "VOIDED"
+          );
+          const directInvoices = empInvoices.filter(inv => inv.employeeId === employeeId);
+          invoicedHours = directInvoices.reduce((s, inv) => s + parseFloat(inv.hours || "0"), 0);
+        }
+
+        const empTimesheets = allTimesheets.filter(ts => {
+          if (ts.employeeId !== employeeId || !isMonthInRange(ts.month, ts.year)) return false;
+          if (ts.placementId && placementId) return ts.placementId === placementId;
+          return true;
+        });
+        timesheetHours = empTimesheets.reduce((s, ts) => s + parseFloat(ts.totalHours || "0"), 0);
+
+        const empExpected = allExpectedHours.filter(eh =>
+          eh.employeeId === employeeId &&
+          isMonthInRange(eh.month, eh.year)
+        );
+        estimatedHours = empExpected.reduce((s, eh) => s + parseFloat(eh.expectedHours || "0"), 0);
+
+        let hours = 0;
+        let source: "INVOICED" | "RCTI" | "TIMESHEET" | "ESTIMATED" = "ESTIMATED";
+        if (invoicedHours > 0) {
+          hours = invoicedHours;
+          source = isRctiClient ? "RCTI" : "INVOICED";
+        } else if (timesheetHours > 0) {
+          hours = timesheetHours;
+          source = "TIMESHEET";
+        } else if (estimatedHours > 0) {
+          hours = estimatedHours;
+          source = "ESTIMATED";
+        }
+
+        return { hours, source, invoicedHours, timesheetHours, estimatedHours };
+      };
 
       const clientMap = new Map<string, {
         clientId: string;
         clientName: string;
         hasPlacement: boolean;
-        employees: { id: string; firstName: string; lastName: string; chargeOutRate: string | null }[];
+        isRcti: boolean;
+        employees: { id: string; firstName: string; lastName: string; chargeOutRate: string | null; placementChargeOutRate: string | null; placementId: string }[];
         payments: { date: string; amount: number; reference: string | null; bankAccount: string | null }[];
         payrollEntries: { employeeName: string; periodStart: string; periodEnd: string; gross: number; super_: number; net: number }[];
         totalPaid: number;
@@ -2518,6 +2613,7 @@ export async function registerRoutes(
             clientId: client.id,
             clientName: client.name,
             hasPlacement: true,
+            isRcti: client.isRcti,
             employees: [],
             payments: [],
             payrollEntries: [],
@@ -2526,18 +2622,20 @@ export async function registerRoutes(
           });
         }
         const entry = clientMap.get(key)!;
-        if (!entry.employees.find(e => e.id === employee.id)) {
+        if (!entry.employees.find(e => e.id === employee.id && e.placementId === placement.id)) {
           entry.employees.push({
             id: employee.id,
             firstName: employee.firstName,
             lastName: employee.lastName,
             chargeOutRate: employee.chargeOutRate,
+            placementChargeOutRate: placement.chargeOutRate,
+            placementId: placement.id,
           });
         }
       }
 
       const usedTxnIds = new Set<string>();
-      for (const entry of clientMap.values()) {
+      for (const entry of Array.from(clientMap.values())) {
         const client = allClients.find(c => c.id === entry.clientId);
         const clientTxns = receiptTxns.filter(t =>
           t.contactName === entry.clientName ||
@@ -2549,7 +2647,7 @@ export async function registerRoutes(
           reference: t.reference,
           bankAccount: t.bankAccountName,
         }));
-        entry.totalPaid = entry.payments.reduce((s, p) => s + p.amount, 0);
+        entry.totalPaid = entry.payments.reduce((s: number, p: { amount: number }) => s + p.amount, 0);
         clientTxns.forEach(t => usedTxnIds.add(t.id));
 
         const assignedLineIds = new Set<string>();
@@ -2602,23 +2700,46 @@ export async function registerRoutes(
         .sort((a, b) => b.totalPaid - a.totalPaid);
 
       const matchedClients = Array.from(clientMap.values())
-        .map(entry => ({
-          clientId: entry.clientId,
-          clientName: entry.clientName,
-          hasPlacement: true,
-          employeeCount: entry.employees.length,
-          employees: entry.employees.map(e => ({ name: `${e.firstName} ${e.lastName}`, chargeOutRate: e.chargeOutRate })),
-          paymentCount: entry.payments.length,
-          totalPaid: Math.round(entry.totalPaid * 100) / 100,
-          totalCost: Math.round(entry.totalCost * 100) / 100,
-          net: Math.round((entry.totalPaid - entry.totalCost) * 100) / 100,
-          payments: entry.payments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-          payrollEntries: entry.payrollEntries.sort((a, b) => new Date(b.periodEnd).getTime() - new Date(a.periodEnd).getTime()),
-        }))
+        .map(entry => {
+          let totalEstimatedRevenue = 0;
+          const employeesWithRevenue = entry.employees.map(e => {
+            const rate = parseFloat(e.placementChargeOutRate || e.chargeOutRate || "0");
+            const tierData = getThreeTierHours(e.id, entry.clientId, entry.isRcti, e.placementId);
+            const estimatedRevenue = Math.round(tierData.hours * rate * 100) / 100;
+            totalEstimatedRevenue += estimatedRevenue;
+            return {
+              name: `${e.firstName} ${e.lastName}`,
+              chargeOutRate: e.chargeOutRate,
+              placementChargeOutRate: e.placementChargeOutRate,
+              estimatedRevenue,
+              hoursSource: tierData.source,
+              hours: tierData.hours,
+              invoicedHours: tierData.invoicedHours,
+              timesheetHours: tierData.timesheetHours,
+              estimatedHours: tierData.estimatedHours,
+            };
+          });
+          return {
+            clientId: entry.clientId,
+            clientName: entry.clientName,
+            hasPlacement: true,
+            isRcti: entry.isRcti,
+            employeeCount: entry.employees.length,
+            employees: employeesWithRevenue,
+            paymentCount: entry.payments.length,
+            totalPaid: Math.round(entry.totalPaid * 100) / 100,
+            totalCost: Math.round(entry.totalCost * 100) / 100,
+            net: Math.round((entry.totalPaid - entry.totalCost) * 100) / 100,
+            estimatedRevenue: Math.round(totalEstimatedRevenue * 100) / 100,
+            payments: entry.payments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+            payrollEntries: entry.payrollEntries.sort((a, b) => new Date(b.periodEnd).getTime() - new Date(a.periodEnd).getTime()),
+          };
+        })
         .sort((a, b) => b.totalPaid - a.totalPaid);
 
       const totalClientPaid = matchedClients.reduce((s, c) => s + c.totalPaid, 0) + unmatchedClients.reduce((s, c) => s + c.totalPaid, 0);
       const totalEmployeeCost = matchedClients.reduce((s, c) => s + c.totalCost, 0);
+      const totalEstimatedRevenue = matchedClients.reduce((s, c) => s + c.estimatedRevenue, 0);
 
       res.json({
         matched: matchedClients,
@@ -2627,11 +2748,47 @@ export async function registerRoutes(
           totalClientPaid: Math.round(totalClientPaid * 100) / 100,
           totalEmployeeCost: Math.round(totalEmployeeCost * 100) / 100,
           netPosition: Math.round((totalClientPaid - totalEmployeeCost) * 100) / 100,
+          totalEstimatedRevenue: Math.round(totalEstimatedRevenue * 100) / 100,
         },
         dateRange: { from: from.toISOString().split("T")[0], to: to.toISOString().split("T")[0] },
       });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to fetch client ledger" });
+    }
+  });
+
+  app.get("/api/expected-hours", async (req, res) => {
+    try {
+      const filters: { employeeId?: string; month?: number; year?: number } = {};
+      if (req.query.employeeId) filters.employeeId = req.query.employeeId as string;
+      if (req.query.month) filters.month = parseInt(req.query.month as string);
+      if (req.query.year) filters.year = parseInt(req.query.year as string);
+      const data = await storage.getMonthlyExpectedHours(filters);
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch expected hours" });
+    }
+  });
+
+  app.post("/api/expected-hours", async (req, res) => {
+    try {
+      const parsed = insertMonthlyExpectedHoursSchema.parse(req.body);
+      if (parsed.month < 1 || parsed.month > 12) return res.status(400).json({ message: "Invalid month" });
+      if (parsed.year < 2020 || parsed.year > 2030) return res.status(400).json({ message: "Invalid year" });
+      const result = await storage.upsertMonthlyExpectedHours(parsed);
+      res.status(201).json(result);
+    } catch (err: any) {
+      if (err.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err.message || "Failed to save expected hours" });
+    }
+  });
+
+  app.delete("/api/expected-hours/:id", async (req, res) => {
+    try {
+      await storage.deleteMonthlyExpectedHours(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete expected hours" });
     }
   });
 

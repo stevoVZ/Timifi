@@ -28,6 +28,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Plus, Search, Clock, FileText, CheckCircle, AlertTriangle, XCircle,
   Mail, Upload, UserCheck, Monitor, Paperclip, ChevronDown, ChevronUp,
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus, Users,
@@ -1850,9 +1856,22 @@ interface PlacementData {
   clientId: string | null;
   clientName: string | null;
   chargeOutRate: string | null;
+  payRate: string | null;
   status: string;
   startDate: string | null;
   endDate: string | null;
+}
+
+function getActiveRate(placement: PlacementData | null, emp: Employee): { rate: number; source: "placement" | "employee" | "none" } {
+  if (placement?.payRate) {
+    const r = parseFloat(placement.payRate);
+    if (r > 0) return { rate: r, source: "placement" };
+  }
+  if (emp.hourlyRate) {
+    const r = parseFloat(emp.hourlyRate);
+    if (r > 0) return { rate: r, source: "employee" };
+  }
+  return { rate: 0, source: "none" };
 }
 
 function MonthlyHoursView() {
@@ -1861,12 +1880,90 @@ function MonthlyHoursView() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [editing, setEditing] = useState<Record<string, { totalHours: string; regularHours: string; overtimeHours: string }>>({});
+  const [docViewerOpen, setDocViewerOpen] = useState(false);
+  const [docViewerData, setDocViewerData] = useState<string | null>(null);
+  const [docViewerTitle, setDocViewerTitle] = useState("");
 
   const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
   const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
   const { data: placements } = useQuery<PlacementData[]>({ queryKey: ["/api/placements"] });
+  const { data: expectedHoursData } = useQuery<{ id: string; employeeId: string; month: number; year: number; expectedDays: string | null; expectedHours: string }[]>({
+    queryKey: ["/api/expected-hours", month, year],
+    queryFn: async () => {
+      const res = await fetch(`/api/expected-hours?month=${month}&year=${year}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  const [editingExpected, setEditingExpected] = useState<Record<string, string>>({});
 
   const activeEmployees = employees?.filter(e => e.status === "ACTIVE") || [];
+
+  const monthTimesheets = useMemo(() => {
+    return (timesheets || []).filter(t => t.month === month && t.year === year);
+  }, [timesheets, month, year]);
+
+  const timesheetIds = useMemo(() => monthTimesheets.map(t => t.id), [monthTimesheets]);
+
+  const { data: allDocsForMonth } = useQuery<Record<string, DocType[]>>({
+    queryKey: ["/api/timesheets/documents-batch", month, year],
+    queryFn: async () => {
+      if (timesheetIds.length === 0) return {};
+      const results: Record<string, DocType[]> = {};
+      await Promise.all(
+        timesheetIds.map(async (tsId) => {
+          try {
+            const res = await fetch(`/api/timesheets/${tsId}/documents`, { credentials: "include" });
+            if (res.ok) {
+              const docs = await res.json();
+              if (docs.length > 0) results[tsId] = docs;
+            }
+          } catch {}
+        })
+      );
+      return results;
+    },
+    enabled: timesheetIds.length > 0,
+  });
+
+  const statusChangeMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      const res = await apiRequest("PATCH", `/api/timesheets/${id}`, { status, changeSource: "STATUS_CHANGE" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      toast({ title: "Status updated" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const openDocument = (doc: DocType) => {
+    setDocViewerData(doc.fileUrl);
+    setDocViewerTitle(doc.name);
+    setDocViewerOpen(true);
+  };
+
+  const getExpectedHours = (empId: string): string | null => {
+    const entry = (expectedHoursData || []).find(e => e.employeeId === empId);
+    return entry?.expectedHours || null;
+  };
+
+  const expectedHoursMutation = useMutation({
+    mutationFn: async (data: { employeeId: string; month: number; year: number; expectedHours: string; expectedDays?: string }) => {
+      const res = await apiRequest("POST", "/api/expected-hours", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expected-hours", month, year] });
+      toast({ title: "Expected hours saved" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
 
   const periodStart = new Date(year, month - 1, 1);
   const periodEnd = new Date(year, month, 0);
@@ -1986,7 +2083,7 @@ function MonthlyHoursView() {
     const total = parseFloat(edit.totalHours) || 0;
     const regular = parseFloat(edit.regularHours) || 0;
     const overtime = parseFloat(edit.overtimeHours) || 0;
-    const rate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
+    const { rate } = getActiveRate(placement, emp);
 
     if (ts) {
       updateMutation.mutate({
@@ -2042,6 +2139,12 @@ function MonthlyHoursView() {
 
   return (
     <div className="space-y-4">
+      <PdfViewerDialog
+        open={docViewerOpen}
+        onOpenChange={setDocViewerOpen}
+        pdfData={docViewerData}
+        title={docViewerTitle}
+      />
       <div className="flex items-center gap-2">
         <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth} data-testid="button-monthly-prev">
           <ChevronLeft className="w-4 h-4" />
@@ -2084,6 +2187,7 @@ function MonthlyHoursView() {
                   <tr className="border-b bg-muted/50">
                     <th className="text-left px-4 py-2.5 font-medium">Employee</th>
                     <th className="text-left px-4 py-2.5 font-medium">Client</th>
+                    <th className="text-right px-4 py-2.5 font-medium w-20">Expected</th>
                     <th className="text-right px-4 py-2.5 font-medium w-24">Regular</th>
                     <th className="text-right px-4 py-2.5 font-medium w-24">Overtime</th>
                     <th className="text-right px-4 py-2.5 font-medium w-24">Total</th>
@@ -2103,12 +2207,60 @@ function MonthlyHoursView() {
                       <tr key={rowKey} className="border-b last:border-0" data-testid={`row-monthly-${rowKey}`}>
                         <td className="px-4 py-3">
                           <span className="font-medium text-foreground">{employee.firstName} {employee.lastName}</span>
-                          {employee.hourlyRate && (
-                            <span className="text-xs text-muted-foreground ml-2">${parseFloat(employee.hourlyRate).toFixed(0)}/hr</span>
-                          )}
+                          {(() => {
+                            const { rate, source } = getActiveRate(placement, employee);
+                            if (source === "none") {
+                              return (
+                                <span className="inline-flex items-center gap-0.5 ml-2" data-testid={`rate-warning-${rowKey}`}>
+                                  <AlertTriangle className="w-3 h-3 text-amber-500" />
+                                  <span className="text-xs text-amber-500">No rate</span>
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="text-xs text-muted-foreground ml-2" data-testid={`rate-display-${rowKey}`}>
+                                ${rate.toFixed(0)}/hr
+                                {source === "placement" && (
+                                  <span className="text-[10px] ml-0.5 opacity-60">(placement)</span>
+                                )}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="px-4 py-3 text-muted-foreground text-sm" data-testid={`text-client-${rowKey}`}>
                           {clientName || <span className="text-xs italic">No placement</span>}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {editingExpected[employee.id] !== undefined ? (
+                            <Input
+                              type="number"
+                              step="0.5"
+                              className="h-7 w-16 text-right font-mono text-xs ml-auto"
+                              value={editingExpected[employee.id]}
+                              autoFocus
+                              onChange={(e) => setEditingExpected(prev => ({ ...prev, [employee.id]: e.target.value }))}
+                              onBlur={() => {
+                                const val = editingExpected[employee.id];
+                                if (val && parseFloat(val) > 0) {
+                                  expectedHoursMutation.mutate({ employeeId: employee.id, month, year, expectedHours: val });
+                                }
+                                setEditingExpected(prev => { const n = { ...prev }; delete n[employee.id]; return n; });
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                if (e.key === "Escape") setEditingExpected(prev => { const n = { ...prev }; delete n[employee.id]; return n; });
+                              }}
+                              data-testid={`input-expected-${rowKey}`}
+                            />
+                          ) : (
+                            <span
+                              className="font-mono tabular-nums text-xs cursor-pointer hover:bg-muted/50 px-1.5 py-0.5 rounded"
+                              onClick={() => setEditingExpected(prev => ({ ...prev, [employee.id]: getExpectedHours(employee.id) || "" }))}
+                              data-testid={`text-expected-${rowKey}`}
+                            >
+                              {getExpectedHours(employee.id) ? parseFloat(getExpectedHours(employee.id)!).toFixed(1) : <span className="text-muted-foreground/50">—</span>}
+                            </span>
+                          )}
                         </td>
                         {isRowEditing ? (
                           <>
@@ -2152,14 +2304,56 @@ function MonthlyHoursView() {
                         )}
                         <td className="px-4 py-3 text-center">
                           {timesheet ? (
-                            <Badge variant={timesheet.status === "APPROVED" ? "default" : "secondary"} className="text-[10px]">
-                              {timesheet.status}
-                            </Badge>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button
+                                  className="inline-flex items-center gap-1 cursor-pointer"
+                                  data-testid={`dropdown-status-${rowKey}`}
+                                >
+                                  <Badge variant={timesheet.status === "APPROVED" ? "default" : timesheet.status === "REJECTED" ? "destructive" : "secondary"} className="text-[10px]">
+                                    {timesheet.status}
+                                  </Badge>
+                                  <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="center">
+                                {["DRAFT", "SUBMITTED", "APPROVED", "REJECTED"]
+                                  .filter(s => s !== timesheet.status)
+                                  .map(s => (
+                                    <DropdownMenuItem
+                                      key={s}
+                                      onClick={() => statusChangeMutation.mutate({ id: timesheet.id, status: s })}
+                                      data-testid={`menu-status-${s.toLowerCase()}-${rowKey}`}
+                                    >
+                                      {s === "APPROVED" && <CheckCircle className="w-3.5 h-3.5 mr-2 text-green-600" />}
+                                      {s === "REJECTED" && <XCircle className="w-3.5 h-3.5 mr-2 text-red-600" />}
+                                      {s === "SUBMITTED" && <ArrowRight className="w-3.5 h-3.5 mr-2 text-blue-600" />}
+                                      {s === "DRAFT" && <FileText className="w-3.5 h-3.5 mr-2 text-muted-foreground" />}
+                                      {s}
+                                    </DropdownMenuItem>
+                                  ))}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
+                          {(() => {
+                            const tsDocs = timesheet && allDocsForMonth ? allDocsForMonth[timesheet.id] : null;
+                            if (!tsDocs || tsDocs.length === 0) return null;
+                            return (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="inline-flex mr-1"
+                                onClick={() => openDocument(tsDocs[0])}
+                                data-testid={`button-attachment-${rowKey}`}
+                              >
+                                <Paperclip className="w-3.5 h-3.5" />
+                              </Button>
+                            );
+                          })()}
                           {isRowEditing ? (
                             <div className="flex items-center gap-1 justify-end">
                               <Button
@@ -2197,7 +2391,7 @@ function MonthlyHoursView() {
                   })}
                   {placementRows.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground text-sm">
+                      <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground text-sm">
                         No active employees found.
                       </td>
                     </tr>
