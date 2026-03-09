@@ -189,6 +189,8 @@ export interface IStorage {
   getMonthlyExpectedHours(filters?: { employeeId?: string; month?: number; year?: number }): Promise<MonthlyExpectedHours[]>;
   upsertMonthlyExpectedHours(data: InsertMonthlyExpectedHours): Promise<MonthlyExpectedHours>;
   deleteMonthlyExpectedHours(id: string): Promise<void>;
+
+  clearAllSyncedData(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -915,6 +917,38 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMonthlyExpectedHours(id: string): Promise<void> {
     await db.delete(monthlyExpectedHours).where(eq(monthlyExpectedHours.id, id));
+  }
+
+  async clearAllSyncedData(): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.delete(invoicePayments);
+      await tx.delete(invoiceLineItems);
+      await tx.delete(invoiceEmployees);
+      await tx.delete(payslipLines);
+      await tx.delete(payRunLines);
+      await tx.delete(timesheetAuditLog);
+      await tx.delete(monthlyExpectedHours);
+      await tx.delete(rateHistory);
+      await tx.delete(rctis);
+      await tx.delete(documents);
+      await tx.delete(leaveRequests);
+      await tx.delete(bankAccounts);
+      await tx.delete(taxDeclarations);
+      await tx.delete(superMemberships);
+      await tx.delete(placements);
+      await tx.delete(payRuns);
+      await tx.delete(invoices);
+      await tx.delete(timesheets);
+      await tx.delete(bankTransactions);
+      await tx.delete(payItems);
+      await tx.delete(notifications);
+      await tx.delete(messages);
+      await tx.delete(employees);
+      await tx.delete(clients);
+      await tx.delete(settings).where(
+        sql`${settings.key} LIKE 'xero.lastSyncAt' OR ${settings.key} LIKE 'xero.last%SyncAt'`
+      );
+    });
   }
 }
 

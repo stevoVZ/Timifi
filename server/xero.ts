@@ -201,6 +201,12 @@ export async function selectTenant(tenantId: string): Promise<void> {
   if (!tenant) {
     throw new Error("Tenant not found. Please reconnect to Xero.");
   }
+  const currentTenantId = await getSettingValue("xero.tenantId");
+  if (currentTenantId && currentTenantId !== tenantId) {
+    console.log(`Switching org from ${currentTenantId} to ${tenantId} — clearing synced data...`);
+    await storage.clearAllSyncedData();
+    console.log("Synced data cleared for org switch.");
+  }
   await saveSetting("xero.tenantId", tenant.tenantId);
   await saveSetting("xero.tenantName", tenant.tenantName || "");
 }

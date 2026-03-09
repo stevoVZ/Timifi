@@ -442,9 +442,8 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
       await apiRequest("POST", "/api/xero/tenants/select", { tenantId });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/xero/tenants"] });
-      toast({ title: "Organisation switched" });
+      queryClient.invalidateQueries();
+      toast({ title: "Organisation switched. Previous data has been cleared — please run Sync All to load data for the new organisation." });
     },
     onError: (err: Error) => {
       toast({ title: err.message || "Failed to switch organisation", variant: "destructive" });
