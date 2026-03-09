@@ -2026,7 +2026,7 @@ export async function registerRoutes(
       }
       const eligible = allClients
         .filter(c => {
-          if (!c.isCustomer) return false;
+          if (c.isRcti) return true;
           const stats = receiveByContact.get(c.name.toLowerCase().trim());
           return stats && stats.count > 0;
         })
@@ -2036,6 +2036,7 @@ export async function registerRoutes(
             id: c.id,
             name: c.name,
             isRcti: c.isRcti,
+            isCustomer: c.isCustomer,
             receiveCount: stats.count,
             receiveTotal: Math.round(stats.total * 100) / 100,
           };

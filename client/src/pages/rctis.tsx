@@ -81,6 +81,7 @@ type EligibleClient = {
   id: string;
   name: string;
   isRcti: boolean;
+  isCustomer?: boolean;
   receiveCount: number;
   receiveTotal: number;
 };
@@ -95,6 +96,8 @@ export default function RctisPage() {
   const [editingRcti, setEditingRcti] = useState<RctiRecord | null>(null);
   const [sortField, setSortField] = useState<SortField>("period");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [showAllClients, setShowAllClients] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
   const { toast } = useToast();
 
   const { data: rctiList = [], isLoading } = useQuery<RctiRecord[]>({
@@ -260,30 +263,76 @@ export default function RctisPage() {
           </Card>
         </div>
 
-        <div className="mb-4 space-y-3">
-          <div className="text-sm font-medium text-muted-foreground">RCTI Clients</div>
-          <p className="text-xs text-muted-foreground">Toggle clients that pay via RCTI (showing customers with bank receipts)</p>
-          <div className="flex flex-wrap gap-2">
-            {eligibleClients.map(c => (
-              <Button
-                key={c.id}
-                variant={c.isRcti ? "default" : "outline"}
-                size="sm"
-                onClick={() => toggleRctiMutation.mutate({ clientId: c.id, isRcti: !c.isRcti })}
-                data-testid={`button-toggle-rcti-${c.id}`}
-                title={`${c.receiveCount} receipts · ${formatCurrency(c.receiveTotal)}`}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">RCTI Clients</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">Toggle clients that pay via RCTI. Clients with bank RECEIVE transactions are shown automatically.</p>
+            {eligibleClients.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {eligibleClients.map(c => (
+                  <Button
+                    key={c.id}
+                    variant={c.isRcti ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => toggleRctiMutation.mutate({ clientId: c.id, isRcti: !c.isRcti })}
+                    data-testid={`button-toggle-rcti-${c.id}`}
+                    title={`${c.receiveCount} receipts · ${formatCurrency(c.receiveTotal)}`}
+                  >
+                    {c.name}
+                    {c.receiveCount > 0 && <span className="ml-1 text-[10px] opacity-60">({c.receiveCount})</span>}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {rctiClients.length === 0 && eligibleClients.length > 0 && (
+              <p className="text-xs text-muted-foreground">Click a client above to mark them as RCTI, then use Auto-Match to create records from bank transactions.</p>
+            )}
+
+            <div className="pt-1">
+              <button
+                onClick={() => setShowAllClients(!showAllClients)}
+                className="text-xs text-primary hover:underline"
+                data-testid="button-show-all-clients"
               >
-                {c.name}
-              </Button>
-            ))}
-          </div>
-          {eligibleClients.length === 0 && (
-            <p className="text-sm text-muted-foreground">No eligible clients found. Clients must be marked as customers in Xero and have bank RECEIVE transactions.</p>
-          )}
-          {eligibleClients.length > 0 && rctiClients.length === 0 && (
-            <p className="text-sm text-muted-foreground">Click a client above to mark them as RCTI, then use Auto-Match to create records from bank transactions.</p>
-          )}
-        </div>
+                {showAllClients ? "Hide all clients" : `Show all clients (${clientList.length})`}
+              </button>
+            </div>
+
+            {showAllClients && (
+              <div className="space-y-2 pt-1">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Search clients..."
+                    value={clientSearch}
+                    onChange={(e) => setClientSearch(e.target.value)}
+                    className="pl-8 h-8 text-sm"
+                    data-testid="input-client-search"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                  {clientList
+                    .filter(c => !eligibleClients.some(ec => ec.id === c.id))
+                    .filter(c => !clientSearch || c.name.toLowerCase().includes(clientSearch.toLowerCase()))
+                    .map(c => (
+                      <Button
+                        key={c.id}
+                        variant={c.isRcti ? "default" : "ghost"}
+                        size="sm"
+                        className="text-xs h-7"
+                        onClick={() => toggleRctiMutation.mutate({ clientId: c.id, isRcti: !c.isRcti })}
+                        data-testid={`button-toggle-rcti-all-${c.id}`}
+                      >
+                        {c.name}
+                      </Button>
+                    ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         <div className="flex items-center gap-3">
           <div className="relative flex-1 max-w-sm">

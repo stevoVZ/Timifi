@@ -158,6 +158,7 @@ function UploadView() {
   const [dragOver, setDragOver] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [lastSubmittedCount, setLastSubmittedCount] = useState(0);
   const [submitted, setSubmitted] = useState(false);
   const [showIntake, setShowIntake] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
@@ -365,6 +366,7 @@ function UploadView() {
       }
       queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      setLastSubmittedCount(groupSummaries.length);
       setSubmitting(false);
       setSubmitted(true);
       toast({ title: "Timesheets submitted", description: `${groupSummaries.length} timesheet${groupSummaries.length > 1 ? "s" : ""} created for review.` });
@@ -402,45 +404,71 @@ function UploadView() {
     setReviewIdx(0);
   };
 
+  const successCard = submitted ? (
+    <Card className="max-w-lg mx-auto">
+      <CardContent className="p-10 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 flex items-center justify-center mx-auto mb-5">
+          <CheckCircle className="w-7 h-7 text-green-600" />
+        </div>
+        <h2 className="text-xl font-bold text-foreground mb-1" data-testid="text-submit-success">
+          {lastSubmittedCount > 1
+            ? `${lastSubmittedCount} timesheets submitted`
+            : "Timesheet submitted"}
+        </h2>
+        <p className="text-sm text-muted-foreground mb-6">
+          Files processed successfully
+        </p>
+
+        <Button variant="outline" className="w-full" onClick={resetAll} data-testid="button-upload-another">
+          Upload another batch
+          <ArrowRight className="w-4 h-4 ml-1" />
+        </Button>
+      </CardContent>
+    </Card>
+  ) : null;
+
+  const overwriteDialog = overwriteWarnings.length > 0 ? (
+    <Dialog open onOpenChange={() => cancelOverwrite()}>
+      <DialogContent className="max-w-md" data-testid="dialog-overwrite-warning">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2 text-amber-600">
+            <AlertTriangle className="w-5 h-5" />
+            Overwrite Warning
+          </DialogTitle>
+          <DialogDescription>
+            The following timesheets already have <strong>approved</strong> records that will be overwritten:
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {overwriteWarnings.map((w, i) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 rounded-md text-sm">
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+              <span><strong>{w.employeeName}</strong> — {MONTHS[w.month]} {w.year} ({w.existingStatus})</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2 justify-end pt-2">
+          <Button variant="outline" onClick={cancelOverwrite} data-testid="button-cancel-overwrite">
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleForceOverwrite}
+            data-testid="button-confirm-overwrite"
+          >
+            Overwrite Approved
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  ) : null;
+
   if (submitted) {
     return (
-      <Card className="max-w-lg mx-auto">
-        <CardContent className="p-10 text-center">
-          <div className="w-14 h-14 rounded-2xl bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 flex items-center justify-center mx-auto mb-5">
-            <CheckCircle className="w-7 h-7 text-green-600" />
-          </div>
-          <h2 className="text-xl font-bold text-foreground mb-1" data-testid="text-submit-success">
-            {groupSummaries.length > 1
-              ? `${groupSummaries.length} timesheets submitted`
-              : "Timesheet submitted"}
-          </h2>
-          <p className="text-sm text-muted-foreground mb-6">
-            {doneActive.length} file{doneActive.length !== 1 ? "s" : ""} processed
-          </p>
-
-          <div className="text-left space-y-3 mb-6">
-            {groupSummaries.map((g) => (
-              <div key={`${g.empId}-${g.month}-${g.year}`} className="p-3 rounded-lg border border-border bg-card">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-semibold text-foreground">
-                    {g.emp ? `${g.emp.firstName} ${g.emp.lastName}` : "Unknown"}
-                  </span>
-                  <span className="font-mono text-sm font-bold text-primary">{g.totalHours}h</span>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {MONTHS[g.month]} {g.year} · {g.items.length} file{g.items.length !== 1 ? "s" : ""}
-                  {g.grossValue > 0 && ` · $${g.grossValue.toLocaleString()}`}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <Button variant="outline" className="w-full" onClick={resetAll} data-testid="button-upload-another">
-            Upload another batch
-            <ArrowRight className="w-4 h-4 ml-1" />
-          </Button>
-        </CardContent>
-      </Card>
+      <>
+        {successCard}
+        {overwriteDialog}
+      </>
     );
   }
 
@@ -471,6 +499,7 @@ function UploadView() {
     const confColor = r.confidence >= 90 ? "text-green-600" : r.confidence >= 70 ? "text-amber-600" : "text-red-600";
 
     return (
+      <>
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -502,7 +531,7 @@ function UploadView() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ minHeight: "65vh" }}>
+        <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-4" style={{ minHeight: "65vh" }}>
           <ReviewPdfPanel item={currentReview} />
 
 
@@ -633,36 +662,35 @@ function UploadView() {
               </CardContent>
             </Card>
 
-            {reviewIdx === reviewItems.length - 1 && (
-              <Card>
-                <CardContent className="p-4 space-y-3">
-                  <div className="text-sm font-bold text-foreground">Ready to submit</div>
-                  <div className="text-xs text-muted-foreground">
-                    {groupSummaries.length} timesheet{groupSummaries.length !== 1 ? "s" : ""} · {batchTotalHours}h total
+            <Card>
+              <CardContent className="p-4 space-y-3">
+                <div className="text-sm font-bold text-foreground">Batch Summary</div>
+                <div className="text-xs text-muted-foreground">
+                  {groupSummaries.length} timesheet{groupSummaries.length !== 1 ? "s" : ""} · {batchTotalHours}h total
+                  {reviewIdx < reviewItems.length - 1 && ` · reviewing ${reviewIdx + 1}/${reviewItems.length}`}
+                </div>
+
+                {!allAssigned && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
+                    <Users className="w-3.5 h-3.5 flex-shrink-0" />
+                    Assign an employee to each file first
                   </div>
+                )}
 
-                  {!allAssigned && (
-                    <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
-                      <Users className="w-3.5 h-3.5 flex-shrink-0" />
-                      Assign an employee to each file first
-                    </div>
+                <Button
+                  className="w-full"
+                  disabled={!canSubmit || submitting}
+                  onClick={handleSubmit}
+                  data-testid="button-submit-batch"
+                >
+                  {submitting ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Submitting...</>
+                  ) : (
+                    <>Submit {groupSummaries.length} timesheet{groupSummaries.length !== 1 ? "s" : ""}</>
                   )}
-
-                  <Button
-                    className="w-full"
-                    disabled={!canSubmit || submitting}
-                    onClick={handleSubmit}
-                    data-testid="button-submit-batch"
-                  >
-                    {submitting ? (
-                      <><Loader2 className="w-4 h-4 animate-spin" /> Submitting...</>
-                    ) : (
-                      <>Submit {groupSummaries.length} timesheet{groupSummaries.length !== 1 ? "s" : ""}</>
-                    )}
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
@@ -677,6 +705,8 @@ function UploadView() {
           ))}
         </div>
       </div>
+      {overwriteDialog}
+      </>
     );
   }
 
@@ -834,41 +864,7 @@ function UploadView() {
         </div>
       </div>
 
-      {overwriteWarnings.length > 0 && (
-        <Dialog open onOpenChange={() => cancelOverwrite()}>
-          <DialogContent className="max-w-md" data-testid="dialog-overwrite-warning">
-            <DialogHeader>
-              <DialogTitle className="text-base flex items-center gap-2 text-amber-600">
-                <AlertTriangle className="w-5 h-5" />
-                Overwrite Warning
-              </DialogTitle>
-              <DialogDescription>
-                The following timesheets already have <strong>approved</strong> records that will be overwritten:
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {overwriteWarnings.map((w, i) => (
-                <div key={i} className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 rounded-md text-sm">
-                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-                  <span><strong>{w.employeeName}</strong> — {MONTHS[w.month]} {w.year} ({w.existingStatus})</span>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2 justify-end pt-2">
-              <Button variant="outline" onClick={cancelOverwrite} data-testid="button-cancel-overwrite">
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleForceOverwrite}
-                data-testid="button-confirm-overwrite"
-              >
-                Overwrite Approved
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
+      {overwriteDialog}
     </div>
   );
 }
@@ -1002,7 +998,7 @@ function PdfViewerDialog({
   if (!pdfData) return null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
+      <DialogContent className="max-w-6xl h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="w-4 h-4" />
@@ -1633,7 +1629,7 @@ function TimesheetRow({
   return (
     <>
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
-        <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
+        <DialogContent className="max-w-6xl h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="w-4 h-4" />
