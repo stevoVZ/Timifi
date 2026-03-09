@@ -73,6 +73,7 @@ export const timesheets = pgTable("timesheets", {
 export const invoices = pgTable("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   employeeId: varchar("employee_id").references(() => employees.id),
+  clientId: varchar("client_id"),
   contactName: text("contact_name"),
   xeroInvoiceId: text("xero_invoice_id").unique(),
   timesheetId: varchar("timesheet_id").references(() => timesheets.id),

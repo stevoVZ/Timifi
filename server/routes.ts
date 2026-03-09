@@ -727,6 +727,7 @@ export async function registerRoutes(
       const cashOut = periodBankTxns.filter(t => t.type === "SPEND").reduce((sum, t) => sum + parseFloat(t.amount), 0);
 
       const statusPriority: Record<string, number> = { FILED: 3, REVIEW: 2, DRAFT: 1 };
+      const spendTxns = periodBankTxns.filter(t => t.type === "SPEND");
 
       const result = activeEmployees.map((emp) => {
         const ts = allTimesheets.find(
@@ -742,16 +743,50 @@ export async function registerRoutes(
         const payLine = best?.line;
         const payRun = best?.payRun;
 
+        let contractorCost: { total: number; transactionCount: number; companyName: string | null } | null = null;
+        if (emp.paymentMethod === "INVOICE" && emp.companyName) {
+          const companyLower = emp.companyName.toLowerCase().trim();
+          const matchingSpend = spendTxns.filter(t =>
+            t.contactName && t.contactName.toLowerCase().trim() === companyLower
+          );
+          contractorCost = {
+            total: matchingSpend.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0),
+            transactionCount: matchingSpend.length,
+            companyName: emp.companyName,
+          };
+        }
+
         const hours = ts ? parseFloat(ts.totalHours || "0") : 0;
         const chargeOutRate = emp.chargeOutRate ? parseFloat(emp.chargeOutRate) : 0;
         const payRate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
         const expectedRevenue = hours * chargeOutRate;
-        const employeeCost = payLine ? parseFloat(payLine.grossEarnings || "0") : hours * payRate;
+        let employeeCost: number;
+        if (emp.paymentMethod === "INVOICE" && contractorCost && contractorCost.total > 0) {
+          employeeCost = contractorCost.total;
+        } else if (payLine) {
+          employeeCost = parseFloat(payLine.grossEarnings || "0");
+          if (employeeCost === 0) {
+            const plNet = parseFloat(payLine.netPay || "0");
+            const plSuper = parseFloat(payLine.superAmount || "0");
+            if (plNet > 0 && plSuper > 0) {
+              employeeCost = plNet + plSuper;
+            }
+          }
+        } else {
+          employeeCost = hours * payRate;
+        }
         const margin = expectedRevenue - employeeCost;
         const marginPercent = expectedRevenue > 0 ? (margin / expectedRevenue) * 100 : 0;
 
         const feePercent = parseFloat(emp.payrollFeePercent || "0");
-        const grossForFee = payLine ? parseFloat(payLine.grossEarnings || "0") : 0;
+        let grossForFee = payLine ? parseFloat(payLine.grossEarnings || "0") : 0;
+        if (payLine && grossForFee === 0) {
+          const plNet = parseFloat(payLine.netPay || "0");
+          const plSuper = parseFloat(payLine.superAmount || "0");
+          if (plNet > 0 && plSuper > 0) {
+            grossForFee = plNet + plSuper;
+          }
+        }
         const payrollFeeRevenue = grossForFee * (feePercent / 100);
 
         return {
@@ -764,6 +799,7 @@ export async function registerRoutes(
             chargeOutRate: emp.chargeOutRate,
             paymentMethod: emp.paymentMethod,
             payrollFeePercent: emp.payrollFeePercent,
+            companyName: emp.companyName,
           },
           timesheet: ts
             ? {
@@ -788,12 +824,13 @@ export async function registerRoutes(
           payroll: payLine
             ? {
                 payRunId: payRun?.id || null,
-                grossEarnings: parseFloat(payLine.grossEarnings || "0"),
+                grossEarnings: employeeCost,
                 netPay: parseFloat(payLine.netPay || "0"),
                 hoursWorked: parseFloat(payLine.hoursWorked || "0"),
                 payRunStatus: payRun?.status || null,
               }
             : null,
+          contractorCost,
           financials: {
             expectedRevenue,
             employeeCost,
@@ -1722,6 +1759,32 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/invoices/link-clients", async (_req, res) => {
+    try {
+      const [allInvoices, allClients] = await Promise.all([
+        storage.getInvoices(),
+        storage.getClients(),
+      ]);
+      const clientByName = new Map<string, typeof allClients[0]>();
+      for (const c of allClients) {
+        clientByName.set(c.name.toLowerCase().trim(), c);
+      }
+      let linked = 0;
+      for (const inv of allInvoices) {
+        if (inv.clientId) continue;
+        if (!inv.contactName) continue;
+        const client = clientByName.get(inv.contactName.toLowerCase().trim());
+        if (client) {
+          await storage.updateInvoice(inv.id, { clientId: client.id });
+          linked++;
+        }
+      }
+      res.json({ linked, message: `Linked ${linked} invoices to clients by contact name` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to link invoices to clients" });
+    }
+  });
+
   app.get("/api/rctis/eligible-clients", async (_req, res) => {
     try {
       const [allClients, allBankTxns] = await Promise.all([
@@ -1999,10 +2062,33 @@ export async function registerRoutes(
 
         const empPayLines = allPayRunLines.filter(pl => pl.line.employeeId === employee.id);
 
-        const grossEarnings = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.grossEarnings || "0"), 0);
+        const rawGrossEarnings = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.grossEarnings || "0"), 0);
         const superAmount = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.superAmount || "0"), 0);
         const netPay = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.netPay || "0"), 0);
-        const totalEmployeeCost = grossEarnings + superAmount;
+        const usedFallbackGross = rawGrossEarnings === 0 && netPay > 0 && superAmount > 0;
+        const grossEarnings = usedFallbackGross ? netPay + superAmount : rawGrossEarnings;
+
+        let totalEmployeeCost = usedFallbackGross ? grossEarnings : grossEarnings + superAmount;
+        let costSource: "PAYROLL" | "CONTRACTOR_SPEND" = "PAYROLL";
+        let contractorSpend = 0;
+        let contractorSpendTxnCount = 0;
+
+        if (employee.paymentMethod === "INVOICE" && employee.companyName) {
+          const companyNameLower = employee.companyName.toLowerCase().trim();
+          const spendTxns = periodBankTxns.filter(t =>
+            !claimedBankTxnIds.has(t.id) &&
+            t.type === "SPEND" &&
+            t.contactName &&
+            t.contactName.toLowerCase().trim() === companyNameLower
+          );
+          spendTxns.forEach(t => claimedBankTxnIds.add(t.id));
+          contractorSpend = spendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0);
+          contractorSpendTxnCount = spendTxns.length;
+          if (contractorSpend > 0) {
+            totalEmployeeCost = contractorSpend;
+            costSource = "CONTRACTOR_SPEND";
+          }
+        }
 
         const feePercent = parseFloat(employee.payrollFeePercent || "0");
         const payrollFeeRevenue = grossEarnings * (feePercent / 100);
@@ -2031,6 +2117,8 @@ export async function registerRoutes(
             chargeOutRate: employee.chargeOutRate,
             hourlyRate: employee.hourlyRate,
             payrollFeePercent: employee.payrollFeePercent,
+            paymentMethod: employee.paymentMethod,
+            companyName: employee.companyName,
           },
           client: {
             id: client?.id || null,
@@ -2049,6 +2137,9 @@ export async function registerRoutes(
             superAmount: Math.round(superAmount * 100) / 100,
             netPay: Math.round(netPay * 100) / 100,
             totalCost: Math.round(totalEmployeeCost * 100) / 100,
+            costSource,
+            contractorSpend: Math.round(contractorSpend * 100) / 100,
+            contractorSpendTxnCount,
           },
           payrollFeeRevenue: Math.round(payrollFeeRevenue * 100) / 100,
           cashReceived: Math.round(cashReceived * 100) / 100,

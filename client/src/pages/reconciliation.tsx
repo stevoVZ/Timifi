@@ -35,10 +35,12 @@ interface ReconciliationRow {
     chargeOutRate: string | null;
     paymentMethod: string | null;
     payrollFeePercent: string | null;
+    companyName?: string | null;
   };
   timesheet: { id: string; hours: number; regularHours: number; overtimeHours: number; status: string; grossValue: number } | null;
   invoice: { id: string; amount: number; amountExGst: number; invoiceNumber: string | null; status: string; paidDate: string | null } | null;
   payroll: { payRunId: string | null; grossEarnings: number; netPay: number; hoursWorked: number; payRunStatus: string | null } | null;
+  contractorCost?: { total: number; transactionCount: number; companyName: string | null } | null;
   financials: { expectedRevenue: number; employeeCost: number; margin: number; marginPercent: number; payrollFeeRevenue: number };
 }
 
@@ -70,17 +72,28 @@ function getInvoiceStatus(inv: ReconciliationRow["invoice"]): "complete" | "part
   return "partial";
 }
 
-function getPayrollStatus(pay: ReconciliationRow["payroll"]): "complete" | "partial" | "missing" {
-  if (!pay) return "missing";
-  if (pay.payRunStatus === "FILED") return "complete";
+function getPayrollStatus(row: ReconciliationRow): "complete" | "partial" | "missing" {
+  if (row.employee.paymentMethod === "INVOICE") {
+    return row.contractorCost && row.contractorCost.total > 0 ? "complete" : "missing";
+  }
+  if (!row.payroll) return "missing";
+  if (row.payroll.payRunStatus === "FILED") return "complete";
   return "partial";
 }
 
-function rowBg(row: ReconciliationRow): string {
+function getRowCompleteness(row: ReconciliationRow): { complete: number; total: number; status: "complete" | "partial" | "missing" } {
   const ts = getTimesheetStatus(row.timesheet);
   const inv = getInvoiceStatus(row.invoice);
-  const pay = getPayrollStatus(row.payroll);
-  if (ts === "complete" && inv === "complete" && pay === "complete") {
+  const pay = getPayrollStatus(row);
+  const items = [ts, inv, pay];
+  const complete = items.filter(i => i === "complete").length;
+  const status = complete === 3 ? "complete" : complete > 0 ? "partial" : "missing";
+  return { complete, total: 3, status };
+}
+
+function rowBg(row: ReconciliationRow): string {
+  const { status } = getRowCompleteness(row);
+  if (status === "complete") {
     return "bg-green-50/50 dark:bg-green-950/20";
   }
   return "";
@@ -127,14 +140,27 @@ export default function ReconciliationPage() {
 
   const marginPercent = totals.totalRevenue > 0 ? Math.round((totals.totalMargin / totals.totalRevenue) * 100) : 0;
 
+  const payrollEmployees = rows.filter(r => r.employee.paymentMethod !== "INVOICE");
+  const contractorEmployees = rows.filter(r => r.employee.paymentMethod === "INVOICE");
+  const payrollWithCost = payrollEmployees.filter(r => r.payroll?.payRunStatus === "FILED").length;
+  const contractorsWithCost = contractorEmployees.filter(r => r.contractorCost && r.contractorCost.total > 0).length;
+  const costComplete = payrollWithCost + contractorsWithCost;
+
+  const completeRows = rows.filter(r => getRowCompleteness(r).status === "complete").length;
+  const completenessPercent = total > 0 ? Math.round((completeRows / total) * 100) : 0;
+
   const kpis = [
     {
-      label: "Employees",
-      value: String(total),
-      icon: Users,
-      color: "text-blue-600 dark:text-blue-400",
-      bg: "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800",
-      sub: `${total} active`,
+      label: "Completeness",
+      value: `${completenessPercent}%`,
+      icon: CheckCircle,
+      color: completenessPercent === 100 ? "text-green-600 dark:text-green-400" : completenessPercent >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400",
+      bg: completenessPercent === 100
+        ? "bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800"
+        : completenessPercent >= 50
+          ? "bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-800"
+          : "bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800",
+      sub: `${completeRows}/${total} employees complete`,
     },
     {
       label: "Timesheets",
@@ -157,14 +183,14 @@ export default function ReconciliationPage() {
       sub: `${invPaid} paid`,
     },
     {
-      label: "Payroll",
-      value: `${payComplete}/${total}`,
+      label: "Cost Tracking",
+      value: `${costComplete}/${total}`,
       icon: CreditCard,
-      color: payComplete === total ? "text-green-600 dark:text-green-400" : "text-orange-600 dark:text-orange-400",
-      bg: payComplete === total
+      color: costComplete === total ? "text-green-600 dark:text-green-400" : "text-orange-600 dark:text-orange-400",
+      bg: costComplete === total
         ? "bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800"
         : "bg-orange-50 dark:bg-orange-900/30 border-orange-200 dark:border-orange-800",
-      sub: `${payComplete} filed`,
+      sub: `${payrollWithCost} payroll, ${contractorsWithCost} contractor`,
     },
   ];
 
@@ -271,7 +297,7 @@ export default function ReconciliationPage() {
                 <span>Employee Status — {MONTHS[month]} {year}</span>
                 {total > 0 && (
                   <span className="text-xs font-normal text-muted-foreground">
-                    {rows.filter((r) => getTimesheetStatus(r.timesheet) === "complete" && getInvoiceStatus(r.invoice) === "complete" && getPayrollStatus(r.payroll) === "complete").length}/{total} fully complete
+                    {rows.filter((r) => getRowCompleteness(r).status === "complete").length}/{total} fully complete
                   </span>
                 )}
               </CardTitle>
@@ -321,7 +347,8 @@ export default function ReconciliationPage() {
                       {rows.map((row) => {
                         const tsStatus = getTimesheetStatus(row.timesheet);
                         const invStatus = getInvoiceStatus(row.invoice);
-                        const payStatus = getPayrollStatus(row.payroll);
+                        const payStatus = getPayrollStatus(row);
+                        const isContractor = row.employee.paymentMethod === "INVOICE";
 
                         return (
                           <tr
@@ -335,8 +362,12 @@ export default function ReconciliationPage() {
                                   {row.employee.firstName} {row.employee.lastName}
                                 </span>
                               </Link>
-                              {row.employee.paymentMethod === "INVOICE" && (
-                                <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 font-normal text-muted-foreground border-border">
+                              {isContractor && (
+                                <Badge
+                                  variant="outline"
+                                  className="ml-1.5 text-[9px] px-1 py-0 font-normal text-muted-foreground border-border"
+                                  title={row.employee.companyName || undefined}
+                                >
                                   Contractor
                                 </Badge>
                               )}
@@ -388,26 +419,48 @@ export default function ReconciliationPage() {
                               </div>
                             </td>
                             <td className="py-3 px-2">
-                              <div
-                                className={`flex items-center justify-center gap-2 rounded-md px-1 py-0.5 transition-colors ${row.payroll?.payRunId ? "cursor-pointer hover:bg-muted/60" : ""}`}
-                                onClick={() => row.payroll?.payRunId && navigate(`/payroll/${row.payroll.payRunId}`)}
-                                title={row.payroll ? "View pay run" : "No payroll data"}
-                                data-testid={`cell-pay-${row.employee.id}`}
-                              >
-                                <StatusIcon status={payStatus} type="pay" />
-                                <div className="text-center min-w-[70px]">
-                                  {row.payroll ? (
-                                    <>
-                                      <div className="font-mono text-xs font-semibold text-primary">
-                                        {fmtCurrency(row.payroll.netPay)}
-                                      </div>
-                                      <div className="text-[10px] text-muted-foreground">{row.payroll.payRunStatus}</div>
-                                    </>
-                                  ) : (
-                                    <div className="text-xs text-muted-foreground">Missing</div>
-                                  )}
+                              {isContractor ? (
+                                <div
+                                  className="flex items-center justify-center gap-2 rounded-md px-1 py-0.5 transition-colors"
+                                  title={row.contractorCost ? `${row.contractorCost.transactionCount} payment(s) to ${row.contractorCost.companyName}` : "No contractor payments"}
+                                  data-testid={`cell-pay-${row.employee.id}`}
+                                >
+                                  <StatusIcon status={payStatus} type="pay" />
+                                  <div className="text-center min-w-[70px]">
+                                    {row.contractorCost && row.contractorCost.total > 0 ? (
+                                      <>
+                                        <div className="font-mono text-xs font-semibold text-primary">
+                                          {fmtCurrency(row.contractorCost.total)}
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground">{row.contractorCost.companyName}</div>
+                                      </>
+                                    ) : (
+                                      <div className="text-xs text-muted-foreground">No payment</div>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
+                              ) : (
+                                <div
+                                  className={`flex items-center justify-center gap-2 rounded-md px-1 py-0.5 transition-colors ${row.payroll?.payRunId ? "cursor-pointer hover:bg-muted/60" : ""}`}
+                                  onClick={() => row.payroll?.payRunId && navigate(`/payroll/${row.payroll.payRunId}`)}
+                                  title={row.payroll ? "View pay run" : "No payroll data"}
+                                  data-testid={`cell-pay-${row.employee.id}`}
+                                >
+                                  <StatusIcon status={payStatus} type="pay" />
+                                  <div className="text-center min-w-[70px]">
+                                    {row.payroll ? (
+                                      <>
+                                        <div className="font-mono text-xs font-semibold text-primary">
+                                          {fmtCurrency(row.payroll.netPay)}
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground">{row.payroll.payRunStatus}</div>
+                                      </>
+                                    ) : (
+                                      <div className="text-xs text-muted-foreground">Missing</div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
                             </td>
                             <td className="py-3 px-2 hidden md:table-cell">
                               <div className="text-right font-mono text-xs font-semibold text-emerald-700 dark:text-emerald-400">
@@ -474,7 +527,7 @@ export default function ReconciliationPage() {
               {[
                 { label: "Timesheets", count: tsReceived, total, approved: tsApproved, color: "bg-blue-500" },
                 { label: "Invoices", count: invRaised, total, approved: invPaid, color: "bg-violet-500" },
-                { label: "Payroll", count: payComplete, total, approved: payComplete, color: "bg-orange-500" },
+                { label: "Cost Tracking", count: costComplete, total, approved: costComplete, color: "bg-orange-500" },
               ].map((bar) => (
                 <Card key={bar.label}>
                   <CardContent className="p-3.5">

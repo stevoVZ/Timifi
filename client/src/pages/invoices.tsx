@@ -47,7 +47,11 @@ import {
   ChevronDown,
   ChevronsUpDown,
 } from "lucide-react";
+import { Link } from "wouter";
+import { Building2 } from "lucide-react";
 import type { Invoice, Employee, Timesheet } from "@shared/schema";
+
+type ClientRecord = { id: string; name: string };
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
@@ -77,7 +81,12 @@ export default function InvoicesPage() {
     queryKey: ["/api/timesheets"],
   });
 
+  const { data: clients } = useQuery<ClientRecord[]>({
+    queryKey: ["/api/clients"],
+  });
+
   const employeeMap = new Map(employees?.map((c) => [c.id, c]) || []);
+  const clientMap = new Map(clients?.map((c) => [c.id, c]) || []);
 
   const approvedTimesheetsNotInvoiced = timesheets?.filter((ts) => {
     if (ts.status !== "APPROVED") return false;
@@ -481,7 +490,15 @@ export default function InvoicesPage() {
                                     </span>
                                   </TableCell>
                                   <TableCell>
-                                    <span className="text-sm text-foreground">{displayName}</span>
+                                    <div className="flex flex-col gap-0.5">
+                                      <span className="text-sm text-foreground">{displayName}</span>
+                                      {(inv as any).clientId && clientMap.get((inv as any).clientId) && (
+                                        <span className="text-xs text-muted-foreground flex items-center gap-1" data-testid={`text-invoice-client-${inv.id}`}>
+                                          <Building2 className="w-3 h-3" />
+                                          {clientMap.get((inv as any).clientId)!.name}
+                                        </span>
+                                      )}
+                                    </div>
                                   </TableCell>
                                   <TableCell className="text-sm whitespace-nowrap">
                                     {inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : `${MONTHS[inv.month]} ${inv.year}`}
@@ -537,6 +554,7 @@ export default function InvoicesPage() {
         <InvoiceDetailDialog
           invoice={detailInvoice}
           employees={employees || []}
+          clientMap={clientMap}
           onClose={() => setDetailInvoice(null)}
           onSave={(id, data) => {
             updateMutation.mutate({ id, data }, {
@@ -553,12 +571,14 @@ export default function InvoicesPage() {
 function InvoiceDetailDialog({
   invoice,
   employees,
+  clientMap,
   onClose,
   onSave,
   isPending,
 }: {
   invoice: Invoice & { linkedEmployeeIds?: string[] };
   employees: Employee[];
+  clientMap: Map<string, ClientRecord>;
   onClose: () => void;
   onSave: (id: string, data: Record<string, any>) => void;
   isPending: boolean;
@@ -603,6 +623,12 @@ function InvoiceDetailDialog({
             <div>
               <span className="text-xs text-muted-foreground block">Contact Name</span>
               <span className="font-medium" data-testid="text-detail-contact">{invoice.contactName || "—"}</span>
+              {(invoice as any).clientId && clientMap.get((invoice as any).clientId) && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5" data-testid="text-detail-linked-client">
+                  <Building2 className="w-3 h-3" />
+                  Linked to {clientMap.get((invoice as any).clientId)!.name}
+                </span>
+              )}
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Status</span>
