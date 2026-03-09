@@ -1860,6 +1860,28 @@ export async function registerRoutes(
         }
       }
 
+      if (desc) {
+        const globalNameMatches = allEmployees.filter((e: any) => {
+          const first = (e.firstName || "").toLowerCase().trim();
+          const last = (e.lastName || "").toLowerCase().trim();
+          if (!first || !last || last.length < 3) return false;
+          return wordBoundaryMatch(desc, last) && wordBoundaryMatch(desc, first);
+        });
+        if (globalNameMatches.length === 1) {
+          const emp = globalNameMatches[0];
+          proposals.push({
+            ...baseProposal,
+            proposedEmployeeId: emp.id,
+            proposedEmployeeName: `${emp.firstName} ${emp.lastName}`,
+            matchMethod: "description",
+            confidence: "medium",
+            invoiceRate: invRate || null,
+            placementRate: null,
+          });
+          continue;
+        }
+      }
+
       proposals.push({
         ...baseProposal,
         proposedEmployeeId: null,

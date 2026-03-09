@@ -900,7 +900,52 @@ function AlignmentWizardDialog({
               <span>{filteredProposals.length} invoice{filteredProposals.length !== 1 ? "s" : ""}</span>
               <span className="text-emerald-600 font-medium">{matched.length} auto-matched</span>
               <span className="text-red-500 font-medium">{unmatched.length} need review</span>
-              <div className="ml-auto flex gap-2 text-xs">
+              <div className="ml-auto flex items-center gap-2 text-xs">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  disabled={unmatched.length === 0}
+                  data-testid="button-auto-align-by-name"
+                  onClick={() => {
+                    const wordMatch = (text: string, term: string) => {
+                      if (term.length < 2) return false;
+                      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                      return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+                    };
+                    const unmatchedProposals = proposals.filter(p => p.matchMethod === "unmatched");
+                    const newMatches: Array<{ invoiceId: string; employeeId: string }> = [];
+                    for (const p of unmatchedProposals) {
+                      const desc = (p.description || "").trim();
+                      if (!desc) continue;
+                      const matches = employees.filter(e => {
+                        const first = (e.firstName || "").trim();
+                        const last = (e.lastName || "").trim();
+                        if (!first || !last || last.length < 3) return false;
+                        return wordMatch(desc, last) && wordMatch(desc, first);
+                      });
+                      if (matches.length === 1) {
+                        newMatches.push({ invoiceId: p.invoiceId, employeeId: matches[0].id });
+                      }
+                    }
+                    if (newMatches.length > 0) {
+                      setDecisions(prev => {
+                        const next = new Map(prev);
+                        for (const m of newMatches) {
+                          next.set(m.invoiceId, { action: "accept", employeeIds: [m.employeeId] });
+                        }
+                        return next;
+                      });
+                    }
+                    toast({
+                      title: newMatches.length > 0 ? `Auto-aligned ${newMatches.length} invoice${newMatches.length !== 1 ? "s" : ""} by name` : "No additional name matches found",
+                      description: newMatches.length > 0 ? "Review the matches below before applying." : "Try manually selecting employees for remaining invoices.",
+                    });
+                  }}
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  Auto-Align by Name
+                </Button>
                 <span className="text-emerald-600">{acceptCount} to link</span>
                 <span className="text-muted-foreground">{skipCount} to skip</span>
               </div>
