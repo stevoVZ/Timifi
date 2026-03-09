@@ -55,6 +55,8 @@ export const employees = pgTable("employees", {
 export const timesheets = pgTable("timesheets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   employeeId: varchar("employee_id").notNull().references(() => employees.id),
+  clientId: varchar("client_id").references(() => clients.id),
+  placementId: varchar("placement_id").references(() => placements.id),
   year: smallint("year").notNull(),
   month: smallint("month").notNull(),
   totalHours: numeric("total_hours", { precision: 6, scale: 2 }).notNull().default("0"),

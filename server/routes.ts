@@ -2217,20 +2217,24 @@ export async function registerRoutes(
         storage.getRctis(),
       ]);
 
+      const periodStart = new Date(year, month - 1, 1);
+      const periodEnd = new Date(year, month, 0);
+
       const relevantPlacements = allPlacements.filter(p => {
-        if (p.status === "ACTIVE") return true;
-        if (p.status !== "ENDED") return false;
-        const periodStart = new Date(year, month - 1, 1);
-        const periodEnd = new Date(year, month, 0);
         if (p.startDate) {
           const start = new Date(p.startDate);
           if (start > periodEnd) return false;
         }
         if (p.endDate) {
           const end = new Date(p.endDate);
-          const graceEnd = new Date(end.getFullYear(), end.getMonth() + 2, 0);
-          if (periodStart > graceEnd) return false;
+          if (end < periodStart) {
+            if (p.status === "ACTIVE") return false;
+            const graceEnd = new Date(end.getFullYear(), end.getMonth() + 2, 0);
+            if (periodStart > graceEnd) return false;
+          }
         }
+        if (p.status === "ACTIVE") return true;
+        if (p.status !== "ENDED") return false;
         return true;
       });
 
@@ -2260,6 +2264,8 @@ export async function registerRoutes(
 
         const empInvoices = periodInvoices.filter(inv => {
           if (claimedInvoiceIds.has(inv.id)) return false;
+          const invType = (inv as any).invoiceType;
+          if (invType && invType !== "ACCREC") return false;
           if (inv.employeeId === employee.id && inv.contactName === clientName) return true;
           if (!inv.employeeId && inv.contactName === clientName) {
             const invRate = inv.hours && parseFloat(inv.hours) > 0

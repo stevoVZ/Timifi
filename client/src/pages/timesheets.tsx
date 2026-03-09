@@ -1844,6 +1844,17 @@ function TimesheetRow({
   );
 }
 
+interface PlacementData {
+  id: string;
+  employeeId: string;
+  clientId: string | null;
+  clientName: string | null;
+  chargeOutRate: string | null;
+  status: string;
+  startDate: string | null;
+  endDate: string | null;
+}
+
 function MonthlyHoursView() {
   const { toast } = useToast();
   const now = new Date();
@@ -1853,22 +1864,83 @@ function MonthlyHoursView() {
 
   const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
   const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
+  const { data: placements } = useQuery<PlacementData[]>({ queryKey: ["/api/placements"] });
 
   const activeEmployees = employees?.filter(e => e.status === "ACTIVE") || [];
 
-  const employeeTimesheets = activeEmployees.map(emp => {
-    const ts = timesheets?.find(t => t.employeeId === emp.id && t.month === month && t.year === year) || null;
-    return { employee: emp, timesheet: ts };
-  });
+  const periodStart = new Date(year, month - 1, 1);
+  const periodEnd = new Date(year, month, 0);
+
+  const placementRows = useMemo(() => {
+    const rows: { employee: Employee; placement: PlacementData | null; clientName: string; rowKey: string }[] = [];
+
+    for (const emp of activeEmployees) {
+      const empPlacements = (placements || []).filter(p => {
+        if (p.employeeId !== emp.id) return false;
+        if (p.status !== "ACTIVE" && p.status !== "ENDED") return false;
+        if (p.startDate && new Date(p.startDate) > periodEnd) return false;
+        if (p.endDate && new Date(p.endDate) < periodStart) return false;
+        return true;
+      });
+
+      if (empPlacements.length > 0) {
+        for (const p of empPlacements) {
+          rows.push({
+            employee: emp,
+            placement: p,
+            clientName: p.clientName || "Unknown",
+            rowKey: `${emp.id}__${p.id}`,
+          });
+        }
+      } else {
+        rows.push({
+          employee: emp,
+          placement: null,
+          clientName: "",
+          rowKey: emp.id,
+        });
+      }
+    }
+
+    rows.sort((a, b) => {
+      const nameA = `${a.employee.firstName} ${a.employee.lastName}`;
+      const nameB = `${b.employee.firstName} ${b.employee.lastName}`;
+      if (nameA !== nameB) return nameA.localeCompare(nameB);
+      return a.clientName.localeCompare(b.clientName);
+    });
+
+    return rows;
+  }, [activeEmployees, placements, month, year]);
+
+  const getTimesheet = (empId: string, placementId: string | null, hasOtherPlacementRows: boolean) => {
+    if (!timesheets) return null;
+    if (placementId) {
+      const byPlacement = timesheets.find(t =>
+        t.employeeId === empId && (t as any).placementId === placementId && t.month === month && t.year === year
+      );
+      if (byPlacement) return byPlacement;
+      if (!hasOtherPlacementRows) {
+        const byEmployee = timesheets.find(t =>
+          t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year
+        );
+        if (byEmployee) return byEmployee;
+      }
+      return null;
+    }
+    const byEmployee = timesheets.find(t =>
+      t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year
+    );
+    return byEmployee || null;
+  };
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, empId, data }: { id: string; empId: string; data: Record<string, any> }) => {
+    mutationFn: async ({ id, rowKey, data }: { id: string; rowKey: string; data: Record<string, any> }) => {
       const res = await apiRequest("PATCH", `/api/timesheets/${id}`, data);
       return res.json();
     },
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
-      setEditing(prev => { const next = { ...prev }; delete next[vars.empId]; return next; });
+      setEditing(prev => { const next = { ...prev }; delete next[vars.rowKey]; return next; });
       toast({ title: "Timesheet updated" });
     },
     onError: (err: Error) => {
@@ -1877,13 +1949,14 @@ function MonthlyHoursView() {
   });
 
   const createMutation = useMutation({
-    mutationFn: async (data: Record<string, any> & { employeeId: string }) => {
-      const res = await apiRequest("POST", "/api/timesheets", data);
+    mutationFn: async (data: Record<string, any> & { employeeId: string; rowKey: string }) => {
+      const { rowKey, ...payload } = data;
+      const res = await apiRequest("POST", "/api/timesheets", payload);
       return res.json();
     },
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
-      setEditing(prev => { const next = { ...prev }; delete next[vars.employeeId]; return next; });
+      setEditing(prev => { const next = { ...prev }; delete next[vars.rowKey]; return next; });
       toast({ title: "Timesheet created" });
     },
     onError: (err: Error) => {
@@ -1891,10 +1964,10 @@ function MonthlyHoursView() {
     },
   });
 
-  const startEdit = (empId: string, ts: Timesheet | null) => {
+  const startEdit = (rowKey: string, ts: Timesheet | null) => {
     setEditing(prev => ({
       ...prev,
-      [empId]: {
+      [rowKey]: {
         totalHours: ts?.totalHours || "0",
         regularHours: ts?.regularHours || "0",
         overtimeHours: ts?.overtimeHours || "0",
@@ -1902,34 +1975,36 @@ function MonthlyHoursView() {
     }));
   };
 
-  const cancelEdit = (empId: string) => {
-    setEditing(prev => { const next = { ...prev }; delete next[empId]; return next; });
+  const cancelEdit = (rowKey: string) => {
+    setEditing(prev => { const next = { ...prev }; delete next[rowKey]; return next; });
   };
 
-  const saveEdit = (empId: string, ts: Timesheet | null) => {
-    const edit = editing[empId];
+  const saveEdit = (rowKey: string, emp: Employee, placement: PlacementData | null, ts: Timesheet | null) => {
+    const edit = editing[rowKey];
     if (!edit) return;
 
     const total = parseFloat(edit.totalHours) || 0;
     const regular = parseFloat(edit.regularHours) || 0;
     const overtime = parseFloat(edit.overtimeHours) || 0;
-    const emp = activeEmployees.find(e => e.id === empId);
-    const rate = emp?.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
+    const rate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
 
     if (ts) {
       updateMutation.mutate({
         id: ts.id,
-        empId,
+        rowKey,
         data: {
           totalHours: String(total),
           regularHours: String(regular),
           overtimeHours: String(overtime),
           grossValue: String(total * rate),
+          ...(placement && { clientId: placement.clientId, placementId: placement.id }),
         },
       });
     } else {
       createMutation.mutate({
-        employeeId: empId,
+        rowKey,
+        employeeId: emp.id,
+        ...(placement && { clientId: placement.clientId, placementId: placement.id }),
         month,
         year,
         totalHours: String(total),
@@ -1942,9 +2017,9 @@ function MonthlyHoursView() {
     }
   };
 
-  const updateEditField = (empId: string, field: string, value: string) => {
+  const updateEditField = (rowKey: string, field: string, value: string) => {
     setEditing(prev => {
-      const current = prev[empId];
+      const current = prev[rowKey];
       if (!current) return prev;
       const updated = { ...current, [field]: value };
       if (field === "regularHours" || field === "overtimeHours") {
@@ -1952,7 +2027,7 @@ function MonthlyHoursView() {
         const ot = parseFloat(updated.overtimeHours) || 0;
         updated.totalHours = String(reg + ot);
       }
-      return { ...prev, [empId]: updated };
+      return { ...prev, [rowKey]: updated };
     });
   };
 
@@ -2008,6 +2083,7 @@ function MonthlyHoursView() {
                 <thead>
                   <tr className="border-b bg-muted/50">
                     <th className="text-left px-4 py-2.5 font-medium">Employee</th>
+                    <th className="text-left px-4 py-2.5 font-medium">Client</th>
                     <th className="text-right px-4 py-2.5 font-medium w-24">Regular</th>
                     <th className="text-right px-4 py-2.5 font-medium w-24">Overtime</th>
                     <th className="text-right px-4 py-2.5 font-medium w-24">Total</th>
@@ -2016,19 +2092,25 @@ function MonthlyHoursView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {employeeTimesheets.map(({ employee, timesheet }) => {
-                    const isEditing = !!editing[employee.id];
-                    const edit = editing[employee.id];
+                  {placementRows.map(({ employee, placement, clientName, rowKey }) => {
+                    const empPlacementCount = placementRows.filter(r => r.employee.id === employee.id && r.placement !== null).length;
+                    const hasOtherPlacementRows = empPlacementCount > 1;
+                    const timesheet = getTimesheet(employee.id, placement?.id || null, hasOtherPlacementRows);
+                    const isRowEditing = !!editing[rowKey];
+                    const edit = editing[rowKey];
 
                     return (
-                      <tr key={employee.id} className="border-b last:border-0" data-testid={`row-monthly-${employee.id}`}>
+                      <tr key={rowKey} className="border-b last:border-0" data-testid={`row-monthly-${rowKey}`}>
                         <td className="px-4 py-3">
                           <span className="font-medium text-foreground">{employee.firstName} {employee.lastName}</span>
                           {employee.hourlyRate && (
                             <span className="text-xs text-muted-foreground ml-2">${parseFloat(employee.hourlyRate).toFixed(0)}/hr</span>
                           )}
                         </td>
-                        {isEditing ? (
+                        <td className="px-4 py-3 text-muted-foreground text-sm" data-testid={`text-client-${rowKey}`}>
+                          {clientName || <span className="text-xs italic">No placement</span>}
+                        </td>
+                        {isRowEditing ? (
                           <>
                             <td className="px-4 py-2">
                               <Input
@@ -2036,8 +2118,8 @@ function MonthlyHoursView() {
                                 step="0.5"
                                 className="h-8 w-20 text-right font-mono ml-auto"
                                 value={edit.regularHours}
-                                onChange={(e) => updateEditField(employee.id, "regularHours", e.target.value)}
-                                data-testid={`input-regular-${employee.id}`}
+                                onChange={(e) => updateEditField(rowKey, "regularHours", e.target.value)}
+                                data-testid={`input-regular-${rowKey}`}
                               />
                             </td>
                             <td className="px-4 py-2">
@@ -2046,8 +2128,8 @@ function MonthlyHoursView() {
                                 step="0.5"
                                 className="h-8 w-20 text-right font-mono ml-auto"
                                 value={edit.overtimeHours}
-                                onChange={(e) => updateEditField(employee.id, "overtimeHours", e.target.value)}
-                                data-testid={`input-overtime-${employee.id}`}
+                                onChange={(e) => updateEditField(rowKey, "overtimeHours", e.target.value)}
+                                data-testid={`input-overtime-${rowKey}`}
                               />
                             </td>
                             <td className="px-4 py-2">
@@ -2056,8 +2138,8 @@ function MonthlyHoursView() {
                                 step="0.5"
                                 className="h-8 w-20 text-right font-mono ml-auto"
                                 value={edit.totalHours}
-                                onChange={(e) => updateEditField(employee.id, "totalHours", e.target.value)}
-                                data-testid={`input-total-${employee.id}`}
+                                onChange={(e) => updateEditField(rowKey, "totalHours", e.target.value)}
+                                data-testid={`input-total-${rowKey}`}
                               />
                             </td>
                           </>
@@ -2078,21 +2160,21 @@ function MonthlyHoursView() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {isEditing ? (
+                          {isRowEditing ? (
                             <div className="flex items-center gap-1 justify-end">
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                onClick={() => cancelEdit(employee.id)}
-                                data-testid={`button-cancel-${employee.id}`}
+                                onClick={() => cancelEdit(rowKey)}
+                                data-testid={`button-cancel-${rowKey}`}
                               >
                                 <X className="w-3.5 h-3.5" />
                               </Button>
                               <Button
                                 size="sm"
-                                onClick={() => saveEdit(employee.id, timesheet)}
+                                onClick={() => saveEdit(rowKey, employee, placement, timesheet)}
                                 disabled={updateMutation.isPending || createMutation.isPending}
-                                data-testid={`button-save-${employee.id}`}
+                                data-testid={`button-save-${rowKey}`}
                               >
                                 <CheckCircle className="w-3.5 h-3.5" />
                                 Save
@@ -2102,8 +2184,8 @@ function MonthlyHoursView() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => startEdit(employee.id, timesheet)}
-                              data-testid={`button-edit-${employee.id}`}
+                              onClick={() => startEdit(rowKey, timesheet)}
+                              data-testid={`button-edit-${rowKey}`}
                             >
                               <FilePlus className="w-3.5 h-3.5" />
                               {timesheet ? "Edit" : "Add"}
@@ -2113,9 +2195,9 @@ function MonthlyHoursView() {
                       </tr>
                     );
                   })}
-                  {employeeTimesheets.length === 0 && (
+                  {placementRows.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground text-sm">
+                      <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground text-sm">
                         No active employees found.
                       </td>
                     </tr>
