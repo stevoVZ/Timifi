@@ -2295,18 +2295,19 @@ export async function registerRoutes(
         let costSource: "PAYROLL" | "CONTRACTOR_SPEND" = "PAYROLL";
         let contractorSpend = 0;
         let contractorSpendTxnCount = 0;
+        let matchedSpendTxns: typeof periodBankTxns = [];
 
         if (employee.paymentMethod === "INVOICE" && employee.companyName) {
           const companyNorm = normalizeCompanyName(employee.companyName);
-          const spendTxns = periodBankTxns.filter(t =>
+          matchedSpendTxns = periodBankTxns.filter(t =>
             !claimedBankTxnIds.has(t.id) &&
             t.type === "SPEND" &&
             t.contactName &&
             normalizeCompanyName(t.contactName) === companyNorm
           );
-          spendTxns.forEach(t => claimedBankTxnIds.add(t.id));
-          contractorSpend = spendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0);
-          contractorSpendTxnCount = spendTxns.length;
+          matchedSpendTxns.forEach(t => claimedBankTxnIds.add(t.id));
+          contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0);
+          contractorSpendTxnCount = matchedSpendTxns.length;
           if (contractorSpend > 0) {
             totalEmployeeCost = contractorSpend;
             costSource = "CONTRACTOR_SPEND";
@@ -2354,6 +2355,29 @@ export async function registerRoutes(
             amountExGst: Math.round(revenue * 100) / 100,
             amountInclGst: Math.round(revenueInclGst * 100) / 100,
             rctiAmountExGst: Math.round(rctiRevenue * 100) / 100,
+            invoices: empInvoices.map(inv => ({
+              id: inv.id,
+              invoiceNumber: inv.invoiceNumber,
+              contactName: inv.contactName,
+              hours: inv.hours ? parseFloat(inv.hours) : 0,
+              amountExclGst: parseFloat(inv.amountExclGst || "0"),
+              amountInclGst: parseFloat(inv.amountInclGst || "0"),
+              issueDate: inv.issueDate,
+              status: inv.status,
+              invoiceType: (inv as any).invoiceType || null,
+            })),
+            rctis: empRctis.map(r => {
+              const rctiClient = allClients.find(c => c.id === r.clientId);
+              return {
+                id: r.id,
+                clientName: rctiClient?.name || clientName,
+                hours: r.hours ? parseFloat(r.hours) : 0,
+                amountExclGst: parseFloat(r.amountExclGst || "0"),
+                amountInclGst: parseFloat(r.amountInclGst || "0"),
+                month: r.month,
+                year: r.year,
+              };
+            }),
           },
           cost: {
             grossEarnings: Math.round(grossEarnings * 100) / 100,
@@ -2363,9 +2387,33 @@ export async function registerRoutes(
             costSource,
             contractorSpend: Math.round(contractorSpend * 100) / 100,
             contractorSpendTxnCount,
+            payRunLines: empPayLines.map(pl => ({
+              payRunId: pl.payRun.id,
+              payDate: pl.payRun.payDate || null,
+              grossEarnings: parseFloat(pl.line.grossEarnings || "0"),
+              superAmount: parseFloat(pl.line.superAmount || "0"),
+              netPay: parseFloat(pl.line.netPay || "0"),
+            })),
+            contractorTxns: matchedSpendTxns.map(t => ({
+              id: t.id,
+              contactName: t.contactName,
+              amount: Math.abs(parseFloat(t.amount)),
+              date: t.date,
+              description: t.description,
+              bankAccountName: t.bankAccountName,
+            })),
           },
           payrollFeeRevenue: Math.round(payrollFeeRevenue * 100) / 100,
           cashReceived: Math.round(cashReceived * 100) / 100,
+          cashReceivedTxns: clientBankTxns.map(t => ({
+            id: t.id,
+            contactName: t.contactName,
+            amount: parseFloat(t.amount),
+            date: t.date,
+            bankAccountName: t.bankAccountName,
+            reference: t.reference,
+            description: t.description,
+          })),
           profit: Math.round(profit * 100) / 100,
           marginPercent: Math.round(marginPercent * 10) / 10,
         };
