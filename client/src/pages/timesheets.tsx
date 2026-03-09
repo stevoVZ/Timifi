@@ -37,7 +37,7 @@ import {
   Plus, Search, Clock, FileText, CheckCircle, AlertTriangle, XCircle,
   Mail, Upload, UserCheck, Monitor, Paperclip, ChevronDown, ChevronUp,
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus, Users,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Trash2,
 } from "lucide-react";
 import type { Timesheet, Employee, Document as DocType } from "@shared/schema";
 
@@ -1295,6 +1295,24 @@ function SubmissionsView() {
     },
   });
 
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/timesheets/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      toast({ title: "Timesheet deleted", description: "Draft timesheet has been removed." });
+      setDeleteConfirmId(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+      setDeleteConfirmId(null);
+    },
+  });
+
   const readFileAsBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1557,6 +1575,7 @@ function SubmissionsView() {
                         onApprove={() => updateMutation.mutate({ id: ts.id, data: { status: "APPROVED", reviewedAt: new Date().toISOString() } })}
                         onReject={() => updateMutation.mutate({ id: ts.id, data: { status: "REJECTED", reviewedAt: new Date().toISOString() } })}
                         onSubmit={() => updateMutation.mutate({ id: ts.id, data: { status: "SUBMITTED", submittedAt: new Date().toISOString() } })}
+                        onDelete={ts.status === "DRAFT" ? () => setDeleteConfirmId(ts.id) : undefined}
                       />
                     );
                   })}
@@ -1566,6 +1585,31 @@ function SubmissionsView() {
           ))}
         </Tabs>
       )}
+
+      <Dialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Draft Timesheet</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this draft timesheet? This action cannot be undone. Any attached documents will also be removed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)} data-testid="button-cancel-delete">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={deleteMutation.isPending}
+              onClick={() => { if (deleteConfirmId) deleteMutation.mutate(deleteConfirmId); }}
+              data-testid="button-confirm-delete"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1590,6 +1634,7 @@ function TimesheetRow({
   onApprove,
   onReject,
   onSubmit,
+  onDelete,
 }: {
   timesheet: Timesheet;
   employee: Employee | undefined;
@@ -1597,6 +1642,7 @@ function TimesheetRow({
   onApprove: () => void;
   onReject: () => void;
   onSubmit: () => void;
+  onDelete?: () => void;
 }) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [docs, setDocs] = useState<DocType[]>([]);
@@ -1755,9 +1801,22 @@ function TimesheetRow({
                   </>
                 )}
                 {ts.status === "DRAFT" && (
-                  <Button size="sm" onClick={onSubmit} data-testid={`button-submit-${ts.id}`}>
-                    Submit
-                  </Button>
+                  <>
+                    <Button size="sm" onClick={onSubmit} data-testid={`button-submit-${ts.id}`}>
+                      Submit
+                    </Button>
+                    {onDelete && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={onDelete}
+                        data-testid={`button-delete-${ts.id}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
+                  </>
                 )}
                 <Button
                   size="sm"

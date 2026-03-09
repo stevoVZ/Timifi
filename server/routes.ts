@@ -385,6 +385,20 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/timesheets/:id", async (req, res) => {
+    try {
+      const existing = await storage.getTimesheet(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Timesheet not found" });
+      if (existing.status !== "DRAFT") {
+        return res.status(400).json({ message: "Only draft timesheets can be deleted" });
+      }
+      await storage.deleteTimesheet(req.params.id);
+      res.json({ message: "Timesheet deleted" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete timesheet" });
+    }
+  });
+
   app.get("/api/timesheets/:id/history", async (req, res) => {
     try {
       const logs = await storage.getTimesheetAuditLogs(req.params.id);
@@ -2033,9 +2047,10 @@ export async function registerRoutes(
 
   app.get("/api/rctis/eligible-clients", async (_req, res) => {
     try {
-      const [allClients, allBankTxns] = await Promise.all([
+      const [allClients, allBankTxns, allInvoices] = await Promise.all([
         storage.getClients(),
         storage.getBankTransactions(),
+        storage.getInvoices(),
       ]);
       const receiveTxns = allBankTxns.filter(t => t.type === "RECEIVE" && t.contactName);
       const receiveByContact = new Map<string, { count: number; total: number }>();
@@ -2046,11 +2061,15 @@ export async function registerRoutes(
         existing.total += parseFloat(txn.amount || "0");
         receiveByContact.set(key, existing);
       }
+      const acrecClientIds = new Set(
+        allInvoices
+          .filter(inv => inv.invoiceType === "ACCREC" && inv.status !== "VOIDED" && inv.clientId)
+          .map(inv => inv.clientId!)
+      );
       const eligible = allClients
         .filter(c => {
           if (c.isRcti) return true;
-          const stats = receiveByContact.get(c.name.toLowerCase().trim());
-          return stats && stats.count > 0;
+          return acrecClientIds.has(c.id);
         })
         .map(c => {
           const stats = receiveByContact.get(c.name.toLowerCase().trim()) || { count: 0, total: 0 };

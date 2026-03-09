@@ -48,6 +48,7 @@ export interface IStorage {
   getTimesheet(id: string): Promise<Timesheet | undefined>;
   createTimesheet(data: InsertTimesheet): Promise<Timesheet>;
   updateTimesheet(id: string, data: Partial<InsertTimesheet>): Promise<Timesheet | undefined>;
+  deleteTimesheet(id: string): Promise<void>;
 
   createTimesheetAuditLogs(entries: InsertTimesheetAuditLog[]): Promise<TimesheetAuditLog[]>;
   getTimesheetAuditLogs(timesheetId: string): Promise<TimesheetAuditLog[]>;
@@ -248,6 +249,12 @@ export class DatabaseStorage implements IStorage {
       .where(eq(timesheets.id, id))
       .returning();
     return timesheet;
+  }
+
+  async deleteTimesheet(id: string): Promise<void> {
+    await db.delete(documents).where(eq(documents.timesheetId, id));
+    await db.delete(timesheetAuditLog).where(eq(timesheetAuditLog.timesheetId, id));
+    await db.delete(timesheets).where(eq(timesheets.id, id));
   }
 
   async createTimesheetAuditLogs(entries: InsertTimesheetAuditLog[]): Promise<TimesheetAuditLog[]> {

@@ -75,6 +75,7 @@ type ClientRecord = {
   id: string;
   name: string;
   isRcti: boolean;
+  isCustomer?: boolean;
 };
 
 type EligibleClient = {
@@ -290,47 +291,54 @@ export default function RctisPage() {
               <p className="text-xs text-muted-foreground">Click a client above to mark them as RCTI, then use Auto-Match to create records from bank transactions.</p>
             )}
 
-            <div className="pt-1">
-              <button
-                onClick={() => setShowAllClients(!showAllClients)}
-                className="text-xs text-primary hover:underline"
-                data-testid="button-show-all-clients"
-              >
-                {showAllClients ? "Hide all clients" : `Show all clients (${clientList.length})`}
-              </button>
-            </div>
-
-            {showAllClients && (
-              <div className="space-y-2 pt-1">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Search clients..."
-                    value={clientSearch}
-                    onChange={(e) => setClientSearch(e.target.value)}
-                    className="pl-8 h-8 text-sm"
-                    data-testid="input-client-search"
-                  />
-                </div>
-                <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
-                  {clientList
-                    .filter(c => !eligibleClients.some(ec => ec.id === c.id))
-                    .filter(c => !clientSearch || c.name.toLowerCase().includes(clientSearch.toLowerCase()))
-                    .map(c => (
-                      <Button
-                        key={c.id}
-                        variant={c.isRcti ? "default" : "ghost"}
-                        size="sm"
-                        className="text-xs h-7"
-                        onClick={() => toggleRctiMutation.mutate({ clientId: c.id, isRcti: !c.isRcti })}
-                        data-testid={`button-toggle-rcti-all-${c.id}`}
-                      >
-                        {c.name}
-                      </Button>
-                    ))}
-                </div>
-              </div>
-            )}
+            {(() => {
+              const otherCustomers = clientList
+                .filter(c => c.isCustomer && !eligibleClients.some(ec => ec.id === c.id));
+              if (otherCustomers.length === 0) return null;
+              return (
+                <>
+                  <div className="pt-1">
+                    <button
+                      onClick={() => setShowAllClients(!showAllClients)}
+                      className="text-xs text-primary hover:underline"
+                      data-testid="button-show-all-clients"
+                    >
+                      {showAllClients ? "Hide other customers" : `Show other customers (${otherCustomers.length})`}
+                    </button>
+                  </div>
+                  {showAllClients && (
+                    <div className="space-y-2 pt-1">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                        <Input
+                          placeholder="Search customers..."
+                          value={clientSearch}
+                          onChange={(e) => setClientSearch(e.target.value)}
+                          className="pl-8 h-8 text-sm"
+                          data-testid="input-client-search"
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                        {otherCustomers
+                          .filter(c => !clientSearch || c.name.toLowerCase().includes(clientSearch.toLowerCase()))
+                          .map(c => (
+                            <Button
+                              key={c.id}
+                              variant={c.isRcti ? "default" : "ghost"}
+                              size="sm"
+                              className="text-xs h-7"
+                              onClick={() => toggleRctiMutation.mutate({ clientId: c.id, isRcti: !c.isRcti })}
+                              data-testid={`button-toggle-rcti-all-${c.id}`}
+                            >
+                              {c.name}
+                            </Button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
 
