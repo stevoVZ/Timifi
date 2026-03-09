@@ -31,6 +31,14 @@ const navItems = [
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
+type CurrentUser = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  email: string | null;
+  role: string;
+};
+
 export function AppSidebar() {
   const [location] = useLocation();
 
@@ -39,7 +47,17 @@ export function AppSidebar() {
     refetchInterval: 30000,
   });
 
+  const { data: currentUser } = useQuery<CurrentUser>({
+    queryKey: ["/api/auth/me"],
+  });
+
   const unreadCount = unreadData?.count || 0;
+
+  const userName = currentUser?.displayName || currentUser?.username || "Admin";
+  const userRole = currentUser?.role || "admin";
+  const userInitials = currentUser?.displayName
+    ? currentUser.displayName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2)
+    : (currentUser?.username || "A").slice(0, 2).toUpperCase();
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
@@ -99,12 +117,12 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="px-4 py-3">
         <div className="flex items-center gap-3 px-2">
-          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
-            SC
+          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary" data-testid="avatar-current-user">
+            {userInitials}
           </div>
-          <div>
-            <div className="text-sm font-medium text-sidebar-foreground">Sarah Chen</div>
-            <div className="text-[11px] text-muted-foreground">Admin</div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-sidebar-foreground truncate" data-testid="text-current-user-name">{userName}</div>
+            <div className="text-[11px] text-muted-foreground capitalize">{userRole}</div>
           </div>
         </div>
       </SidebarFooter>

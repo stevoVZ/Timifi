@@ -103,7 +103,7 @@ export function setupAuth(app: Express) {
       return res.status(401).json({ message: "Not authenticated" });
     }
     const user = req.user as User;
-    res.json({ id: user.id, username: user.username });
+    res.json({ id: user.id, username: user.username, displayName: user.displayName, email: user.email, role: user.role });
   });
 }
 
