@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
-import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff } from "lucide-react";
 import type { Setting } from "@shared/schema";
 
 function useSettings() {
@@ -542,25 +543,35 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
         </div>
       </div>
 
-      {isConnected && tenants.length > 1 && (
+      {isConnected && tenants.length > 0 && (
         <div className="space-y-2">
           <Label data-testid="label-xero-org-picker">Organisation</Label>
-          <Select
-            value={selectedTenantId}
-            onValueChange={(val) => selectTenantMutation.mutate(val)}
-          >
-            <SelectTrigger data-testid="select-xero-org">
-              <SelectValue placeholder="Select organisation" />
-            </SelectTrigger>
-            <SelectContent>
-              {tenants.map((t) => (
-                <SelectItem key={t.tenantId} value={t.tenantId} data-testid={`option-org-${t.tenantId}`}>
-                  {t.tenantName} ({t.tenantType})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">Switch between your connected Xero organisations</p>
+          {tenants.length > 1 ? (
+            <Select
+              value={selectedTenantId}
+              onValueChange={(val) => selectTenantMutation.mutate(val)}
+            >
+              <SelectTrigger data-testid="select-xero-org">
+                <SelectValue placeholder="Select organisation" />
+              </SelectTrigger>
+              <SelectContent>
+                {tenants.map((t) => (
+                  <SelectItem key={t.tenantId} value={t.tenantId} data-testid={`option-org-${t.tenantId}`}>
+                    {t.tenantName} ({t.tenantType})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <div className="flex items-center gap-2 p-2.5 rounded-lg border bg-muted/30">
+              <Building2 className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium" data-testid="text-xero-single-org">{tenants[0].tenantName}</span>
+              <span className="text-xs text-muted-foreground">({tenants[0].tenantType})</span>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {tenants.length > 1 ? "Switch between your connected Xero organisations" : "Connected organisation"}
+          </p>
         </div>
       )}
 
@@ -846,32 +857,278 @@ function PortalTab({ settings }: { settings: Setting[] | undefined }) {
   );
 }
 
+type AdminUser = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  email: string | null;
+  role: string;
+};
+
 function UsersTab() {
+  const { toast } = useToast();
+  const { data: users = [], isLoading } = useQuery<AdminUser[]>({ queryKey: ["/api/users"] });
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editUser, setEditUser] = useState<AdminUser | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const [formName, setFormName] = useState("");
+  const [formUsername, setFormUsername] = useState("");
+  const [formEmail, setFormEmail] = useState("");
+  const [formPassword, setFormPassword] = useState("");
+
+  const openCreate = () => {
+    setEditUser(null);
+    setFormName("");
+    setFormUsername("");
+    setFormEmail("");
+    setFormPassword("");
+    setShowPassword(false);
+    setDialogOpen(true);
+  };
+
+  const openEdit = (u: AdminUser) => {
+    setEditUser(u);
+    setFormName(u.displayName || "");
+    setFormUsername(u.username);
+    setFormEmail(u.email || "");
+    setFormPassword("");
+    setShowPassword(false);
+    setDialogOpen(true);
+  };
+
+  const createMutation = useMutation({
+    mutationFn: async (data: { username: string; password: string; displayName: string; email: string }) => {
+      const res = await apiRequest("POST", "/api/users", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "User created" });
+      setDialogOpen(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Record<string, any> }) => {
+      const res = await apiRequest("PATCH", `/api/users/${id}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "User updated" });
+      setDialogOpen(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/users/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "User deleted" });
+      setDeleteConfirmId(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+      setDeleteConfirmId(null);
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (editUser) {
+      const data: Record<string, any> = {
+        displayName: formName,
+        username: formUsername,
+        email: formEmail,
+      };
+      if (formPassword) data.password = formPassword;
+      updateMutation.mutate({ id: editUser.id, data });
+    } else {
+      if (!formPassword) {
+        toast({ title: "Password is required", variant: "destructive" });
+        return;
+      }
+      createMutation.mutate({
+        username: formUsername,
+        password: formPassword,
+        displayName: formName,
+        email: formEmail,
+      });
+    }
+  };
+
+  const getInitials = (u: AdminUser) => {
+    if (u.displayName) {
+      return u.displayName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+    }
+    return u.username.slice(0, 2).toUpperCase();
+  };
+
+  const isPending = createMutation.isPending || updateMutation.isPending;
+
+  if (isLoading) return <SettingsTabSkeleton />;
+
   return (
-    <div className="space-y-6">
-      <div className="text-sm text-muted-foreground" data-testid="text-users-info">
-        User management allows you to add, remove, and configure admin users who can access this portal.
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground" data-testid="text-users-info">
+          Manage admin users who can access this portal.
+        </p>
+        <Button size="sm" onClick={openCreate} data-testid="button-create-user">
+          <Plus className="w-4 h-4 mr-1" />
+          Add User
+        </Button>
       </div>
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary">
-                SC
+
+      <div className="space-y-2">
+        {users.map((u) => (
+          <Card key={u.id}>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary" data-testid={`avatar-user-${u.id}`}>
+                    {getInitials(u)}
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium" data-testid={`text-user-name-${u.id}`}>
+                      {u.displayName || u.username}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {u.email ? `${u.email} · ` : ""}{u.username}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground font-medium capitalize" data-testid={`text-user-role-${u.id}`}>
+                    {u.role}
+                  </span>
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openEdit(u)} data-testid={`button-edit-user-${u.id}`}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => setDeleteConfirmId(u.id)}
+                    data-testid={`button-delete-user-${u.id}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
               </div>
-              <div>
-                <div className="text-sm font-medium" data-testid="text-user-name-sarah">Sarah Chen</div>
-                <div className="text-xs text-muted-foreground">sarah@company.com</div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editUser ? "Edit User" : "Create User"}</DialogTitle>
+            <DialogDescription>
+              {editUser ? "Update user details. Leave password blank to keep it unchanged." : "Add a new admin user to the portal."}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="user-name">Display Name</Label>
+              <Input
+                id="user-name"
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
+                placeholder="e.g. Sarah Chen"
+                data-testid="input-user-display-name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="user-username">Username</Label>
+              <Input
+                id="user-username"
+                value={formUsername}
+                onChange={(e) => setFormUsername(e.target.value)}
+                placeholder="e.g. sarah"
+                required
+                data-testid="input-user-username"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="user-email">Email</Label>
+              <Input
+                id="user-email"
+                type="email"
+                value={formEmail}
+                onChange={(e) => setFormEmail(e.target.value)}
+                placeholder="e.g. sarah@company.com"
+                data-testid="input-user-email"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="user-password">{editUser ? "New Password (optional)" : "Password"}</Label>
+              <div className="relative">
+                <Input
+                  id="user-password"
+                  type={showPassword ? "text" : "password"}
+                  value={formPassword}
+                  onChange={(e) => setFormPassword(e.target.value)}
+                  placeholder={editUser ? "Leave blank to keep current" : "Enter password"}
+                  required={!editUser}
+                  className="pr-10"
+                  data-testid="input-user-password"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                  onClick={() => setShowPassword(!showPassword)}
+                  data-testid="button-toggle-password"
+                >
+                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </Button>
               </div>
             </div>
-            <span className="text-xs text-muted-foreground font-medium" data-testid="text-user-role-sarah">Admin</span>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={isPending} data-testid="button-save-user">
+                {isPending ? "Saving..." : editUser ? "Save Changes" : "Create User"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete User</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this user? They will no longer be able to access the portal.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)} data-testid="button-cancel-delete-user">Cancel</Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={deleteMutation.isPending}
+              onClick={() => { if (deleteConfirmId) deleteMutation.mutate(deleteConfirmId); }}
+              data-testid="button-confirm-delete-user"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
           </div>
-        </CardContent>
-      </Card>
-      <Button variant="outline" data-testid="button-invite-user">
-        <UserCog className="w-4 h-4" />
-        Invite User
-      </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -154,6 +154,9 @@ export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  displayName: text("display_name"),
+  email: text("email"),
+  role: text("role").notNull().default("admin"),
 });
 
 export const notifications = pgTable("notifications", {
@@ -381,6 +384,9 @@ export const insertPayRunSchema = createInsertSchema(payRuns).omit({
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
+  displayName: true,
+  email: true,
+  role: true,
 });
 
 export const insertNotificationSchema = createInsertSchema(notifications).omit({

@@ -160,9 +160,12 @@ export interface IStorage {
   getLatestRateHistory(employeeId: string): Promise<RateHistory | undefined>;
   createRateHistory(data: InsertRateHistory): Promise<RateHistory>;
 
+  getUsers(): Promise<User[]>;
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(data: InsertUser): Promise<User>;
+  updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
+  deleteUser(id: string): Promise<void>;
 
   getInvoiceEmployees(invoiceId: string): Promise<InvoiceEmployee[]>;
   getInvoiceEmployeesByInvoice(invoiceIds: string[]): Promise<InvoiceEmployee[]>;
@@ -659,6 +662,10 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async getUsers(): Promise<User[]> {
+    return db.select().from(users);
+  }
+
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
@@ -672,6 +679,15 @@ export class DatabaseStorage implements IStorage {
   async createUser(data: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values(data).returning();
     return user;
+  }
+
+  async updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined> {
+    const [user] = await db.update(users).set(data).where(eq(users.id, id)).returning();
+    return user;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
   }
 
   async getOnboardingStatus(employeeId: string): Promise<{

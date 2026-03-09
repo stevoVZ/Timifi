@@ -6,7 +6,7 @@ import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, inser
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions } from "./xero";
-import { requireAuth } from "./auth";
+import { requireAuth, hashPassword } from "./auth";
 import { scanTimesheetPdf } from "./ocr";
 import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from "./rates";
 
@@ -39,6 +39,83 @@ export async function registerRoutes(
       res.json(stats);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch dashboard stats" });
+    }
+  });
+
+  app.get("/api/users", async (_req, res) => {
+    try {
+      const allUsers = await storage.getUsers();
+      const sanitized = allUsers.map(({ password, ...rest }) => rest);
+      res.json(sanitized);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch users" });
+    }
+  });
+
+  app.post("/api/users", async (req, res) => {
+    try {
+      const { username, password, displayName, email } = req.body;
+      if (!username || !password) {
+        return res.status(400).json({ message: "Username and password are required" });
+      }
+      const existing = await storage.getUserByUsername(username);
+      if (existing) {
+        return res.status(409).json({ message: "Username already exists" });
+      }
+      const hashed = await hashPassword(password);
+      const user = await storage.createUser({
+        username,
+        password: hashed,
+        displayName: displayName || null,
+        email: email || null,
+      });
+      const { password: _, ...sanitized } = user;
+      res.json(sanitized);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to create user" });
+    }
+  });
+
+  app.patch("/api/users/:id", async (req, res) => {
+    try {
+      const existing = await storage.getUser(req.params.id);
+      if (!existing) return res.status(404).json({ message: "User not found" });
+
+      const updates: Record<string, any> = {};
+      if (req.body.displayName !== undefined) updates.displayName = req.body.displayName;
+      if (req.body.email !== undefined) updates.email = req.body.email;
+      if (req.body.username) {
+        const dup = await storage.getUserByUsername(req.body.username);
+        if (dup && dup.id !== req.params.id) {
+          return res.status(409).json({ message: "Username already taken" });
+        }
+        updates.username = req.body.username;
+      }
+      if (req.body.password) {
+        updates.password = await hashPassword(req.body.password);
+      }
+
+      const updated = await storage.updateUser(req.params.id, updates);
+      if (!updated) return res.status(404).json({ message: "User not found" });
+      const { password: _, ...sanitized } = updated;
+      res.json(sanitized);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/users/:id", async (req, res) => {
+    try {
+      const currentUser = (req as any).user;
+      if (currentUser && currentUser.id === req.params.id) {
+        return res.status(400).json({ message: "Cannot delete your own account" });
+      }
+      const existing = await storage.getUser(req.params.id);
+      if (!existing) return res.status(404).json({ message: "User not found" });
+      await storage.deleteUser(req.params.id);
+      res.json({ message: "User deleted" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete user" });
     }
   });
 
