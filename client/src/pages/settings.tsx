@@ -398,6 +398,30 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
     },
   });
 
+  const addOrgMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/xero/connect", { credentials: "include" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Failed to initiate connection");
+      }
+      const data = await res.json();
+      return data.url;
+    },
+    onSuccess: (url: string) => {
+      const popup = window.open(url, "_blank");
+      const checkInterval = setInterval(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/xero/tenants"] });
+      }, 5000);
+      setTimeout(() => clearInterval(checkInterval), 120000);
+      toast({ title: "Xero login opened in a new tab. Authorise the additional organisation, then return here." });
+    },
+    onError: (err: Error) => {
+      toast({ title: err.message, variant: "destructive" });
+    },
+  });
+
   const disconnectMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("POST", "/api/xero/disconnect");
@@ -543,9 +567,21 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
         </div>
       </div>
 
-      {isConnected && tenants.length > 0 && (
+      {isConnected && (
         <div className="space-y-2">
-          <Label data-testid="label-xero-org-picker">Organisation</Label>
+          <div className="flex items-center justify-between">
+            <Label data-testid="label-xero-org-picker">Organisation</Label>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => addOrgMutation.mutate()}
+              disabled={addOrgMutation.isPending}
+              data-testid="button-xero-add-org"
+            >
+              <Plus className="w-3 h-3" />
+              Add Organisation
+            </Button>
+          </div>
           {tenants.length > 1 ? (
             <Select
               value={selectedTenantId}
@@ -562,15 +598,17 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
                 ))}
               </SelectContent>
             </Select>
-          ) : (
+          ) : tenants.length === 1 ? (
             <div className="flex items-center gap-2 p-2.5 rounded-lg border bg-muted/30">
               <Building2 className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium" data-testid="text-xero-single-org">{tenants[0].tenantName}</span>
               <span className="text-xs text-muted-foreground">({tenants[0].tenantType})</span>
             </div>
+          ) : (
+            <p className="text-sm text-muted-foreground" data-testid="text-xero-no-orgs">No organisations connected. Click "Add Organisation" to authorise one.</p>
           )}
           <p className="text-xs text-muted-foreground">
-            {tenants.length > 1 ? "Switch between your connected Xero organisations" : "Connected organisation"}
+            {tenants.length > 1 ? "Switch between your connected Xero organisations" : tenants.length === 1 ? "Connected organisation" : ""}
           </p>
         </div>
       )}
