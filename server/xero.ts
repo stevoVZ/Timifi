@@ -1154,6 +1154,11 @@ export async function syncInvoices(): Promise<{
         if (firstLine.Description) descriptionVal = firstLine.Description;
       }
 
+      const invoiceTypeVal = inv.Type === "ACCPAY" ? "ACCPAY" : inv.Type === "ACCREC" ? "ACCREC" : null;
+      const referenceVal = inv.Reference || null;
+
+      let invoiceId: string;
+
       if (existing) {
         await storage.updateInvoice(existing.id, {
           contactName: contactName || existing.contactName,
@@ -1171,12 +1176,15 @@ export async function syncInvoices(): Promise<{
           hours: totalHours || existing.hours,
           hourlyRate: hourlyRateVal || existing.hourlyRate,
           description: descriptionVal || inv.Reference || existing.description,
+          invoiceType: invoiceTypeVal || existing.invoiceType,
+          reference: referenceVal || existing.reference,
           year,
           month,
         });
+        invoiceId = existing.id;
         updated++;
       } else {
-        await storage.createInvoice({
+        const newInvoice = await storage.createInvoice({
           employeeId: employee?.id || null,
           contactName: contactName || null,
           xeroInvoiceId: xeroInvoiceId,
@@ -1195,8 +1203,42 @@ export async function syncInvoices(): Promise<{
           dueDate,
           paidDate: localStatus === "PAID" ? parseXeroDate(inv.FullyPaidOnDate) : null,
           status: localStatus,
+          invoiceType: invoiceTypeVal,
+          reference: referenceVal,
         });
+        invoiceId = newInvoice.id;
         created++;
+      }
+
+      if (inv.LineItems && inv.LineItems.length > 0) {
+        const lineItems = inv.LineItems.map((li: any) => ({
+          invoiceId,
+          lineItemId: li.LineItemID || null,
+          description: li.Description || null,
+          quantity: li.Quantity != null ? String(li.Quantity) : null,
+          unitAmount: li.UnitAmount != null ? String(li.UnitAmount) : null,
+          lineAmount: li.LineAmount != null ? String(li.LineAmount) : null,
+          accountCode: li.AccountCode || null,
+          taxType: li.TaxType || null,
+          taxAmount: li.TaxAmount != null ? String(li.TaxAmount) : null,
+          tracking: li.Tracking && li.Tracking.length > 0 ? li.Tracking : null,
+        }));
+        await storage.setInvoiceLineItems(invoiceId, lineItems);
+      }
+
+      if (inv.Payments && inv.Payments.length > 0) {
+        const payments = inv.Payments.map((p: any) => ({
+          invoiceId,
+          xeroPaymentId: p.PaymentID || null,
+          paymentDate: parseXeroDate(p.Date) || null,
+          amount: String(p.Amount || 0),
+          currencyCode: p.CurrencyRate ? inv.CurrencyCode : null,
+          bankAccountId: p.Account?.AccountID || null,
+          bankAccountName: p.Account?.Name || null,
+          reference: p.Reference || null,
+          status: p.Status || null,
+        }));
+        await storage.setInvoicePayments(invoiceId, payments);
       }
     } catch (err: any) {
       errors.push(`Error syncing invoice ${inv.InvoiceNumber || inv.InvoiceID}: ${err.message}`);

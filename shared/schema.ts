@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, numeric, date, timestamp, boolean, smallint, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, numeric, date, timestamp, boolean, smallint, pgEnum, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -91,6 +91,8 @@ export const invoices = pgTable("invoices", {
   dueDate: date("due_date"),
   paidDate: date("paid_date"),
   status: invoiceStatusEnum("status").notNull().default("DRAFT"),
+  invoiceType: text("invoice_type"),
+  reference: text("reference"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -536,3 +538,40 @@ export const invoiceEmployees = pgTable("invoice_employees", {
 export const insertInvoiceEmployeeSchema = createInsertSchema(invoiceEmployees).omit({ id: true, createdAt: true });
 export type InvoiceEmployee = typeof invoiceEmployees.$inferSelect;
 export type InsertInvoiceEmployee = z.infer<typeof insertInvoiceEmployeeSchema>;
+
+export const invoiceLineItems = pgTable("invoice_line_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id").notNull(),
+  lineItemId: text("line_item_id"),
+  description: text("description"),
+  quantity: numeric("quantity", { precision: 10, scale: 4 }),
+  unitAmount: numeric("unit_amount", { precision: 10, scale: 4 }),
+  lineAmount: numeric("line_amount", { precision: 12, scale: 2 }),
+  accountCode: text("account_code"),
+  taxType: text("tax_type"),
+  taxAmount: numeric("tax_amount", { precision: 10, scale: 2 }),
+  tracking: jsonb("tracking"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertInvoiceLineItemSchema = createInsertSchema(invoiceLineItems).omit({ id: true, createdAt: true });
+export type InvoiceLineItem = typeof invoiceLineItems.$inferSelect;
+export type InsertInvoiceLineItem = z.infer<typeof insertInvoiceLineItemSchema>;
+
+export const invoicePayments = pgTable("invoice_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id").notNull(),
+  xeroPaymentId: text("xero_payment_id").unique(),
+  paymentDate: date("payment_date"),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  currencyCode: text("currency_code"),
+  bankAccountId: text("bank_account_id"),
+  bankAccountName: text("bank_account_name"),
+  reference: text("reference"),
+  status: text("status"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertInvoicePaymentSchema = createInsertSchema(invoicePayments).omit({ id: true, createdAt: true });
+export type InvoicePayment = typeof invoicePayments.$inferSelect;
+export type InsertInvoicePayment = z.infer<typeof insertInvoicePaymentSchema>;

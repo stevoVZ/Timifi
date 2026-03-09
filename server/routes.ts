@@ -442,6 +442,24 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/invoices/:id/line-items", async (req, res) => {
+    try {
+      const items = await storage.getInvoiceLineItems(req.params.id);
+      res.json(items);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch line items" });
+    }
+  });
+
+  app.get("/api/invoices/:id/payments", async (req, res) => {
+    try {
+      const payments = await storage.getInvoicePayments(req.params.id);
+      res.json(payments);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch payments" });
+    }
+  });
+
   app.get("/api/pay-runs", async (_req, res) => {
     try {
       const data = await storage.getPayRuns();

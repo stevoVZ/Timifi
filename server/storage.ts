@@ -5,7 +5,7 @@ import {
   notifications, messages, settings, users,
   leaveRequests, payItems, taxDeclarations, bankAccounts, superMemberships,
   clients, placements, bankTransactions, payslipLines, rateHistory, timesheetAuditLog,
-  invoiceEmployees, rctis,
+  invoiceEmployees, rctis, invoiceLineItems, invoicePayments,
   type Employee, type InsertEmployee,
   type Timesheet, type InsertTimesheet,
   type Invoice, type InsertInvoice,
@@ -29,6 +29,8 @@ import {
   type TimesheetAuditLog, type InsertTimesheetAuditLog,
   type InvoiceEmployee,
   type Rcti, type InsertRcti,
+  type InvoiceLineItem, type InsertInvoiceLineItem,
+  type InvoicePayment, type InsertInvoicePayment,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -163,6 +165,12 @@ export interface IStorage {
   getInvoiceEmployeesByInvoice(invoiceIds: string[]): Promise<InvoiceEmployee[]>;
   setInvoiceEmployees(invoiceId: string, employeeIds: string[]): Promise<InvoiceEmployee[]>;
   getInvoiceIdsByEmployee(employeeId: string): Promise<string[]>;
+
+  getInvoiceLineItems(invoiceId: string): Promise<InvoiceLineItem[]>;
+  setInvoiceLineItems(invoiceId: string, items: InsertInvoiceLineItem[]): Promise<InvoiceLineItem[]>;
+
+  getInvoicePayments(invoiceId: string): Promise<InvoicePayment[]>;
+  setInvoicePayments(invoiceId: string, payments: InsertInvoicePayment[]): Promise<InvoicePayment[]>;
 
   getRctis(): Promise<Rcti[]>;
   getRctisByEmployee(employeeId: string): Promise<Rcti[]>;
@@ -819,6 +827,26 @@ export class DatabaseStorage implements IStorage {
 
   async deleteRcti(id: string): Promise<void> {
     await db.delete(rctis).where(eq(rctis.id, id));
+  }
+
+  async getInvoiceLineItems(invoiceId: string): Promise<InvoiceLineItem[]> {
+    return db.select().from(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, invoiceId));
+  }
+
+  async setInvoiceLineItems(invoiceId: string, items: InsertInvoiceLineItem[]): Promise<InvoiceLineItem[]> {
+    await db.delete(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, invoiceId));
+    if (items.length === 0) return [];
+    return db.insert(invoiceLineItems).values(items).returning();
+  }
+
+  async getInvoicePayments(invoiceId: string): Promise<InvoicePayment[]> {
+    return db.select().from(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
+  }
+
+  async setInvoicePayments(invoiceId: string, payments: InsertInvoicePayment[]): Promise<InvoicePayment[]> {
+    await db.delete(invoicePayments).where(eq(invoicePayments.invoiceId, invoiceId));
+    if (payments.length === 0) return [];
+    return db.insert(invoicePayments).values(payments).returning();
   }
 }
 

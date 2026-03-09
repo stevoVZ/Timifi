@@ -58,7 +58,7 @@ import {
   Users,
 } from "lucide-react";
 import { Link } from "wouter";
-import type { Invoice, Employee, Timesheet, Placement } from "@shared/schema";
+import type { Invoice, Employee, Timesheet, Placement, InvoiceLineItem, InvoicePayment } from "@shared/schema";
 
 type ClientRecord = { id: string; name: string };
 
@@ -97,6 +97,7 @@ export default function InvoicesPage() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "ACCREC" | "ACCPAY">("all");
   const [sortField, setSortField] = useState<string>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
@@ -166,6 +167,7 @@ export default function InvoicesPage() {
   });
 
   const filtered = invoicesList?.filter((inv) => {
+    if (typeFilter !== "all" && (inv as any).invoiceType !== typeFilter) return false;
     const linkedIds: string[] = (inv as any).linkedEmployeeIds || (inv.employeeId ? [inv.employeeId] : []);
     const names = linkedIds.map(id => {
       const emp = employeeMap.get(id);
@@ -214,6 +216,7 @@ export default function InvoicesPage() {
     const dir = sortDir === "asc" ? 1 : -1;
     switch (sortField) {
       case "number": return (a.invoiceNumber || "").localeCompare(b.invoiceNumber || "") * dir;
+      case "type": return ((a as any).invoiceType || "").localeCompare((b as any).invoiceType || "") * dir;
       case "to": {
         const cA = a.employeeId ? employeeMap.get(a.employeeId) : undefined;
         const cB = b.employeeId ? employeeMap.get(b.employeeId) : undefined;
@@ -455,6 +458,26 @@ export default function InvoicesPage() {
                 data-testid="input-search-invoices"
               />
             </div>
+            <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5" data-testid="filter-invoice-type">
+              {([
+                { value: "all" as const, label: "All Types" },
+                { value: "ACCREC" as const, label: "Receivable" },
+                { value: "ACCPAY" as const, label: "Payable" },
+              ]).map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setTypeFilter(opt.value)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    typeFilter === opt.value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid={`filter-type-${opt.value}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {isLoading ? (
@@ -517,6 +540,7 @@ export default function InvoicesPage() {
                           <TableHeader>
                             <TableRow>
                               <InvSortHeader field="number" label="Number" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                              <InvSortHeader field="type" label="Type" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
                               <InvSortHeader field="to" label="To" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
                               <InvSortHeader field="date" label="Date" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
                               <InvSortHeader field="dueDate" label="Due Date" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
@@ -542,6 +566,9 @@ export default function InvoicesPage() {
                                     <span className="font-mono font-medium text-foreground" data-testid={`text-invoice-number-${inv.id}`}>
                                       {inv.invoiceNumber || "—"}
                                     </span>
+                                  </TableCell>
+                                  <TableCell>
+                                    <InvoiceTypeBadge type={(inv as any).invoiceType} testId={`badge-type-${inv.id}`} />
                                   </TableCell>
                                   <TableCell>
                                     <div className="flex flex-col gap-0.5">
@@ -1063,6 +1090,14 @@ function InvoiceDetailDialog({
   const [selectedIds, setSelectedIds] = useState<string[]>(initialIds);
   const [empSearch, setEmpSearch] = useState("");
 
+  const { data: lineItems, isLoading: lineItemsLoading } = useQuery<InvoiceLineItem[]>({
+    queryKey: [`/api/invoices/${invoice.id}/line-items`],
+  });
+
+  const { data: payments, isLoading: paymentsLoading } = useQuery<InvoicePayment[]>({
+    queryKey: [`/api/invoices/${invoice.id}/payments`],
+  });
+
   const hasChanged = (() => {
     const origSet = new Set(initialIds);
     const newSet = new Set(selectedIds);
@@ -1098,11 +1133,12 @@ function InvoiceDetailDialog({
 
   return (
     <Dialog open onOpenChange={() => onClose()}>
-      <DialogContent className="max-w-lg" data-testid="dialog-invoice-detail">
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="dialog-invoice-detail">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="w-4 h-4" />
             Invoice {invoice.invoiceNumber || "—"}
+            <InvoiceTypeBadge type={(invoice as any).invoiceType} testId={`badge-type-detail-${invoice.id}`} />
           </DialogTitle>
         </DialogHeader>
 
@@ -1146,12 +1182,93 @@ function InvoiceDetailDialog({
               <span className="text-xs text-muted-foreground block">Period</span>
               <span>{MONTHS[invoice.month]} {invoice.year}</span>
             </div>
+            {(invoice as any).reference && (
+              <div className="col-span-2">
+                <span className="text-xs text-muted-foreground block">Reference</span>
+                <span className="font-medium" data-testid="text-detail-reference">{(invoice as any).reference}</span>
+              </div>
+            )}
           </div>
 
           {invoice.description && (
             <div className="text-sm">
               <span className="text-xs text-muted-foreground block">Description</span>
               <span className="text-foreground">{invoice.description}</span>
+            </div>
+          )}
+
+          {lineItemsLoading && (
+            <div className="border-t pt-3">
+              <Label className="text-sm font-semibold mb-2 block">Line Items</Label>
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+              </div>
+            </div>
+          )}
+
+          {!lineItemsLoading && lineItems && lineItems.length > 0 && (
+            <div className="border-t pt-3" data-testid="section-line-items">
+              <Label className="text-sm font-semibold mb-2 block">Line Items ({lineItems.length})</Label>
+              <div className="border rounded-md overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="text-xs">
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-right w-20">Qty</TableHead>
+                      <TableHead className="text-right w-24">Unit Price</TableHead>
+                      <TableHead className="text-right w-24">Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {lineItems.map((li, idx) => (
+                      <TableRow key={li.id || idx} className="text-xs" data-testid={`row-line-item-${idx}`}>
+                        <TableCell className="py-1.5">
+                          <span className="text-foreground">{li.description || "—"}</span>
+                          {li.accountCode && (
+                            <span className="ml-1.5 text-[10px] text-muted-foreground bg-muted px-1 py-0.5 rounded">{li.accountCode}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-mono py-1.5">{li.quantity ? parseFloat(li.quantity).toFixed(2) : "—"}</TableCell>
+                        <TableCell className="text-right font-mono py-1.5">{li.unitAmount ? formatCurrency(li.unitAmount) : "—"}</TableCell>
+                        <TableCell className="text-right font-mono py-1.5">{li.lineAmount ? formatCurrency(li.lineAmount) : "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          {paymentsLoading && (
+            <div className="border-t pt-3">
+              <Label className="text-sm font-semibold mb-2 block">Payments</Label>
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+            </div>
+          )}
+
+          {!paymentsLoading && payments && payments.length > 0 && (
+            <div className="border-t pt-3" data-testid="section-payments">
+              <Label className="text-sm font-semibold mb-2 block">Payments ({payments.length})</Label>
+              <div className="space-y-2">
+                {payments.map((pmt, idx) => (
+                  <div key={pmt.id || idx} className="flex items-center justify-between p-2.5 rounded-md bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-sm" data-testid={`payment-${idx}`}>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-medium text-emerald-700 dark:text-emerald-400">{formatCurrency(pmt.amount)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {pmt.paymentDate ? new Date(pmt.paymentDate).toLocaleDateString("en-AU") : "—"}
+                        {pmt.bankAccountName && ` · ${pmt.bankAccountName}`}
+                      </span>
+                    </div>
+                    {pmt.reference && (
+                      <span className="text-xs text-muted-foreground">Ref: {pmt.reference}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1238,6 +1355,23 @@ function InvoiceDetailDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function InvoiceTypeBadge({ type, testId }: { type?: string | null; testId?: string }) {
+  if (!type) return <span className="text-xs text-muted-foreground">—</span>;
+  const isReceivable = type === "ACCREC";
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap ${
+        isReceivable
+          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+          : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+      }`}
+      data-testid={testId}
+    >
+      {isReceivable ? "Receivable" : "Payable"}
+    </span>
   );
 }
 
