@@ -55,11 +55,22 @@ import {
   X,
   Wand2,
   ChevronRight,
+  ChevronLeft,
   Eye,
   Users,
+  UserX,
+  CircleDollarSign,
 } from "lucide-react";
 import { Link } from "wouter";
 import type { Invoice, Employee, Timesheet, Placement, InvoiceLineItem, InvoicePayment } from "@shared/schema";
+
+interface GapAnalysisData {
+  missing: { employee: { id: string; firstName: string; lastName: string; preferredName?: string | null; clientName?: string | null; chargeOutRate?: string | null; contractCode?: string | null }; placement: { id: string; clientId: string; chargeOutRate?: string | null; roleTitle?: string | null } | null }[];
+  unlinked: { id: string; invoiceNumber?: string | null; contactName?: string | null; amountExclGst?: string | null; amountInclGst?: string | null; status: string; issueDate?: string | null; description?: string | null }[];
+  unpaid: { id: string; invoiceNumber?: string | null; contactName?: string | null; amountExclGst?: string | null; amountInclGst?: string | null; status: string; issueDate?: string | null; employeeName?: string | null }[];
+  month: number;
+  year: number;
+}
 
 type ClientRecord = { id: string; name: string };
 
@@ -95,8 +106,8 @@ type AlignmentProposal = {
 };
 
 export default function InvoicesPage() {
+  const now = new Date();
   const [search, setSearch] = useState("");
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("all");
   const [typeFilter, setTypeFilter] = useState<"all" | "ACCREC" | "ACCPAY">("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -104,12 +115,15 @@ export default function InvoicesPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
   const [alignmentOpen, setAlignmentOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [gapMonth, setGapMonth] = useState(now.getMonth() + 1);
+  const [gapYear, setGapYear] = useState(now.getFullYear());
   const [invForm, setInvForm] = useState({
     clientId: "",
     employeeId: "",
-    year: String(new Date().getFullYear()),
-    month: String(new Date().getMonth() + 1),
-    issueDate: new Date().toISOString().split("T")[0],
+    year: String(now.getFullYear()),
+    month: String(now.getMonth() + 1),
+    issueDate: now.toISOString().split("T")[0],
     dueDate: "",
     hours: "",
     hourlyRate: "",
@@ -127,10 +141,6 @@ export default function InvoicesPage() {
     queryKey: ["/api/employees"],
   });
 
-  const { data: timesheets } = useQuery<Timesheet[]>({
-    queryKey: ["/api/timesheets"],
-  });
-
   const { data: clients } = useQuery<ClientRecord[]>({
     queryKey: ["/api/clients"],
   });
@@ -139,16 +149,21 @@ export default function InvoicesPage() {
     queryKey: ["/api/placements"],
   });
 
+  const { data: gapData } = useQuery<GapAnalysisData>({
+    queryKey: ["/api/invoices/gap-analysis", gapMonth, gapYear],
+    queryFn: async () => {
+      const res = await fetch(`/api/invoices/gap-analysis?month=${gapMonth}&year=${gapYear}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+
   const employeeMap = new Map(employees?.map((c) => [c.id, c]) || []);
   const clientMap = new Map(clients?.map((c) => [c.id, c]) || []);
 
-  const approvedTimesheetsNotInvoiced = timesheets?.filter((ts) => {
-    if (ts.status !== "APPROVED") return false;
-    const hasInvoice = invoicesList?.some(
-      (inv) => inv.timesheetId === ts.id
-    );
-    return !hasInvoice;
-  }) || [];
+  const resetForm = () => {
+    setInvForm({ clientId: "", employeeId: "", year: String(now.getFullYear()), month: String(now.getMonth() + 1), issueDate: now.toISOString().split("T")[0], dueDate: "", hours: "", hourlyRate: "", amountExclGst: "", description: "", reference: "" });
+  };
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -157,8 +172,10 @@ export default function InvoicesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices/gap-analysis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
-      setDialogOpen(false);
+      setCreateOpen(false);
+      resetForm();
       toast({ title: "Invoice created" });
     },
     onError: (err: Error) => {
@@ -173,6 +190,7 @@ export default function InvoicesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices/gap-analysis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       toast({ title: "Invoice updated" });
     },
@@ -198,12 +216,10 @@ export default function InvoicesPage() {
   const paid = filtered?.filter((i) => i.status === "PAID") || [];
   const authorised = filtered?.filter((i) => i.status === "AUTHORISED") || [];
   const sent = filtered?.filter((i) => i.status === "SENT") || [];
-
   const voided = filtered?.filter((i) => i.status === "VOIDED") || [];
   const unlinked = filtered?.filter((i) => !i.employeeId && i.status !== "VOIDED" && (!i.invoiceType || i.invoiceType === "ACCREC")) || [];
   const totalBilled = filtered?.filter((i) => i.status !== "VOIDED").reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0) || 0;
   const totalOutstanding = outstanding.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
-  const totalOverdue = overdue.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
   const totalPaid = paid.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
 
   const tabInvoices = (() => {
@@ -220,12 +236,8 @@ export default function InvoicesPage() {
   })();
 
   function toggleSort(field: string) {
-    if (sortField === field) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
-    } else {
-      setSortField(field);
-      setSortDir("asc");
-    }
+    if (sortField === field) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortField(field); setSortDir("asc"); }
   }
 
   const sortedInvoices = [...tabInvoices].sort((a, b) => {
@@ -233,19 +245,11 @@ export default function InvoicesPage() {
     switch (sortField) {
       case "number": return (a.invoiceNumber || "").localeCompare(b.invoiceNumber || "") * dir;
       case "type": return ((a as any).invoiceType || "").localeCompare((b as any).invoiceType || "") * dir;
-      case "to": {
-        const cA = a.employeeId ? employeeMap.get(a.employeeId) : undefined;
-        const cB = b.employeeId ? employeeMap.get(b.employeeId) : undefined;
-        const nameA = a.contactName || (cA ? `${cA.firstName} ${cA.lastName}` : "");
-        const nameB = b.contactName || (cB ? `${cB.firstName} ${cB.lastName}` : "");
-        return nameA.localeCompare(nameB) * dir;
-      }
+      case "to": return (a.contactName || "").localeCompare(b.contactName || "") * dir;
       case "date": return (a.issueDate || "").localeCompare(b.issueDate || "") * dir;
-      case "dueDate": return (a.dueDate || "").localeCompare(b.dueDate || "") * dir;
-      case "paid": return (parseFloat(a.status === "PAID" ? a.amountInclGst || "0" : "0") - parseFloat(b.status === "PAID" ? b.amountInclGst || "0" : "0")) * dir;
-      case "due": return (parseFloat(["AUTHORISED", "SENT", "OVERDUE"].includes(a.status) ? a.amountInclGst || "0" : "0") - parseFloat(["AUTHORISED", "SENT", "OVERDUE"].includes(b.status) ? b.amountInclGst || "0" : "0")) * dir;
+      case "amount": return (parseFloat(a.amountExclGst || "0") - parseFloat(b.amountExclGst || "0")) * dir;
       case "status": return a.status.localeCompare(b.status) * dir;
-      case "amount": return (parseFloat(a.amountInclGst || "0") - parseFloat(b.amountInclGst || "0")) * dir;
+      case "period": return (`${a.year}-${String(a.month).padStart(2,"0")}`).localeCompare(`${b.year}-${String(b.month).padStart(2,"0")}`) * dir;
       default: return 0;
     }
   });
@@ -258,44 +262,36 @@ export default function InvoicesPage() {
     const displayFirst = emp?.preferredName || emp?.firstName;
     if (emp?.contractCode) {
       result.description = `${emp.contractCode} - ${displayFirst} ${emp.lastName} - ${emp.roleTitle || ""}`.replace(/ - $/, "");
-    } else {
-      result.description = "";
-    }
+    } else { result.description = ""; }
     if (emp?.contractCode && clientId) {
       const client = clients?.find(c => c.id === clientId);
       const clientShort = client?.name?.includes("Prime Minister") ? "PM&C" : (client?.name || "");
-      const mo = parseInt(month);
-      const yr = year.slice(-2);
+      const mo = parseInt(month); const yr = year.slice(-2);
       result.reference = `${clientShort} - ${MONTHS_SHORT[mo]} ${yr} - ${emp.contractCode} - ${displayFirst}`;
-    } else {
-      result.reference = "";
-    }
+    } else { result.reference = ""; }
     const placement = emp && clientId ? allPlacements?.find(p => p.employeeId === empId && p.clientId === clientId && p.status === "ACTIVE") : undefined;
-    if (placement?.chargeOutRate) {
-      result.hourlyRate = placement.chargeOutRate;
-    } else if (emp?.chargeOutRate) {
-      result.hourlyRate = emp.chargeOutRate;
-    } else {
-      result.hourlyRate = "";
-    }
+    if (placement?.chargeOutRate) result.hourlyRate = placement.chargeOutRate;
+    else if (emp?.chargeOutRate) result.hourlyRate = emp.chargeOutRate;
+    else result.hourlyRate = "";
     return result;
   };
 
   const handleEmployeeSelect = (empId: string) => {
     setInvForm(f => ({ ...f, employeeId: empId, ...buildAutoFields(empId, f.clientId, f.month, f.year) }));
   };
-
   const handleClientSelect = (clientId: string) => {
     setInvForm(f => ({ ...f, clientId, ...buildAutoFields(f.employeeId, clientId, f.month, f.year) }));
   };
-
   const handleMonthChange = (month: string) => {
-    setInvForm(f => ({ ...f, month, ...( f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, month, f.year).reference || "" } : {}) }));
+    setInvForm(f => ({ ...f, month, ...(f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, month, f.year).reference || "" } : {}) }));
+  };
+  const handleYearChange = (year: string) => {
+    setInvForm(f => ({ ...f, year, ...(f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, f.month, year).reference || "" } : {}) }));
   };
 
-  const handleYearChange = (year: string) => {
-    setInvForm(f => ({ ...f, year, ...( f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, f.month, year).reference || "" } : {}) }));
-  };
+  const existingInvoiceForPeriod = invForm.employeeId && invoicesList?.find(
+    inv => inv.employeeId === invForm.employeeId && inv.month === parseInt(invForm.month) && inv.year === parseInt(invForm.year) && (inv as any).invoiceType === "ACCREC" && inv.status !== "VOIDED"
+  );
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -321,25 +317,9 @@ export default function InvoicesPage() {
     });
   };
 
-  const handleCreateFromTimesheet = (ts: Timesheet) => {
-    const c = employeeMap.get(ts.employeeId);
-    const rate = c?.hourlyRate ? parseFloat(c.hourlyRate) : 0;
-    const hours = parseFloat(ts.totalHours || "0");
-    const amountExcl = hours * rate;
-    createMutation.mutate({
-      employeeId: ts.employeeId,
-      timesheetId: ts.id,
-      year: ts.year,
-      month: ts.month,
-      amountExclGst: String(amountExcl.toFixed(2)),
-      gstAmount: String((amountExcl * 0.1).toFixed(2)),
-      amountInclGst: String((amountExcl * 1.1).toFixed(2)),
-      hours: ts.totalHours,
-      hourlyRate: c?.hourlyRate || "0",
-      description: `${MONTHS[ts.month]} ${ts.year} - ${c ? `${c.preferredName || c.firstName} ${c.lastName}` : "Unknown"}`,
-      status: "AUTHORISED",
-    });
-  };
+  const prevGapMonth = () => { if (gapMonth === 1) { setGapMonth(12); setGapYear(gapYear - 1); } else setGapMonth(gapMonth - 1); };
+  const nextGapMonth = () => { if (gapMonth === 12) { setGapMonth(1); setGapYear(gapYear + 1); } else setGapMonth(gapMonth + 1); };
+  const totalGapIssues = (gapData?.missing.length || 0) + (gapData?.unlinked.length || 0) + (gapData?.unpaid.length || 0);
 
   return (
     <div className="flex flex-col h-full">
@@ -354,116 +334,13 @@ export default function InvoicesPage() {
                 Align ({unlinked.length})
               </Button>
             )}
-            <Dialog open={dialogOpen} onOpenChange={(open) => {
-              setDialogOpen(open);
-              if (open) setInvForm({ clientId: "", employeeId: "", year: String(new Date().getFullYear()), month: String(new Date().getMonth() + 1), issueDate: new Date().toISOString().split("T")[0], dueDate: "", hours: "", hourlyRate: "", amountExclGst: "", description: "", reference: "" });
-            }}>
-              <DialogTrigger asChild>
-                <Button data-testid="button-create-invoice">
-                  <Plus className="w-4 h-4" />
-                  New Invoice
-                </Button>
-              </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Create Invoice</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label>Client (Bill To)</Label>
-                  <Select value={invForm.clientId} onValueChange={handleClientSelect}>
-                    <SelectTrigger data-testid="select-invoice-client">
-                      <SelectValue placeholder="Select client" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clients?.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Employee</Label>
-                  <Select value={invForm.employeeId} onValueChange={handleEmployeeSelect}>
-                    <SelectTrigger data-testid="select-invoice-employee">
-                      <SelectValue placeholder="Select employee (optional)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {employees?.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.preferredName || c.firstName} {c.lastName}
-                          {c.contractCode ? ` (${c.contractCode})` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="inv-year">Year</Label>
-                    <Input id="inv-year" type="number" value={invForm.year} onChange={(e) => handleYearChange(e.target.value)} required data-testid="input-invoice-year" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Month</Label>
-                    <Select value={invForm.month} onValueChange={handleMonthChange}>
-                      <SelectTrigger data-testid="select-invoice-month">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {MONTHS.slice(1).map((m, i) => (
-                          <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="issueDate">Issue Date</Label>
-                    <Input id="issueDate" type="date" value={invForm.issueDate} onChange={(e) => setInvForm(f => ({ ...f, issueDate: e.target.value }))} data-testid="input-issue-date" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="dueDate">Due Date</Label>
-                    <Input id="dueDate" type="date" value={invForm.dueDate} onChange={(e) => setInvForm(f => ({ ...f, dueDate: e.target.value }))} data-testid="input-due-date" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="hours">Hours</Label>
-                    <Input id="hours" type="number" step="0.01" value={invForm.hours} onChange={(e) => setInvForm(f => ({ ...f, hours: e.target.value }))} data-testid="input-hours" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="hourlyRate">Hourly Rate</Label>
-                    <Input id="hourlyRate" type="number" step="0.01" value={invForm.hourlyRate} onChange={(e) => setInvForm(f => ({ ...f, hourlyRate: e.target.value }))} data-testid="input-hourly-rate" />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="amountExclGst">Amount (excl. GST)</Label>
-                  <Input id="amountExclGst" type="number" step="0.01" value={invForm.amountExclGst} onChange={(e) => setInvForm(f => ({ ...f, amountExclGst: e.target.value }))} placeholder="Auto-calculated from hours × rate" data-testid="input-amount" />
-                  <p className="text-xs text-muted-foreground">Leave blank if hours and rate are provided</p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="description">Description</Label>
-                  <Input id="description" value={invForm.description} onChange={(e) => setInvForm(f => ({ ...f, description: e.target.value }))} data-testid="input-description" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="reference">Reference</Label>
-                  <Input id="reference" value={invForm.reference} onChange={(e) => setInvForm(f => ({ ...f, reference: e.target.value }))} placeholder="e.g. Contract number" data-testid="input-reference" />
-                </div>
-                <Button type="submit" className="w-full" disabled={createMutation.isPending} data-testid="button-submit-invoice">
-                  {createMutation.isPending ? "Creating..." : "Create Draft Invoice"}
-                </Button>
-              </form>
-            </DialogContent>
-          </Dialog>
           </div>
         }
       />
       <main className="flex-1 overflow-auto p-6 bg-muted/30">
-        <div className="max-w-6xl mx-auto space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="max-w-7xl mx-auto space-y-5">
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Card data-testid="kpi-total-billed">
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
@@ -471,9 +348,9 @@ export default function InvoicesPage() {
                     <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">Total billed</p>
-                    <p className="text-lg font-bold font-mono text-foreground" data-testid="text-total-billed">{formatCurrency(totalBilled)}</p>
-                    <p className="text-[11px] text-muted-foreground">{(filtered?.length || 0) - voided.length} invoice{(filtered?.length || 0) - voided.length !== 1 ? "s" : ""}</p>
+                    <p className="text-xs text-muted-foreground">Total Billed</p>
+                    <p className="text-lg font-bold font-mono" data-testid="text-total-billed">{formatCurrency(totalBilled)}</p>
+                    <p className="text-[11px] text-muted-foreground">{(filtered?.length || 0) - voided.length} invoices</p>
                   </div>
                 </div>
               </CardContent>
@@ -486,8 +363,8 @@ export default function InvoicesPage() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">Outstanding</p>
-                    <p className="text-lg font-bold font-mono text-foreground" data-testid="text-outstanding-total">{formatCurrency(totalOutstanding)}</p>
-                    <p className="text-[11px] text-muted-foreground">{outstanding.length} invoice{outstanding.length !== 1 ? "s" : ""}</p>
+                    <p className="text-lg font-bold font-mono" data-testid="text-outstanding-total">{formatCurrency(totalOutstanding)}</p>
+                    <p className="text-[11px] text-muted-foreground">{outstanding.length} invoices</p>
                   </div>
                 </div>
               </CardContent>
@@ -500,272 +377,321 @@ export default function InvoicesPage() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">Paid</p>
-                    <p className="text-lg font-bold font-mono text-foreground" data-testid="text-paid-total">{formatCurrency(totalPaid)}</p>
-                    <p className="text-[11px] text-muted-foreground">{paid.length} invoice{paid.length !== 1 ? "s" : ""}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card data-testid="kpi-voided">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
-                    <Ban className="w-4 h-4 text-muted-foreground" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">Voided</p>
-                    <p className="text-lg font-bold font-mono text-foreground" data-testid="text-voided-count">{voided.length}</p>
-                    <p className="text-[11px] text-muted-foreground">cancelled invoices</p>
+                    <p className="text-lg font-bold font-mono" data-testid="text-paid-total">{formatCurrency(totalPaid)}</p>
+                    <p className="text-[11px] text-muted-foreground">{paid.length} invoices</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {approvedTimesheetsNotInvoiced.length > 0 && (
-            <Card data-testid="section-pending-invoices">
-              <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-muted-foreground" />
-                  Pending Invoices
-                </CardTitle>
-                <span className="text-xs text-muted-foreground">{approvedTimesheetsNotInvoiced.length} approved timesheet{approvedTimesheetsNotInvoiced.length !== 1 ? "s" : ""} without invoices</span>
-              </CardHeader>
-              <CardContent className="pt-0 space-y-2">
-                {approvedTimesheetsNotInvoiced.map((ts) => {
-                  const c = employeeMap.get(ts.employeeId);
-                  return (
-                    <div key={ts.id} className="flex items-center justify-between gap-4 p-3 rounded-md bg-muted/50 flex-wrap" data-testid={`pending-invoice-${ts.id}`}>
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-foreground">
-                          {c ? `${c.preferredName || c.firstName} ${c.lastName}` : "Unknown"}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {MONTHS[ts.month]} {ts.year} · {ts.totalHours}h · {formatCurrency(ts.grossValue)}
-                        </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <div className="lg:col-span-1 space-y-4">
+              <Card data-testid="section-gap-analysis">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-500" />
+                      Gap Analysis
+                    </CardTitle>
+                    {totalGapIssues > 0 && (
+                      <Badge variant="destructive" className="text-[10px]" data-testid="badge-gap-count">{totalGapIssues} issue{totalGapIssues !== 1 ? "s" : ""}</Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevGapMonth} data-testid="button-gap-prev">
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
+                    <span className="text-xs font-medium min-w-[110px] text-center" data-testid="text-gap-period">{MONTHS[gapMonth]} {gapYear}</span>
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextGapMonth} data-testid="button-gap-next">
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-3 max-h-[400px] overflow-y-auto">
+                  {gapData?.missing && gapData.missing.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                        <UserX className="w-3.5 h-3.5 text-red-500" />
+                        Missing Invoices ({gapData.missing.length})
+                      </p>
+                      <div className="space-y-1">
+                        {gapData.missing.map(m => (
+                          <div key={m.employee.id} className="flex items-center justify-between p-2 rounded bg-red-50 dark:bg-red-950/20 text-xs" data-testid={`gap-missing-${m.employee.id}`}>
+                            <div>
+                              <span className="font-medium">{m.employee.preferredName || m.employee.firstName} {m.employee.lastName}</span>
+                              {m.employee.clientName && <span className="text-muted-foreground ml-1.5">· {m.employee.clientName}</span>}
+                            </div>
+                            <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => {
+                              setCreateOpen(true);
+                              const clientId = m.placement?.clientId || "";
+                              const autoFields = buildAutoFields(m.employee.id, clientId, String(gapMonth), String(gapYear));
+                              setInvForm(f => ({ ...f, employeeId: m.employee.id, clientId, month: String(gapMonth), year: String(gapYear), ...autoFields }));
+                            }} data-testid={`button-gap-create-${m.employee.id}`}>
+                              <Plus className="w-3 h-3" /> Create
+                            </Button>
+                          </div>
+                        ))}
                       </div>
-                      <Button
-                        size="sm"
-                        onClick={() => handleCreateFromTimesheet(ts)}
-                        disabled={createMutation.isPending}
-                        data-testid={`button-create-invoice-from-ts-${ts.id}`}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Create Invoice
-                      </Button>
                     </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          )}
+                  )}
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-[200px] max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search invoices..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-                data-testid="input-search-invoices"
-              />
-            </div>
-            <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5" data-testid="filter-invoice-type">
-              {([
-                { value: "all" as const, label: "All Types" },
-                { value: "ACCREC" as const, label: "Receivable" },
-                { value: "ACCPAY" as const, label: "Payable" },
-              ]).map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setTypeFilter(opt.value)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                    typeFilter === opt.value
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  data-testid={`filter-type-${opt.value}`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            {typeFilter === "ACCPAY" && (
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="w-44 h-8 text-xs" data-testid="filter-category">
-                  <SelectValue placeholder="All Categories" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  <SelectItem value="Software">Software</SelectItem>
-                  <SelectItem value="Insurance">Insurance</SelectItem>
-                  <SelectItem value="Tax">Tax</SelectItem>
-                  <SelectItem value="Office">Office</SelectItem>
-                  <SelectItem value="Vehicle">Vehicle</SelectItem>
-                  <SelectItem value="Professional Services">Professional Services</SelectItem>
-                  <SelectItem value="Subscriptions">Subscriptions</SelectItem>
-                  <SelectItem value="Other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Card key={i}><CardContent className="p-5"><Skeleton className="h-4 w-48 mb-2" /><Skeleton className="h-3 w-32" /></CardContent></Card>
-              ))}
-            </div>
-          ) : (
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList data-testid="tabs-invoice-status">
-                <TabsTrigger value="all" className="gap-1.5" data-testid="tab-all">
-                  <ListFilter className="w-3.5 h-3.5" />
-                  All ({filtered?.length || 0})
-                </TabsTrigger>
-                <TabsTrigger value="authorised" className="gap-1.5" data-testid="tab-authorised">
-                  <FileText className="w-3.5 h-3.5" />
-                  Authorised ({authorised.length})
-                </TabsTrigger>
-                <TabsTrigger value="sent" className="gap-1.5" data-testid="tab-sent">
-                  <Send className="w-3.5 h-3.5" />
-                  Sent ({sent.length})
-                </TabsTrigger>
-                <TabsTrigger value="overdue" className="gap-1.5" data-testid="tab-overdue">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  Overdue ({overdue.length})
-                </TabsTrigger>
-                <TabsTrigger value="paid" className="gap-1.5" data-testid="tab-paid">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  Paid ({paid.length})
-                </TabsTrigger>
-                <TabsTrigger value="voided" className="gap-1.5" data-testid="tab-voided">
-                  <Ban className="w-3.5 h-3.5" />
-                  Voided ({voided.length})
-                </TabsTrigger>
-                {unlinked.length > 0 && (
-                  <TabsTrigger value="unlinked" className="gap-1.5" data-testid="tab-unlinked">
-                    <Unlink className="w-3.5 h-3.5" />
-                    Unlinked ({unlinked.length})
-                  </TabsTrigger>
-                )}
-              </TabsList>
-
-              <TabsContent value={activeTab} className="mt-3">
-                {sortedInvoices.length === 0 ? (
-                  <Card>
-                    <CardContent className="py-12 text-center">
-                      <Ban className="w-8 h-8 mx-auto text-muted-foreground mb-3" />
-                      <div className="text-sm text-muted-foreground">No {activeTab === "all" ? "" : activeTab} invoices found</div>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <Card>
-                    <CardContent className="p-0">
-                      <div className="flex items-center justify-end px-4 py-2 border-b text-xs text-muted-foreground">
-                        {sortedInvoices.length} item{sortedInvoices.length !== 1 ? "s" : ""}
+                  {gapData?.unlinked && gapData.unlinked.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                        <Unlink className="w-3.5 h-3.5 text-amber-500" />
+                        Unlinked Invoices ({gapData.unlinked.length})
+                      </p>
+                      <div className="space-y-1">
+                        {gapData.unlinked.map(u => (
+                          <div key={u.id} className="flex items-center justify-between p-2 rounded bg-amber-50 dark:bg-amber-950/20 text-xs cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-950/30"
+                            onClick={() => { const inv = invoicesList?.find(i => i.id === u.id); if (inv) setDetailInvoice(inv); }}
+                            data-testid={`gap-unlinked-${u.id}`}
+                          >
+                            <div>
+                              <span className="font-mono font-medium">{u.invoiceNumber || "—"}</span>
+                              <span className="ml-1.5 text-muted-foreground">{u.contactName}</span>
+                            </div>
+                            <span className="font-mono">{u.amountExclGst ? formatCurrency(u.amountExclGst) : "—"}</span>
+                          </div>
+                        ))}
                       </div>
-                      <div className="overflow-x-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <InvSortHeader field="number" label="Number" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
-                              <InvSortHeader field="type" label="Type" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
-                              <InvSortHeader field="to" label="To" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
-                              <InvSortHeader field="date" label="Date" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
-                              <InvSortHeader field="dueDate" label="Due Date" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
-                              <InvSortHeader field="paid" label="Paid" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="right" />
-                              <InvSortHeader field="due" label="Due" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="right" />
-                              <InvSortHeader field="status" label="Status" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="center" />
-                              <TableHead className="text-right">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {sortedInvoices.map((inv) => {
-                              const linkedIds: string[] = (inv as any).linkedEmployeeIds || (inv.employeeId ? [inv.employeeId] : []);
-                              const linkedNames = linkedIds.map(id => {
-                                const emp = employeeMap.get(id);
-                                return emp ? `${emp.preferredName || emp.firstName} ${emp.lastName}` : null;
-                              }).filter(Boolean);
-                              const displayName = inv.contactName || linkedNames.join(", ") || "Unknown";
-                              const isPaid = inv.status === "PAID";
-                              const isOutstanding = ["AUTHORISED", "SENT", "OVERDUE"].includes(inv.status);
-                              return (
-                                <TableRow key={inv.id} data-testid={`row-invoice-${inv.id}`} className="cursor-pointer hover:bg-muted/50" onClick={() => setDetailInvoice(inv)}>
-                                  <TableCell>
-                                    <span className="font-mono font-medium text-foreground" data-testid={`text-invoice-number-${inv.id}`}>
-                                      {inv.invoiceNumber || "—"}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell>
-                                    <div className="flex items-center gap-1">
-                                      <InvoiceTypeBadge type={(inv as any).invoiceType} testId={`badge-type-${inv.id}`} />
-                                      {(inv as any).invoiceType === "ACCPAY" && (inv as any).category && (
-                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5" data-testid={`badge-category-${inv.id}`}>
-                                          {(inv as any).category}
-                                        </Badge>
-                                      )}
-                                    </div>
-                                  </TableCell>
-                                  <TableCell>
-                                    <div className="flex flex-col gap-0.5">
-                                      <span className="text-sm text-foreground">{displayName}</span>
-                                      {(inv as any).clientId && clientMap.get((inv as any).clientId) && (
-                                        <span className="text-xs text-muted-foreground flex items-center gap-1" data-testid={`text-invoice-client-${inv.id}`}>
-                                          <Building2 className="w-3 h-3" />
-                                          {clientMap.get((inv as any).clientId)!.name}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="text-sm whitespace-nowrap">
-                                    {inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : `${MONTHS[inv.month]} ${inv.year}`}
-                                  </TableCell>
-                                  <TableCell className="text-sm whitespace-nowrap">
-                                    {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : "—"}
-                                  </TableCell>
-                                  <TableCell className="text-right font-mono">
-                                    {isPaid ? formatCurrency(inv.amountInclGst) : formatCurrency(0)}
-                                  </TableCell>
-                                  <TableCell className="text-right font-mono" data-testid={`text-invoice-amount-${inv.id}`}>
-                                    {isOutstanding ? formatCurrency(inv.amountInclGst) : formatCurrency(0)}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    <StatusBadge status={inv.status} />
-                                  </TableCell>
-                                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                                    {inv.status === "DRAFT" && (
-                                      <Button size="sm" variant="secondary" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "AUTHORISED" } })} data-testid={`button-authorise-${inv.id}`}>
-                                        <CheckCircle className="w-3.5 h-3.5" />
-                                        Authorise
-                                      </Button>
-                                    )}
-                                    {inv.status === "AUTHORISED" && (
-                                      <Button size="sm" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "SENT" } })} data-testid={`button-send-${inv.id}`}>
-                                        <Send className="w-3.5 h-3.5" />
-                                        Send
-                                      </Button>
-                                    )}
-                                    {(inv.status === "SENT" || inv.status === "OVERDUE") && (
-                                      <Button size="sm" variant="secondary" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "PAID", paidDate: new Date().toISOString().split("T")[0] } })} data-testid={`button-mark-paid-${inv.id}`}>
-                                        <DollarSign className="w-3.5 h-3.5" />
-                                        Mark Paid
-                                      </Button>
-                                    )}
-                                  </TableCell>
+                    </div>
+                  )}
+
+                  {gapData?.unpaid && gapData.unpaid.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                        <CircleDollarSign className="w-3.5 h-3.5 text-orange-500" />
+                        Unpaid Invoices ({gapData.unpaid.length})
+                      </p>
+                      <div className="space-y-1">
+                        {gapData.unpaid.map(u => (
+                          <div key={u.id} className="flex items-center justify-between p-2 rounded bg-orange-50 dark:bg-orange-950/20 text-xs cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-950/30"
+                            onClick={() => { const inv = invoicesList?.find(i => i.id === u.id); if (inv) setDetailInvoice(inv); }}
+                            data-testid={`gap-unpaid-${u.id}`}
+                          >
+                            <div>
+                              <span className="font-mono font-medium">{u.invoiceNumber || "—"}</span>
+                              <span className="ml-1.5 text-muted-foreground">{u.employeeName || u.contactName}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <StatusBadge status={u.status} />
+                              <span className="font-mono">{u.amountExclGst ? formatCurrency(u.amountExclGst) : "—"}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {totalGapIssues === 0 && (
+                    <div className="text-center py-6 text-sm text-muted-foreground" data-testid="text-gap-all-clear">
+                      <CheckCircle className="w-6 h-6 mx-auto mb-2 text-emerald-500" />
+                      All invoices accounted for
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card data-testid="section-create-invoice">
+                <CardHeader className="pb-2">
+                  <button
+                    className="flex items-center justify-between w-full text-left"
+                    onClick={() => { setCreateOpen(!createOpen); if (!createOpen) resetForm(); }}
+                    data-testid="button-toggle-create"
+                  >
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <Plus className="w-4 h-4" />
+                      Create Invoice
+                    </CardTitle>
+                    <ChevronRight className={`w-4 h-4 text-muted-foreground transition-transform ${createOpen ? "rotate-90" : ""}`} />
+                  </button>
+                </CardHeader>
+                {createOpen && (
+                  <CardContent className="pt-0">
+                    <form onSubmit={handleSubmit} className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1 col-span-2">
+                          <Label className="text-xs">Client (Bill To)</Label>
+                          <Select value={invForm.clientId} onValueChange={handleClientSelect}>
+                            <SelectTrigger className="h-8 text-xs" data-testid="select-invoice-client"><SelectValue placeholder="Select client" /></SelectTrigger>
+                            <SelectContent>{clients?.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1 col-span-2">
+                          <Label className="text-xs">Employee</Label>
+                          <Select value={invForm.employeeId} onValueChange={handleEmployeeSelect}>
+                            <SelectTrigger className="h-8 text-xs" data-testid="select-invoice-employee"><SelectValue placeholder="Select employee" /></SelectTrigger>
+                            <SelectContent>{employees?.map(c => <SelectItem key={c.id} value={c.id}>{c.preferredName || c.firstName} {c.lastName}{c.contractCode ? ` (${c.contractCode})` : ""}</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Month</Label>
+                          <Select value={invForm.month} onValueChange={handleMonthChange}>
+                            <SelectTrigger className="h-8 text-xs" data-testid="select-invoice-month"><SelectValue /></SelectTrigger>
+                            <SelectContent>{MONTHS.slice(1).map((m, i) => <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>)}</SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Year</Label>
+                          <Input type="number" className="h-8 text-xs" value={invForm.year} onChange={e => handleYearChange(e.target.value)} data-testid="input-invoice-year" />
+                        </div>
+                      </div>
+
+                      {existingInvoiceForPeriod && (
+                        <div className="flex items-start gap-2 p-2 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs" data-testid="warning-duplicate-invoice">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-medium text-amber-700 dark:text-amber-400">Invoice already exists for this period</p>
+                            <p className="text-muted-foreground mt-0.5">{existingInvoiceForPeriod.invoiceNumber || "Draft"} · {formatCurrency(existingInvoiceForPeriod.amountExclGst || "0")} · {existingInvoiceForPeriod.status}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Issue Date</Label>
+                          <Input type="date" className="h-8 text-xs" value={invForm.issueDate} onChange={e => setInvForm(f => ({ ...f, issueDate: e.target.value }))} data-testid="input-issue-date" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Due Date</Label>
+                          <Input type="date" className="h-8 text-xs" value={invForm.dueDate} onChange={e => setInvForm(f => ({ ...f, dueDate: e.target.value }))} data-testid="input-due-date" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Hours</Label>
+                          <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.hours} onChange={e => setInvForm(f => ({ ...f, hours: e.target.value }))} data-testid="input-hours" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Hourly Rate</Label>
+                          <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.hourlyRate} onChange={e => setInvForm(f => ({ ...f, hourlyRate: e.target.value }))} data-testid="input-hourly-rate" />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Amount (excl. GST)</Label>
+                        <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.amountExclGst} onChange={e => setInvForm(f => ({ ...f, amountExclGst: e.target.value }))} placeholder="Auto from hours x rate" data-testid="input-amount" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Description</Label>
+                        <Input className="h-8 text-xs" value={invForm.description} onChange={e => setInvForm(f => ({ ...f, description: e.target.value }))} data-testid="input-description" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Reference</Label>
+                        <Input className="h-8 text-xs" value={invForm.reference} onChange={e => setInvForm(f => ({ ...f, reference: e.target.value }))} placeholder="e.g. Contract number" data-testid="input-reference" />
+                      </div>
+                      <Button type="submit" size="sm" className="w-full" disabled={createMutation.isPending} data-testid="button-submit-invoice">
+                        {createMutation.isPending ? "Creating..." : "Create Draft Invoice"}
+                      </Button>
+                    </form>
+                  </CardContent>
+                )}
+              </Card>
+            </div>
+
+            <div className="lg:col-span-2 space-y-4">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="relative flex-1 min-w-[200px] max-w-sm">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input placeholder="Search invoices..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" data-testid="input-search-invoices" />
+                </div>
+                <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5" data-testid="filter-invoice-type">
+                  {([
+                    { value: "all" as const, label: "All" },
+                    { value: "ACCREC" as const, label: "Receivable" },
+                    { value: "ACCPAY" as const, label: "Payable" },
+                  ]).map(opt => (
+                    <button key={opt.value} onClick={() => setTypeFilter(opt.value)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${typeFilter === opt.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                      data-testid={`filter-type-${opt.value}`}
+                    >{opt.label}</button>
+                  ))}
+                </div>
+                {typeFilter === "ACCPAY" && (
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="w-40 h-8 text-xs" data-testid="filter-category"><SelectValue placeholder="All Categories" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Categories</SelectItem>
+                      {["Software","Insurance","Tax","Office","Vehicle","Professional Services","Subscriptions","Other"].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              {isLoading ? (
+                <div className="space-y-3">{[1,2,3].map(i => <Card key={i}><CardContent className="p-5"><Skeleton className="h-4 w-48 mb-2" /><Skeleton className="h-3 w-32" /></CardContent></Card>)}</div>
+              ) : (
+                <Tabs value={activeTab} onValueChange={setActiveTab}>
+                  <TabsList className="flex-wrap" data-testid="tabs-invoice-status">
+                    <TabsTrigger value="all" className="gap-1" data-testid="tab-all">All ({filtered?.length || 0})</TabsTrigger>
+                    <TabsTrigger value="authorised" className="gap-1" data-testid="tab-authorised">Auth ({authorised.length})</TabsTrigger>
+                    <TabsTrigger value="sent" className="gap-1" data-testid="tab-sent">Sent ({sent.length})</TabsTrigger>
+                    <TabsTrigger value="overdue" className="gap-1" data-testid="tab-overdue">Overdue ({overdue.length})</TabsTrigger>
+                    <TabsTrigger value="paid" className="gap-1" data-testid="tab-paid">Paid ({paid.length})</TabsTrigger>
+                    <TabsTrigger value="voided" className="gap-1" data-testid="tab-voided">Voided ({voided.length})</TabsTrigger>
+                    {unlinked.length > 0 && <TabsTrigger value="unlinked" className="gap-1" data-testid="tab-unlinked">Unlinked ({unlinked.length})</TabsTrigger>}
+                  </TabsList>
+
+                  <TabsContent value={activeTab} className="mt-3">
+                    {sortedInvoices.length === 0 ? (
+                      <Card><CardContent className="py-12 text-center"><Ban className="w-8 h-8 mx-auto text-muted-foreground mb-3" /><div className="text-sm text-muted-foreground">No {activeTab === "all" ? "" : activeTab} invoices found</div></CardContent></Card>
+                    ) : (
+                      <Card>
+                        <CardContent className="p-0">
+                          <div className="flex items-center justify-end px-4 py-2 border-b text-xs text-muted-foreground">{sortedInvoices.length} item{sortedInvoices.length !== 1 ? "s" : ""}</div>
+                          <div className="overflow-x-auto">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <InvSortHeader field="number" label="Number" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                                  <InvSortHeader field="type" label="Type" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                                  <InvSortHeader field="to" label="Contact" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                                  <InvSortHeader field="period" label="Period" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                                  <InvSortHeader field="date" label="Issued" sortField={sortField} sortDir={sortDir} onSort={toggleSort} />
+                                  <InvSortHeader field="amount" label="Amount" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="right" />
+                                  <InvSortHeader field="status" label="Status" sortField={sortField} sortDir={sortDir} onSort={toggleSort} align="center" />
+                                  <TableHead className="text-right w-28">Actions</TableHead>
                                 </TableRow>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </TabsContent>
-            </Tabs>
-          )}
+                              </TableHeader>
+                              <TableBody>
+                                {sortedInvoices.map(inv => {
+                                  const linkedIds: string[] = (inv as any).linkedEmployeeIds || (inv.employeeId ? [inv.employeeId] : []);
+                                  const linkedNames = linkedIds.map(id => { const emp = employeeMap.get(id); return emp ? `${emp.preferredName || emp.firstName} ${emp.lastName}` : null; }).filter(Boolean);
+                                  const displayName = linkedNames.length > 0 ? linkedNames.join(", ") : (inv.contactName || "Unknown");
+                                  return (
+                                    <TableRow key={inv.id} data-testid={`row-invoice-${inv.id}`} className="cursor-pointer hover:bg-muted/50" onClick={() => setDetailInvoice(inv)}>
+                                      <TableCell><span className="font-mono font-medium text-xs" data-testid={`text-invoice-number-${inv.id}`}>{inv.invoiceNumber || "—"}</span></TableCell>
+                                      <TableCell><InvoiceTypeBadge type={(inv as any).invoiceType} testId={`badge-type-${inv.id}`} /></TableCell>
+                                      <TableCell>
+                                        <div className="flex flex-col gap-0.5">
+                                          <span className="text-xs font-medium">{displayName}</span>
+                                          {(inv as any).clientId && clientMap.get((inv as any).clientId) && (
+                                            <span className="text-[10px] text-muted-foreground flex items-center gap-1"><Building2 className="w-3 h-3" />{clientMap.get((inv as any).clientId)!.name}</span>
+                                          )}
+                                        </div>
+                                      </TableCell>
+                                      <TableCell className="text-xs whitespace-nowrap">{MONTHS_SHORT[inv.month]} {inv.year}</TableCell>
+                                      <TableCell className="text-xs whitespace-nowrap">{inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-AU", { day: "numeric", month: "short" }) : "—"}</TableCell>
+                                      <TableCell className="text-right font-mono text-xs" data-testid={`text-invoice-amount-${inv.id}`}>{formatCurrency(inv.amountExclGst || "0")}</TableCell>
+                                      <TableCell className="text-center"><StatusBadge status={inv.status} /></TableCell>
+                                      <TableCell className="text-right" onClick={e => e.stopPropagation()}>
+                                        {inv.status === "DRAFT" && <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "AUTHORISED" } })} data-testid={`button-authorise-${inv.id}`}>Authorise</Button>}
+                                        {inv.status === "AUTHORISED" && <Button size="sm" className="h-7 text-xs" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "SENT" } })} data-testid={`button-send-${inv.id}`}>Send</Button>}
+                                        {(inv.status === "SENT" || inv.status === "OVERDUE") && <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "PAID", paidDate: new Date().toISOString().split("T")[0] } })} data-testid={`button-mark-paid-${inv.id}`}>Mark Paid</Button>}
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              )}
+            </div>
+          </div>
         </div>
       </main>
 
@@ -793,6 +719,7 @@ export default function InvoicesPage() {
           onComplete={() => {
             setAlignmentOpen(false);
             queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/invoices/gap-analysis"] });
             toast({ title: "Alignment complete" });
           }}
         />
@@ -800,6 +727,7 @@ export default function InvoicesPage() {
     </div>
   );
 }
+
 
 function AlignmentWizardDialog({
   employees,

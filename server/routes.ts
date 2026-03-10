@@ -1009,6 +1009,10 @@ export async function registerRoutes(
                 invoiceNumber: inv.invoiceNumber,
                 status: inv.status,
                 paidDate: inv.paidDate,
+                issueDate: inv.issueDate || null,
+                month: inv.month || null,
+                year: inv.year || null,
+                description: inv.description || null,
               }
             : null,
           payroll: payLine
@@ -1018,6 +1022,8 @@ export async function registerRoutes(
                 netPay: parseFloat(payLine.netPay || "0"),
                 hoursWorked: parseFloat(payLine.hoursWorked || "0"),
                 payRunStatus: payRun?.status || null,
+                paygWithheld: parseFloat(payLine.paygWithheld || "0"),
+                superAmount: parseFloat(payLine.superAmount || "0"),
               }
             : null,
           contractorCost,
@@ -1055,6 +1061,96 @@ export async function registerRoutes(
       });
     } catch (err) {
       res.status(500).json({ message: "Failed to build reconciliation data" });
+    }
+  });
+
+  app.get("/api/invoices/gap-analysis", async (req, res) => {
+    try {
+      const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+
+      const [allEmployees, allInvoices, allPlacements] = await Promise.all([
+        storage.getEmployees(),
+        storage.getInvoices(),
+        storage.getPlacements(),
+      ]);
+
+      const activeEmployees = allEmployees.filter(e => e.status === "ACTIVE");
+      const activePlacements = allPlacements.filter(p => p.status === "ACTIVE");
+
+      const acrecInvoices = allInvoices.filter(
+        i => (i as any).invoiceType === "ACCREC" && i.month === month && i.year === year && i.status !== "VOIDED"
+      );
+
+      const missing: { employee: any; placement: any }[] = [];
+      const employeesWithPlacements = new Set<string>();
+      for (const p of activePlacements) {
+        employeesWithPlacements.add(p.employeeId);
+      }
+
+      for (const emp of activeEmployees) {
+        if (!employeesWithPlacements.has(emp.id)) continue;
+        const hasInvoice = acrecInvoices.some(inv => {
+          const linkedIds: string[] = (inv as any).linkedEmployeeIds || [];
+          return inv.employeeId === emp.id || linkedIds.includes(emp.id);
+        });
+        if (!hasInvoice) {
+          const placement = activePlacements.find(p => p.employeeId === emp.id);
+          missing.push({
+            employee: {
+              id: emp.id,
+              firstName: emp.firstName,
+              lastName: emp.lastName,
+              preferredName: emp.preferredName,
+              clientName: emp.clientName,
+              chargeOutRate: emp.chargeOutRate,
+              contractCode: emp.contractCode,
+            },
+            placement: placement ? {
+              id: placement.id,
+              clientId: placement.clientId,
+              chargeOutRate: placement.chargeOutRate,
+              roleTitle: placement.roleTitle,
+            } : null,
+          });
+        }
+      }
+
+      const unlinked = acrecInvoices.filter(inv => {
+        const linkedIds: string[] = (inv as any).linkedEmployeeIds || [];
+        return !inv.employeeId && linkedIds.length === 0;
+      }).map(inv => ({
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        contactName: inv.contactName,
+        amountExclGst: inv.amountExclGst,
+        amountInclGst: inv.amountInclGst,
+        status: inv.status,
+        issueDate: inv.issueDate,
+        description: inv.description,
+      }));
+
+      const unpaid = acrecInvoices.filter(inv => {
+        return inv.status !== "PAID" && inv.status !== "VOIDED";
+      }).map(inv => {
+        const linkedIds: string[] = (inv as any).linkedEmployeeIds || [];
+        const empId = inv.employeeId || linkedIds[0];
+        const emp = empId ? allEmployees.find(e => e.id === empId) : null;
+        return {
+          id: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          contactName: inv.contactName,
+          amountExclGst: inv.amountExclGst,
+          amountInclGst: inv.amountInclGst,
+          status: inv.status,
+          issueDate: inv.issueDate,
+          employeeName: emp ? `${emp.preferredName || emp.firstName} ${emp.lastName}` : null,
+        };
+      });
+
+      res.json({ missing, unlinked, unpaid, month, year });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to build gap analysis" });
     }
   });
 
