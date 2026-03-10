@@ -74,6 +74,8 @@ interface QueueItem {
 interface ScanResult {
   fileName: string;
   fileSize: string;
+  fileSizeBytes: number;
+  fileHash: string;
   totalHours: number;
   regularHours: number;
   overtimeHours: number;
@@ -182,20 +184,40 @@ function UploadView() {
   const activeEmployees = employees?.filter((c) => c.status === "ACTIVE") || [];
 
   const getDuplicateWarning = useCallback((item: QueueItem): string | null => {
-    if (!existingTimesheets || !item.assignedEmployeeId) return null;
+    if (!item.result) return null;
+    const hash = item.result.fileHash;
+    if (hash) {
+      const queueDup = queue.find(q => q.id !== item.id && !q.excluded && q.result?.fileHash === hash);
+      if (queueDup) {
+        return `Duplicate in queue — same file content as "${queueDup.file.name}"`;
+      }
+      if (existingTimesheets) {
+        const hashMatch = existingTimesheets.find(ts => ts.fileHash && ts.fileHash === hash);
+        if (hashMatch) {
+          const emp = activeEmployees.find(e => e.id === hashMatch.employeeId);
+          const empName = emp ? `${emp.firstName} ${emp.lastName}` : "unknown employee";
+          const monthNames = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          return `Exact duplicate — this file was already uploaded for ${empName} (${monthNames[hashMatch.month || 0]} ${hashMatch.year}, ${hashMatch.totalHours}h, ${hashMatch.status})`;
+        }
+      }
+    }
+    if (!item.assignedEmployeeId || !existingTimesheets) return null;
     const matching = existingTimesheets.filter(ts =>
       ts.employeeId === item.assignedEmployeeId &&
       ts.month === item.assignedMonth &&
       ts.year === item.assignedYear
     );
     if (matching.length === 0) return null;
-    const fileNameMatch = item.file?.name && matching.find(ts => ts.fileName === item.file.name);
-    if (fileNameMatch) {
-      return `Duplicate file — "${item.file.name}" already uploaded (${fileNameMatch.totalHours}h, ${fileNameMatch.status})`;
+    const sizeBytes = item.result.fileSizeBytes;
+    if (sizeBytes) {
+      const sizeMatch = matching.find(ts => ts.fileSizeBytes && Math.abs(ts.fileSizeBytes - sizeBytes) < 100);
+      if (sizeMatch) {
+        return `Likely duplicate — same employee/month with near-identical file size (${sizeMatch.totalHours}h, ${sizeMatch.status})`;
+      }
     }
     const best = matching[0];
     return `Existing timesheet found for this employee/month (${best.totalHours}h, ${best.status})`;
-  }, [existingTimesheets]);
+  }, [existingTimesheets, activeEmployees, queue]);
 
   const readFileBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -353,6 +375,12 @@ function UploadView() {
       fileName: g.items.length === 1
         ? g.items[0].result!.fileName
         : `Batch (${g.items.length} files)`,
+      fileHash: g.items.length === 1
+        ? g.items[0].result!.fileHash
+        : null,
+      fileSizeBytes: g.items.length === 1
+        ? g.items[0].result!.fileSizeBytes
+        : null,
       notes: notesStr,
       files: g.items
         .filter((item) => item.fileBase64)

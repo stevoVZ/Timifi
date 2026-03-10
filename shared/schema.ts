@@ -72,6 +72,8 @@ export const timesheets = pgTable("timesheets", {
   status: timesheetStatusEnum("status").notNull().default("DRAFT"),
   notes: text("notes"),
   fileName: text("file_name"),
+  fileHash: text("file_hash"),
+  fileSizeBytes: integer("file_size_bytes"),
   submittedAt: timestamp("submitted_at"),
   reviewedAt: timestamp("reviewed_at"),
   tenantId: varchar("tenant_id"),

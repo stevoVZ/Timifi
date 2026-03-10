@@ -4,6 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { createHash } from "crypto";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +24,8 @@ export interface WeekBreakdown {
 export interface ScanResult {
   fileName: string;
   fileSize: string;
+  fileSizeBytes: number;
+  fileHash: string;
   totalHours: number;
   regularHours: number;
   overtimeHours: number;
@@ -124,6 +127,8 @@ export async function scanTimesheetPdf(
   targetYear: number
 ): Promise<ScanResult> {
   const fileSizeKB = (fileBuffer.length / 1024).toFixed(0);
+  const fileSizeBytes = fileBuffer.length;
+  const fileHash = createHash("sha256").update(fileBuffer).digest("hex");
 
   try {
     const pageImages = await pdfToImages(fileBuffer);
@@ -197,6 +202,8 @@ export async function scanTimesheetPdf(
     return {
       fileName,
       fileSize: `${fileSizeKB} KB`,
+      fileSizeBytes,
+      fileHash,
       totalHours,
       regularHours,
       overtimeHours,
@@ -216,6 +223,8 @@ export async function scanTimesheetPdf(
     return {
       fileName,
       fileSize: `${fileSizeKB} KB`,
+      fileSizeBytes,
+      fileHash,
       totalHours: 0,
       regularHours: 0,
       overtimeHours: 0,

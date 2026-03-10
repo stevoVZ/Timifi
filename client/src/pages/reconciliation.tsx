@@ -38,6 +38,7 @@ const MONTHS = ["", "January", "February", "March", "April", "May", "June", "Jul
 interface TimesheetEntry {
   id: string; hours: number; regularHours: number; overtimeHours: number; status: string; grossValue: number;
   clientId?: string | null; placementId?: string | null; fileName?: string | null;
+  fileHash?: string | null; fileSizeBytes?: number | null;
 }
 
 interface InvoiceEntry {
@@ -619,6 +620,7 @@ function TimesheetDetailDialog({
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanWarning, setScanWarning] = useState<string | null>(null);
+  const [lastScanMeta, setLastScanMeta] = useState<{ fileHash: string; fileSizeBytes: number; fileName: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -630,11 +632,6 @@ function TimesheetDetailDialog({
       return;
     }
     setScanWarning(null);
-    const fileName = pdfs[0].name;
-    const existingMatch = allTs.find(ts => ts.fileName && ts.fileName === fileName);
-    if (existingMatch) {
-      setScanWarning(`"${fileName}" was already uploaded (${existingMatch.hours}h, ${existingMatch.status})`);
-    }
     setScanning(true);
     setScanError(null);
     try {
@@ -654,12 +651,25 @@ function TimesheetDetailDialog({
         if (r.totalHours != null) setHours(String(r.totalHours));
         if (r.regularHours != null) setRegularHours(String(r.regularHours));
         if (r.overtimeHours != null) setOvertimeHours(String(r.overtimeHours));
-        const extractedTotal = r.totalHours || 0;
-        const hoursMatch = allTs.find(ts => Math.abs(ts.hours - extractedTotal) < 0.01 && extractedTotal > 0);
-        if (hoursMatch && !existingMatch) {
-          setScanWarning(`Extracted hours (${extractedTotal}h) match an existing timesheet`);
+        setLastScanMeta({ fileHash: r.fileHash || "", fileSizeBytes: r.fileSizeBytes || 0, fileName: r.fileName || "" });
+        const scanHash = r.fileHash;
+        const hashMatch = scanHash && allTs.find(ts => ts.fileHash && ts.fileHash === scanHash);
+        if (hashMatch) {
+          setScanWarning(`Exact duplicate — this file was already uploaded (${hashMatch.hours}h, ${hashMatch.status})`);
+        } else {
+          const scanSize = r.fileSizeBytes;
+          const sizeMatch = scanSize && allTs.find(ts => ts.fileSizeBytes && Math.abs(ts.fileSizeBytes - scanSize) < 100);
+          if (sizeMatch) {
+            setScanWarning(`Likely duplicate — near-identical file size to existing timesheet (${sizeMatch.hours}h, ${sizeMatch.status})`);
+          } else {
+            const extractedTotal = r.totalHours || 0;
+            const hoursMatch = allTs.find(ts => Math.abs(ts.hours - extractedTotal) < 0.01 && extractedTotal > 0);
+            if (hoursMatch) {
+              setScanWarning(`Extracted hours (${extractedTotal}h) match an existing timesheet`);
+            }
+          }
         }
-        toast({ title: "Timesheet scanned", description: `Extracted ${extractedTotal} total hours` });
+        toast({ title: "Timesheet scanned", description: `Extracted ${r.totalHours || 0} total hours` });
       } else {
         setScanError("No data could be extracted from the PDF");
       }
@@ -710,7 +720,10 @@ function TimesheetDetailDialog({
     if (editTs?.id) {
       updateTimesheetMutation.mutate({
         id: editTs.id,
-        data: { totalHours: String(total), regularHours: String(reg), overtimeHours: String(ot), grossValue: String(total * rate) },
+        data: {
+          totalHours: String(total), regularHours: String(reg), overtimeHours: String(ot), grossValue: String(total * rate),
+          ...(lastScanMeta ? { fileHash: lastScanMeta.fileHash, fileSizeBytes: lastScanMeta.fileSizeBytes, fileName: lastScanMeta.fileName } : {}),
+        },
       });
     } else {
       createTimesheetMutation.mutate({
@@ -719,6 +732,7 @@ function TimesheetDetailDialog({
         totalHours: String(total), regularHours: String(reg), overtimeHours: String(ot),
         grossValue: String(total * rate), status: "DRAFT",
         notes: JSON.stringify({ intakeSource: "ADMIN_ENTRY" }),
+        ...(lastScanMeta ? { fileHash: lastScanMeta.fileHash, fileSizeBytes: lastScanMeta.fileSizeBytes, fileName: lastScanMeta.fileName } : {}),
       });
     }
   };
@@ -764,7 +778,7 @@ function TimesheetDetailDialog({
                 <div
                   key={ts.id}
                   className={`flex justify-between items-center p-2 rounded border cursor-pointer transition-colors ${editIdx === idx || (editIdx === null && idx === 0) ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
-                  onClick={() => { setEditIdx(idx); setHours(String(ts.hours)); setRegularHours(String(ts.regularHours)); setOvertimeHours(String(ts.overtimeHours)); }}
+                  onClick={() => { setEditIdx(idx); setHours(String(ts.hours)); setRegularHours(String(ts.regularHours)); setOvertimeHours(String(ts.overtimeHours)); setLastScanMeta(null); setScanWarning(null); }}
                   data-testid={`ts-entry-${idx}`}
                 >
                   <div>

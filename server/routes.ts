@@ -410,6 +410,8 @@ export async function registerRoutes(
               if (parsed[field] !== undefined) updateFields[field] = parsed[field];
             }
             if (parsed.fileName) updateFields.fileName = parsed.fileName;
+            if (parsed.fileHash) updateFields.fileHash = parsed.fileHash;
+            if (parsed.fileSizeBytes) updateFields.fileSizeBytes = parsed.fileSizeBytes;
             if (parsed.status) updateFields.status = parsed.status;
             timesheet = await storage.updateTimesheet(existingRecord.id, updateFields);
           } else {
@@ -1092,6 +1094,8 @@ export async function registerRoutes(
             clientId: t.clientId || null,
             placementId: t.placementId || null,
             fileName: t.fileName || null,
+            fileHash: t.fileHash || null,
+            fileSizeBytes: t.fileSizeBytes || null,
           })),
           timesheetSummary: {
             totalHours,

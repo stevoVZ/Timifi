@@ -52,3 +52,15 @@ The Recruitment Portal is a full-stack application designed for scalability and 
 -   **wouter:** A lightweight React router.
 -   **Vite:** Frontend build tool for fast development.
 -   **DM Sans + DM Mono:** Selected fonts for the application's typography.
+
+## Duplicate Timesheet Detection
+
+The system detects duplicate timesheets using a multi-layered approach:
+1. **Content hash (primary):** SHA-256 hash of PDF file bytes computed during scan (`server/ocr.ts`), stored as `file_hash` on the `timesheets` table. Catches identical files regardless of filename (e.g., Chrome `(1)` suffix downloads).
+2. **File size (secondary):** `file_size_bytes` column used as a "likely duplicate" signal when same employee/month has a timesheet with near-identical file size (±100 bytes).
+3. **Employee/month match (fallback):** Warns when any existing timesheet matches the assigned employee + month + year.
+4. **Within-queue detection:** On the upload page, detects if the same file (by hash) appears multiple times in the current upload queue.
+
+Detection applies to both:
+- **Main Timesheets Upload Page** (`client/src/pages/timesheets.tsx`): Amber warnings on queue items.
+- **Reconciliation Dialog** (`client/src/pages/reconciliation.tsx`): Amber warning after PDF scan.
