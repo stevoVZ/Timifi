@@ -334,6 +334,34 @@ export default function EmployeeDetailPage() {
                         </Select>
                       </div>
                     </div>
+                    <EditableField
+                      icon={FileBadge}
+                      label="Contract Code"
+                      field="contractCode"
+                      value={employee.contractCode || "Not set"}
+                      editingField={editingField}
+                      editValues={editValues}
+                      setEditValues={setEditValues}
+                      onStartEdit={startEdit}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      isPending={updateMutation.isPending}
+                      testId="text-contract-code"
+                    />
+                    <EditableField
+                      icon={Briefcase}
+                      label="Role Title"
+                      field="roleTitle"
+                      value={employee.roleTitle || "Not set"}
+                      editingField={editingField}
+                      editValues={editValues}
+                      setEditValues={setEditValues}
+                      onStartEdit={startEdit}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      isPending={updateMutation.isPending}
+                      testId="text-role-title"
+                    />
                     <InfoRow icon={CreditCard} label="Payment Method" value={employee.paymentMethod === "INVOICE" ? "Invoice (Pty Ltd)" : "Payroll"} testId="text-payment-method" />
                     {employee.paymentMethod === "INVOICE" && (
                       <>

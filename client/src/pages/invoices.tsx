@@ -104,6 +104,19 @@ export default function InvoicesPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
   const [alignmentOpen, setAlignmentOpen] = useState(false);
+  const [invForm, setInvForm] = useState({
+    clientId: "",
+    employeeId: "",
+    year: String(new Date().getFullYear()),
+    month: String(new Date().getMonth() + 1),
+    issueDate: new Date().toISOString().split("T")[0],
+    dueDate: "",
+    hours: "",
+    hourlyRate: "",
+    amountExclGst: "",
+    description: "",
+    reference: "",
+  });
   const { toast } = useToast();
 
   const { data: invoicesList, isLoading } = useQuery<Invoice[]>({
@@ -237,29 +250,72 @@ export default function InvoicesPage() {
     }
   });
 
+  const MONTHS_SHORT = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const buildAutoFields = (empId: string, clientId: string, month: string, year: string) => {
+    const emp = empId ? employeeMap.get(empId) : undefined;
+    const result: Partial<typeof invForm> = {};
+    if (emp?.contractCode) {
+      result.description = `${emp.contractCode} - ${emp.firstName} ${emp.lastName} - ${emp.roleTitle || ""}`.replace(/ - $/, "");
+    } else {
+      result.description = "";
+    }
+    if (emp?.contractCode && clientId) {
+      const client = clients?.find(c => c.id === clientId);
+      const clientShort = client?.name?.includes("Prime Minister") ? "PM&C" : (client?.name || "");
+      const mo = parseInt(month);
+      const yr = year.slice(-2);
+      result.reference = `${clientShort} - ${MONTHS_SHORT[mo]} ${yr} - ${emp.contractCode} - ${emp.firstName}`;
+    } else {
+      result.reference = "";
+    }
+    const placement = emp && clientId ? allPlacements?.find(p => p.employeeId === empId && p.clientId === clientId && p.status === "ACTIVE") : undefined;
+    if (placement?.chargeOutRate) {
+      result.hourlyRate = placement.chargeOutRate;
+    } else if (emp?.chargeOutRate) {
+      result.hourlyRate = emp.chargeOutRate;
+    } else {
+      result.hourlyRate = "";
+    }
+    return result;
+  };
+
+  const handleEmployeeSelect = (empId: string) => {
+    setInvForm(f => ({ ...f, employeeId: empId, ...buildAutoFields(empId, f.clientId, f.month, f.year) }));
+  };
+
+  const handleClientSelect = (clientId: string) => {
+    setInvForm(f => ({ ...f, clientId, ...buildAutoFields(f.employeeId, clientId, f.month, f.year) }));
+  };
+
+  const handleMonthChange = (month: string) => {
+    setInvForm(f => ({ ...f, month, ...( f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, month, f.year).reference || "" } : {}) }));
+  };
+
+  const handleYearChange = (year: string) => {
+    setInvForm(f => ({ ...f, year, ...( f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, f.month, year).reference || "" } : {}) }));
+  };
+
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const raw: Record<string, any> = {};
-    formData.forEach((v, k) => { if (v) raw[k] = v as string; });
-    const hours = parseFloat(raw.hours || "0");
-    const rate = parseFloat(raw.hourlyRate || "0");
-    const amountExcl = hours && rate ? hours * rate : parseFloat(raw.amountExclGst || "0");
+    const hours = parseFloat(invForm.hours || "0");
+    const rate = parseFloat(invForm.hourlyRate || "0");
+    const amountExcl = hours && rate ? hours * rate : parseFloat(invForm.amountExclGst || "0");
     createMutation.mutate({
-      employeeId: raw.employeeId || undefined,
-      clientId: raw.clientId || undefined,
-      year: parseInt(raw.year),
-      month: parseInt(raw.month),
+      employeeId: invForm.employeeId || undefined,
+      clientId: invForm.clientId || undefined,
+      year: parseInt(invForm.year),
+      month: parseInt(invForm.month),
       amountExclGst: String(amountExcl.toFixed(2)),
       gstAmount: String((amountExcl * 0.1).toFixed(2)),
       amountInclGst: String((amountExcl * 1.1).toFixed(2)),
       hours: hours ? String(hours) : undefined,
       hourlyRate: rate ? String(rate) : undefined,
-      description: raw.description || undefined,
-      issueDate: raw.issueDate || undefined,
-      dueDate: raw.dueDate || undefined,
-      reference: raw.reference || undefined,
-      contactName: raw.clientId ? clients?.find(c => c.id === raw.clientId)?.name : undefined,
+      description: invForm.description || undefined,
+      issueDate: invForm.issueDate || undefined,
+      dueDate: invForm.dueDate || undefined,
+      reference: invForm.reference || undefined,
+      contactName: invForm.clientId ? clients?.find(c => c.id === invForm.clientId)?.name : undefined,
       status: "DRAFT",
     });
   };
@@ -297,7 +353,10 @@ export default function InvoicesPage() {
                 Align ({unlinked.length})
               </Button>
             )}
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <Dialog open={dialogOpen} onOpenChange={(open) => {
+              setDialogOpen(open);
+              if (open) setInvForm({ clientId: "", employeeId: "", year: String(new Date().getFullYear()), month: String(new Date().getMonth() + 1), issueDate: new Date().toISOString().split("T")[0], dueDate: "", hours: "", hourlyRate: "", amountExclGst: "", description: "", reference: "" });
+            }}>
               <DialogTrigger asChild>
                 <Button data-testid="button-create-invoice">
                   <Plus className="w-4 h-4" />
@@ -311,7 +370,7 @@ export default function InvoicesPage() {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label>Client (Bill To)</Label>
-                  <Select name="clientId">
+                  <Select value={invForm.clientId} onValueChange={handleClientSelect}>
                     <SelectTrigger data-testid="select-invoice-client">
                       <SelectValue placeholder="Select client" />
                     </SelectTrigger>
@@ -326,7 +385,7 @@ export default function InvoicesPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Employee</Label>
-                  <Select name="employeeId">
+                  <Select value={invForm.employeeId} onValueChange={handleEmployeeSelect}>
                     <SelectTrigger data-testid="select-invoice-employee">
                       <SelectValue placeholder="Select employee (optional)" />
                     </SelectTrigger>
@@ -334,6 +393,7 @@ export default function InvoicesPage() {
                       {employees?.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.firstName} {c.lastName}
+                          {c.contractCode ? ` (${c.contractCode})` : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -342,11 +402,11 @@ export default function InvoicesPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="inv-year">Year</Label>
-                    <Input id="inv-year" name="year" type="number" defaultValue={new Date().getFullYear()} required data-testid="input-invoice-year" />
+                    <Input id="inv-year" type="number" value={invForm.year} onChange={(e) => handleYearChange(e.target.value)} required data-testid="input-invoice-year" />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Month</Label>
-                    <Select name="month" defaultValue={String(new Date().getMonth() + 1)}>
+                    <Select value={invForm.month} onValueChange={handleMonthChange}>
                       <SelectTrigger data-testid="select-invoice-month">
                         <SelectValue />
                       </SelectTrigger>
@@ -361,35 +421,35 @@ export default function InvoicesPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="issueDate">Issue Date</Label>
-                    <Input id="issueDate" name="issueDate" type="date" defaultValue={new Date().toISOString().split("T")[0]} data-testid="input-issue-date" />
+                    <Input id="issueDate" type="date" value={invForm.issueDate} onChange={(e) => setInvForm(f => ({ ...f, issueDate: e.target.value }))} data-testid="input-issue-date" />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="dueDate">Due Date</Label>
-                    <Input id="dueDate" name="dueDate" type="date" data-testid="input-due-date" />
+                    <Input id="dueDate" type="date" value={invForm.dueDate} onChange={(e) => setInvForm(f => ({ ...f, dueDate: e.target.value }))} data-testid="input-due-date" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="hours">Hours</Label>
-                    <Input id="hours" name="hours" type="number" step="0.01" data-testid="input-hours" />
+                    <Input id="hours" type="number" step="0.01" value={invForm.hours} onChange={(e) => setInvForm(f => ({ ...f, hours: e.target.value }))} data-testid="input-hours" />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="hourlyRate">Hourly Rate</Label>
-                    <Input id="hourlyRate" name="hourlyRate" type="number" step="0.01" data-testid="input-hourly-rate" />
+                    <Input id="hourlyRate" type="number" step="0.01" value={invForm.hourlyRate} onChange={(e) => setInvForm(f => ({ ...f, hourlyRate: e.target.value }))} data-testid="input-hourly-rate" />
                   </div>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="amountExclGst">Amount (excl. GST)</Label>
-                  <Input id="amountExclGst" name="amountExclGst" type="number" step="0.01" placeholder="Auto-calculated from hours × rate" data-testid="input-amount" />
+                  <Input id="amountExclGst" type="number" step="0.01" value={invForm.amountExclGst} onChange={(e) => setInvForm(f => ({ ...f, amountExclGst: e.target.value }))} placeholder="Auto-calculated from hours × rate" data-testid="input-amount" />
                   <p className="text-xs text-muted-foreground">Leave blank if hours and rate are provided</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="description">Description</Label>
-                  <Input id="description" name="description" data-testid="input-description" />
+                  <Input id="description" value={invForm.description} onChange={(e) => setInvForm(f => ({ ...f, description: e.target.value }))} data-testid="input-description" />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="reference">Reference</Label>
-                  <Input id="reference" name="reference" placeholder="e.g. Contract number" data-testid="input-reference" />
+                  <Input id="reference" value={invForm.reference} onChange={(e) => setInvForm(f => ({ ...f, reference: e.target.value }))} placeholder="e.g. Contract number" data-testid="input-reference" />
                 </div>
                 <Button type="submit" className="w-full" disabled={createMutation.isPending} data-testid="button-submit-invoice">
                   {createMutation.isPending ? "Creating..." : "Create Draft Invoice"}

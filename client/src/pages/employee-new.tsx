@@ -43,6 +43,8 @@ export default function EmployeeNewPage() {
     abn: "",
     hourlyRate: "",
     chargeOutRate: "",
+    contractCode: "",
+    roleTitle: "",
     contractHoursPA: "2000",
     payFrequency: "MONTHLY",
     startDate: "",
@@ -79,6 +81,8 @@ export default function EmployeeNewPage() {
       chargeOutRate: form.chargeOutRate || null,
       companyName: form.companyName || null,
       abn: form.abn || null,
+      contractCode: form.contractCode || null,
+      roleTitle: form.roleTitle || null,
       contractHoursPA: parseInt(form.contractHoursPA) || 2000,
       clearanceExpiry: form.clearanceExpiry || null,
       startDate: form.startDate || null,
@@ -186,6 +190,14 @@ export default function EmployeeNewPage() {
             <div>
               <Label>Job Title</Label>
               <Input value={form.jobTitle} onChange={(e) => update("jobTitle", e.target.value)} data-testid="input-job-title" />
+            </div>
+            <div>
+              <Label>Contract Code</Label>
+              <Input value={form.contractCode} onChange={(e) => update("contractCode", e.target.value)} placeholder="e.g. CD012456" data-testid="input-contract-code" />
+            </div>
+            <div>
+              <Label>Role Title</Label>
+              <Input value={form.roleTitle} onChange={(e) => update("roleTitle", e.target.value)} placeholder="e.g. Senior Business Analyst" data-testid="input-role-title" />
             </div>
             <div>
               <Label>Status</Label>
