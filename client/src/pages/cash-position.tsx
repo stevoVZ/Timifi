@@ -35,11 +35,13 @@ interface MonthlyFlow {
 
 interface CashPositionData {
   accounts: AccountSummary[];
-  netCashPosition: number;
+  netCashFlow: number;
   amex: {
-    totalSpend: number;
+    totalCharged: number;
+    cardPurchases: number;
     totalCredits: number;
     repaymentsFromBank: number;
+    totalPaidOff: number;
     outstandingDebt: number;
   };
   summary: {
@@ -167,9 +169,8 @@ export default function CashPositionPage() {
     );
   }
 
-  const operatingNet = data.netCashPosition;
+  const operatingNet = data.netCashFlow;
   const amexDebt = data.amex.outstandingDebt;
-  const overallPosition = operatingNet - amexDebt;
 
   const recentMonths = data.monthlyFlow.slice(-12);
 
@@ -180,13 +181,17 @@ export default function CashPositionPage() {
       <TopBar title="Cash Position" />
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
 
+        <p className="text-xs text-muted-foreground">
+          Based on all synced bank transactions. Net cash flow reflects total movement since first transaction — not the current bank balance (opening balances are not included).
+        </p>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard
-            title="Net Cash Position"
-            value={fmt(overallPosition)}
-            subtitle="Operating accounts minus Amex debt"
+            title="Net Cash Flow"
+            value={fmt(operatingNet)}
+            subtitle="Total inflows minus outflows (excl. Amex)"
             icon={Wallet}
-            variant={overallPosition >= 0 ? "positive" : "negative"}
+            variant={operatingNet >= 0 ? "positive" : "negative"}
             testId="kpi-net-position"
           />
           <KpiCard
@@ -215,8 +220,8 @@ export default function CashPositionPage() {
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {data.accounts.map(acct => (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {data.accounts.filter(a => !a.name.includes("American Express")).map(acct => (
             <AccountCard key={acct.name} account={acct} />
           ))}
         </div>

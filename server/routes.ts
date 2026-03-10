@@ -2148,6 +2148,12 @@ export async function registerRoutes(
         (!t.contactName || t.contactName === "") &&
         (t.description || "").startsWith("Bank Transfer");
 
+      const isIncomingTransfer = (t: any) =>
+        isTransfer(t) && (t.description || "").includes("Bank Transfer from");
+
+      const isOutgoingTransfer = (t: any) =>
+        isTransfer(t) && (t.description || "").includes("Bank Transfer to");
+
       const accounts: Record<string, { name: string; totalIn: number; totalOut: number; net: number; txnCount: number; earliest: string | null; latest: string | null }> = {};
       let totalTransferAmount = 0;
       const monthlyFlow: Record<string, { month: string; cashIn: number; cashOut: number; net: number }> = {};
@@ -2185,6 +2191,13 @@ export async function registerRoutes(
 
         if (isTransfer(t)) {
           totalTransferAmount += amt;
+          if (isIncomingTransfer(t)) {
+            acct.totalIn += amt;
+            acct.net += amt;
+          } else if (isOutgoingTransfer(t)) {
+            acct.totalOut += amt;
+            acct.net -= amt;
+          }
         } else {
           if (t.type === "RECEIVE") {
             acct.totalIn += amt;
@@ -2250,7 +2263,7 @@ export async function registerRoutes(
       const monthlyFlowSorted = Object.values(monthlyFlow).sort((a, b) => a.month.localeCompare(b.month));
 
       const operatingAccounts = accountList.filter(a => !a.name.includes("American Express"));
-      const netCashPosition = operatingAccounts.reduce((sum, a) => sum + a.net, 0);
+      const netCashFlow = operatingAccounts.reduce((sum, a) => sum + a.net, 0);
       const amexDebt = amexTotalSpend - amexTotalCredits;
 
       const employeeList = Object.entries(employeeCosts)
@@ -2262,7 +2275,7 @@ export async function registerRoutes(
 
       res.json({
         accounts: accountList,
-        netCashPosition,
+        netCashFlow,
         amex: {
           totalCharged: amexTotalCharged,
           cardPurchases: amexTotalSpend,
