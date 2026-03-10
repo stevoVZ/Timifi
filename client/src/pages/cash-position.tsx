@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Wallet, TrendingUp, TrendingDown, CreditCard, Building2,
-  ArrowUpDown, Users, Receipt, DollarSign, Landmark, PiggyBank
+  ArrowUpDown, Users, Receipt, DollarSign, Landmark, PiggyBank,
+  FileText, AlertTriangle, CheckCircle2
 } from "lucide-react";
 
 interface AccountSummary {
@@ -33,9 +34,29 @@ interface MonthlyFlow {
   net: number;
 }
 
+interface ClientRevenue {
+  name: string;
+  paid: number;
+  outstanding: number;
+  count: number;
+}
+
 interface CashPositionData {
   accounts: AccountSummary[];
-  netCashFlow: number;
+  bankCashFlow: number;
+  invoiceRevenue: {
+    totalPaidInclGst: number;
+    totalPaidCount: number;
+    totalOutstandingInclGst: number;
+    totalOutstandingCount: number;
+    suppliersPaid: number;
+    suppliersPaidCount: number;
+    byClient: ClientRevenue[];
+  };
+  payroll: {
+    totalGrossCost: number;
+    payRunCount: number;
+  };
   amex: {
     totalCharged: number;
     cardPurchases: number;
@@ -45,7 +66,7 @@ interface CashPositionData {
     outstandingDebt: number;
   };
   summary: {
-    totalRevenue: number;
+    bankReceiveRevenue: number;
     totalExpenses: number;
     linkedRevenue: number;
     linkedCost: number;
@@ -107,17 +128,15 @@ function KpiCard({ title, value, subtitle, icon: Icon, variant = "default", test
 }
 
 function AccountCard({ account }: { account: AccountSummary }) {
-  const isAmex = account.name.includes("American Express");
-  const icon = isAmex ? CreditCard : account.name.includes("Tax") ? Receipt : Landmark;
+  const icon = account.name.includes("Tax") ? Receipt : Landmark;
   const Icon = icon;
-  const displayName = isAmex ? "Amex Platinum Business" : account.name;
 
   return (
     <Card data-testid={`card-account-${account.name.replace(/\s+/g, "-").toLowerCase()}`}>
       <CardHeader className="pb-2 px-5 pt-4">
         <div className="flex items-center gap-2">
           <Icon className="w-4 h-4 text-muted-foreground" />
-          <CardTitle className="text-sm font-semibold">{displayName}</CardTitle>
+          <CardTitle className="text-sm font-semibold">{account.name}</CardTitle>
         </div>
         <p className="text-[11px] text-muted-foreground">
           {account.earliest && account.latest
@@ -137,7 +156,7 @@ function AccountCard({ account }: { account: AccountSummary }) {
             <p className="text-sm font-semibold tabular-nums text-red-600 dark:text-red-400">{fmt(account.totalOut)}</p>
           </div>
           <div>
-            <p className="text-[11px] text-muted-foreground mb-0.5">Net</p>
+            <p className="text-[11px] text-muted-foreground mb-0.5">Net Flow</p>
             <p className={`text-sm font-bold tabular-nums ${account.net >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
               {fmt(account.net)}
             </p>
@@ -169,11 +188,17 @@ export default function CashPositionPage() {
     );
   }
 
-  const operatingNet = data.netCashFlow;
+  const invoiceRevenue = data.invoiceRevenue.totalPaidInclGst;
+  const invoiceOutstanding = data.invoiceRevenue.totalOutstandingInclGst;
   const amexDebt = data.amex.outstandingDebt;
+  const payrollCost = data.payroll.totalGrossCost;
+  const suppliersPaid = data.invoiceRevenue.suppliersPaid;
+  const netPosition = invoiceRevenue - payrollCost - suppliersPaid - data.summary.atoSpend - data.summary.superSpend - data.amex.cardPurchases;
+
+  const bankIn = data.summary.bankReceiveRevenue;
+  const bankMissing = invoiceRevenue - bankIn;
 
   const recentMonths = data.monthlyFlow.slice(-12);
-
   const maxBar = Math.max(...recentMonths.map(m => Math.max(m.cashIn, m.cashOut)), 1);
 
   return (
@@ -181,18 +206,30 @@ export default function CashPositionPage() {
       <TopBar title="Cash Position" />
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
 
-        <p className="text-xs text-muted-foreground">
-          Based on all synced bank transactions. Net cash flow reflects total movement since first transaction — not the current bank balance (opening balances are not included).
-        </p>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard
-            title="Net Cash Flow"
-            value={fmt(operatingNet)}
-            subtitle="Total inflows minus outflows (excl. Amex)"
-            icon={Wallet}
-            variant={operatingNet >= 0 ? "positive" : "negative"}
-            testId="kpi-net-position"
+            title="Revenue Collected"
+            value={fmt(invoiceRevenue)}
+            subtitle={`${data.invoiceRevenue.totalPaidCount} paid invoices (incl. GST)`}
+            icon={TrendingUp}
+            variant="positive"
+            testId="kpi-revenue-collected"
+          />
+          <KpiCard
+            title="Outstanding Invoices"
+            value={fmt(invoiceOutstanding)}
+            subtitle={`${data.invoiceRevenue.totalOutstandingCount} awaiting payment`}
+            icon={FileText}
+            variant={invoiceOutstanding > 0 ? "warning" : "default"}
+            testId="kpi-outstanding-invoices"
+          />
+          <KpiCard
+            title="Total Payroll Cost"
+            value={fmt(payrollCost)}
+            subtitle={`${data.payroll.payRunCount} pay runs (gross + super + PAYG)`}
+            icon={Users}
+            variant="negative"
+            testId="kpi-payroll-cost"
           />
           <KpiCard
             title="Amex Outstanding"
@@ -202,32 +239,131 @@ export default function CashPositionPage() {
             variant={amexDebt > 0 ? "warning" : "default"}
             testId="kpi-amex-debt"
           />
-          <KpiCard
-            title="Total Revenue Received"
-            value={fmt(data.summary.linkedRevenue)}
-            subtitle={`${data.summary.linkedTxns} linked transactions`}
-            icon={TrendingUp}
-            variant="positive"
-            testId="kpi-total-revenue"
-          />
-          <KpiCard
-            title="Total Employee Costs"
-            value={fmt(data.summary.linkedCost)}
-            subtitle="Payroll + contractor payments"
-            icon={Users}
-            variant="negative"
-            testId="kpi-total-costs"
-          />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {data.accounts.filter(a => !a.name.includes("American Express")).map(acct => (
-            <AccountCard key={acct.name} account={acct} />
-          ))}
+        {bankMissing > 50000 && (
+          <Card className="border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30" data-testid="card-bank-gap-warning">
+            <CardContent className="pt-4 pb-4 px-5">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Bank Data Gap Detected</p>
+                  <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
+                    Xero shows {fmt(invoiceRevenue)} in paid invoices, but only {fmt(bankIn)} appears in synced bank transactions — a gap of {fmt(bankMissing)}.
+                    This likely means client payments (e.g. PM&C) are going to a bank account not connected as a bank feed in Xero.
+                    The figures below use invoice data from Xero for revenue, which is the complete picture.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+          <Card data-testid="card-revenue-by-client">
+            <CardHeader className="pb-3 px-5 pt-4">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Building2 className="w-4 h-4" />
+                Revenue by Client (Invoices)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-5 pb-4">
+              <div className="space-y-3">
+                {data.invoiceRevenue.byClient.map(client => {
+                  const total = client.paid + client.outstanding;
+                  const paidPct = total > 0 ? (client.paid / total) * 100 : 0;
+                  return (
+                    <div key={client.name} data-testid={`client-row-${client.name.replace(/\s+/g, "-").toLowerCase()}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-medium truncate mr-2">{client.name}</span>
+                        <span className="text-sm font-semibold tabular-nums shrink-0">{fmt(total)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${paidPct}%` }} />
+                        </div>
+                        <span className="text-[11px] tabular-nums text-muted-foreground shrink-0 w-16 text-right">
+                          {client.count} inv.
+                        </span>
+                      </div>
+                      {client.outstanding > 0 && (
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">
+                          {fmt(client.outstanding)} outstanding
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="border-t mt-4 pt-3 flex justify-between">
+                <span className="text-sm font-semibold">Total Invoiced</span>
+                <span className="text-sm font-bold tabular-nums">{fmt(invoiceRevenue + invoiceOutstanding)}</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="space-y-6">
+            <Card data-testid="card-cost-summary">
+              <CardHeader className="pb-3 px-5 pt-4">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <TrendingDown className="w-4 h-4" />
+                  Cost Summary (Xero Data)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-5 pb-4 space-y-3">
+                {[
+                  { label: "Payroll (Gross + Super + PAYG)", value: payrollCost, icon: Users },
+                  { label: "Supplier Invoices Paid (ACCPAY)", value: suppliersPaid, icon: FileText },
+                  { label: "ATO / Tax Payments", value: data.summary.atoSpend, icon: Receipt },
+                  { label: "Superannuation", value: data.summary.superSpend, icon: PiggyBank },
+                  { label: "Amex Card Purchases", value: data.amex.cardPurchases, icon: CreditCard },
+                ].map(item => (
+                  <div key={item.label} className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <item.icon className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-sm">{item.label}</span>
+                    </div>
+                    <span className="text-sm font-semibold tabular-nums text-red-600 dark:text-red-400">{fmt(item.value)}</span>
+                  </div>
+                ))}
+                <div className="border-t pt-2 flex items-center justify-between">
+                  <span className="text-sm font-bold">Total Known Costs</span>
+                  <span className="text-sm font-bold tabular-nums text-red-600 dark:text-red-400">
+                    {fmt(payrollCost + suppliersPaid + data.summary.atoSpend + data.summary.superSpend + data.amex.cardPurchases)}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-expense-breakdown">
+              <CardHeader className="pb-3 px-5 pt-4">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <ArrowUpDown className="w-4 h-4" />
+                  Bank Transaction Linkage
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-5 pb-4">
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <div className="h-3 bg-muted rounded-full overflow-hidden flex">
+                      <div
+                        className="h-full bg-emerald-500"
+                        style={{ width: `${(data.summary.linkedTxns / Math.max(data.summary.linkedTxns + data.summary.unlinkedTxns, 1)) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <Badge variant="outline" className="text-emerald-600">{data.summary.linkedTxns} linked</Badge>
+                    <Badge variant="outline" className="text-amber-600">{data.summary.unlinkedTxns} unlinked</Badge>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-
           <Card className="xl:col-span-2" data-testid="card-amex-tracker">
             <CardHeader className="pb-3 px-5 pt-4">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -279,35 +415,26 @@ export default function CashPositionPage() {
             </CardContent>
           </Card>
 
-          <Card data-testid="card-expense-breakdown">
+          <Card data-testid="card-bank-accounts">
             <CardHeader className="pb-3 px-5 pt-4">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                <PiggyBank className="w-4 h-4" />
-                Expense Categories
+                <Landmark className="w-4 h-4" />
+                Bank Account Flows
               </CardTitle>
+              <p className="text-[11px] text-muted-foreground">Net movement per synced account</p>
             </CardHeader>
             <CardContent className="px-5 pb-4 space-y-3">
-              {[
-                { label: "ATO / Tax", value: data.summary.atoSpend, icon: Receipt },
-                { label: "Superannuation", value: data.summary.superSpend, icon: PiggyBank },
-                { label: "Business Expenses (Amex)", value: data.summary.businessExpenses, icon: CreditCard },
-                { label: "Inter-Account Transfers", value: data.summary.interAccountTransfers, icon: ArrowUpDown },
-              ].map(item => (
-                <div key={item.label} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <item.icon className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-sm">{item.label}</span>
+              {data.accounts.filter(a => !a.name.includes("American Express")).map(acct => (
+                <div key={acct.name} className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-medium">{acct.name}</span>
+                    <p className="text-[11px] text-muted-foreground">{acct.txnCount} txns</p>
                   </div>
-                  <span className="text-sm font-semibold tabular-nums">{fmt(item.value)}</span>
+                  <span className={`text-sm font-semibold tabular-nums ${acct.net >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                    {fmt(acct.net)}
+                  </span>
                 </div>
               ))}
-              <div className="border-t pt-2 flex items-center justify-between">
-                <span className="text-sm font-medium">Linked / Unlinked Txns</span>
-                <div className="flex gap-2">
-                  <Badge variant="outline" className="text-emerald-600">{data.summary.linkedTxns} linked</Badge>
-                  <Badge variant="outline" className="text-amber-600">{data.summary.unlinkedTxns} unlinked</Badge>
-                </div>
-              </div>
             </CardContent>
           </Card>
         </div>
@@ -316,8 +443,9 @@ export default function CashPositionPage() {
           <CardHeader className="pb-3 px-5 pt-4">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <TrendingUp className="w-4 h-4" />
-              Monthly Cash Flow (Last 12 Months)
+              Monthly Bank Flow (Last 12 Months)
             </CardTitle>
+            <p className="text-[11px] text-muted-foreground">Based on synced bank transactions only (excludes inter-account transfers)</p>
           </CardHeader>
           <CardContent className="px-5 pb-4">
             <div className="space-y-2">
@@ -358,8 +486,9 @@ export default function CashPositionPage() {
           <CardHeader className="pb-3 px-5 pt-4">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Users className="w-4 h-4" />
-              Employee Cash Flow Summary
+              Employee Bank Flow Summary
             </CardTitle>
+            <p className="text-[11px] text-muted-foreground">Based on linked bank transactions only</p>
           </CardHeader>
           <CardContent className="px-5 pb-4">
             <div className="overflow-x-auto">

@@ -67,17 +67,22 @@ Detection applies to both:
 
 ## Cash Position Dashboard
 
-The Cash Position page (`/cash-position`) provides a treasury overview across all bank accounts:
-- **KPI Cards:** Net Cash Position, Amex Outstanding Debt, Total Revenue, Total Employee Costs
-- **Per-Account Cards:** MSG Recruitment, Tax Account, Macquarie Platinum, Amex — showing in/out/net flows (excluding inter-account transfers)
+The Cash Position page (`/cash-position`) provides a treasury overview using **multiple Xero data sources**:
+- **KPI Cards:** Revenue Collected (from ACCREC paid invoices), Outstanding Invoices, Total Payroll Cost (from pay runs), Amex Outstanding
+- **Bank Data Gap Warning:** Shown when invoice revenue significantly exceeds bank RECEIVE totals (e.g., PM&C payments go to an unconnected bank account)
+- **Revenue by Client:** Breakdown from ACCREC invoices showing paid vs outstanding per client with progress bars
+- **Cost Summary:** Payroll (totalGross + totalSuper), ACCPAY suppliers, ATO, Super, Amex card purchases
 - **Amex Debt Tracker:** Total charged vs credits vs repayments from bank, with progress bar and outstanding balance
-- **Expense Categories:** ATO/Tax, Superannuation, Business Expenses (Amex), Inter-Account Transfers, Linked/Unlinked transaction counts
-- **Monthly Cash Flow:** Last 12 months with horizontal bar chart showing in vs out per month
-- **Employee Cash Flow Summary:** Revenue received and costs paid per employee, with net margin
+- **Bank Account Flows:** Per-account net movement for synced accounts (MSG Recruitment, Tax Account, Macquarie Platinum)
+- **Monthly Bank Flow:** Last 12 months with horizontal bar chart (bank transactions only, excl. transfers)
+- **Employee Bank Flow Summary:** Revenue received and costs paid per employee from linked bank transactions
 
 API endpoint: `GET /api/cash-position` in `server/routes.ts`.
-Inter-account transfers are detected by blank contact name + "Bank Transfer" description prefix and excluded from operating flow calculations.
-Amex repayments are detected from transfer SPEND entries on the Amex account side.
+Data sources: bank_transactions, invoices, pay_runs, employees.
+Inter-account transfers detected by blank contact name + "Bank Transfer" description prefix.
+Transfer direction: "Bank Transfer from X" = incoming (despite Xero recording as SPEND type), "Bank Transfer to X" = outgoing.
+Amex repayments = transfer SPEND entries on the Amex account side.
+Bank gap metric uses clean RECEIVE-only revenue (no transfers, no Amex) for comparison against invoice data.
 
 ## Bank Transaction Linkages
 

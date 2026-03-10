@@ -2142,7 +2142,12 @@ export async function registerRoutes(
 
   app.get("/api/cash-position", async (_req, res) => {
     try {
-      const allTxns = await storage.getBankTransactions();
+      const [allTxns, allInvoices, employees, allPayRuns] = await Promise.all([
+        storage.getBankTransactions(),
+        storage.getInvoices(),
+        storage.getEmployees(),
+        storage.getPayRuns(),
+      ]);
 
       const isTransfer = (t: any) =>
         (!t.contactName || t.contactName === "") &&
@@ -2168,9 +2173,8 @@ export async function registerRoutes(
       let amexTotalCredits = 0;
       let amexRepayments = 0;
 
-      const employeeCosts: Record<string, { name: string; revenue: number; cost: number; txns: number }> = {};
+      const employeeCashFlow: Record<string, { name: string; revenue: number; cost: number; txns: number }> = {};
 
-      const employees = await storage.getEmployees();
       const empMap: Record<string, string> = {};
       for (const e of employees) {
         empMap[e.id] = `${e.firstName} ${e.lastName}`;
@@ -2223,16 +2227,16 @@ export async function registerRoutes(
         if (t.linkedEmployeeId) {
           linkedCount++;
           const empName = empMap[t.linkedEmployeeId] || "Unknown";
-          if (!employeeCosts[t.linkedEmployeeId]) {
-            employeeCosts[t.linkedEmployeeId] = { name: empName, revenue: 0, cost: 0, txns: 0 };
+          if (!employeeCashFlow[t.linkedEmployeeId]) {
+            employeeCashFlow[t.linkedEmployeeId] = { name: empName, revenue: 0, cost: 0, txns: 0 };
           }
-          employeeCosts[t.linkedEmployeeId].txns++;
+          employeeCashFlow[t.linkedEmployeeId].txns++;
           if (t.type === "RECEIVE") {
             linkedRevenue += amt;
-            employeeCosts[t.linkedEmployeeId].revenue += amt;
+            employeeCashFlow[t.linkedEmployeeId].revenue += amt;
           } else {
             linkedCost += amt;
-            employeeCosts[t.linkedEmployeeId].cost += amt;
+            employeeCashFlow[t.linkedEmployeeId].cost += amt;
           }
         } else if (!isTransfer(t)) {
           unlinkedCount++;
@@ -2252,7 +2256,6 @@ export async function registerRoutes(
           }
           if (t.type === "RECEIVE") amexTotalCredits += amt;
         }
-
       }
 
       const accountList = Object.values(accounts).sort((a, b) => {
@@ -2262,20 +2265,85 @@ export async function registerRoutes(
 
       const monthlyFlowSorted = Object.values(monthlyFlow).sort((a, b) => a.month.localeCompare(b.month));
 
-      const operatingAccounts = accountList.filter(a => !a.name.includes("American Express"));
-      const netCashFlow = operatingAccounts.reduce((sum, a) => sum + a.net, 0);
+      const bankCashFlow = accountList.filter(a => !a.name.includes("American Express")).reduce((sum, a) => sum + a.net, 0);
       const amexDebt = amexTotalSpend - amexTotalCredits;
-
-      const employeeList = Object.entries(employeeCosts)
-        .map(([id, data]) => ({ id, ...data }))
-        .sort((a, b) => (b.revenue + b.cost) - (a.revenue + a.cost));
 
       const amexTotalCharged = amexTotalSpend + amexRepayments;
       const amexTotalPaidOff = amexRepayments + amexTotalCredits;
 
+      const invoiceRevenue = {
+        paidAccrec: 0,
+        paidAccrecCount: 0,
+        outstandingAccrec: 0,
+        outstandingAccrecCount: 0,
+        paidAccpay: 0,
+        paidAccpayCount: 0,
+        byClient: {} as Record<string, { name: string; paid: number; outstanding: number; count: number }>,
+      };
+
+      for (const inv of allInvoices) {
+        if (inv.invoiceType === "ACCREC") {
+          const clientName = (inv as any).contactName || "Unknown";
+          if (!invoiceRevenue.byClient[clientName]) {
+            invoiceRevenue.byClient[clientName] = { name: clientName, paid: 0, outstanding: 0, count: 0 };
+          }
+          invoiceRevenue.byClient[clientName].count++;
+
+          if (inv.status === "PAID") {
+            invoiceRevenue.paidAccrec += parseFloat(String(inv.amountInclGst));
+            invoiceRevenue.paidAccrecCount++;
+            invoiceRevenue.byClient[clientName].paid += parseFloat(String(inv.amountInclGst));
+          } else if (inv.status === "AUTHORISED" || inv.status === "OVERDUE") {
+            invoiceRevenue.outstandingAccrec += parseFloat(String(inv.amountInclGst));
+            invoiceRevenue.outstandingAccrecCount++;
+            invoiceRevenue.byClient[clientName].outstanding += parseFloat(String(inv.amountInclGst));
+          }
+        } else if (inv.invoiceType === "ACCPAY" && inv.status === "PAID") {
+          invoiceRevenue.paidAccpay += parseFloat(String(inv.amountInclGst));
+          invoiceRevenue.paidAccpayCount++;
+        }
+      }
+
+      const clientList = Object.values(invoiceRevenue.byClient)
+        .sort((a, b) => (b.paid + b.outstanding) - (a.paid + a.outstanding));
+
+      let payrollTotal = 0;
+      let payrollCount = 0;
+      for (const pr of allPayRuns) {
+        const gross = parseFloat(String(pr.totalGross || 0));
+        const superAmt = parseFloat(String(pr.totalSuper || 0));
+        payrollTotal += gross + superAmt;
+        payrollCount++;
+      }
+
+      const employeeList = Object.entries(employeeCashFlow)
+        .map(([id, data]) => ({ id, ...data }))
+        .sort((a, b) => (b.revenue + b.cost) - (a.revenue + a.cost));
+
+      let bankReceiveRevenue = 0;
+      for (const t of allTxns) {
+        const acctName = t.bankAccountName || "";
+        if (!acctName.includes("American Express") && t.type === "RECEIVE" && !isTransfer(t)) {
+          bankReceiveRevenue += parseFloat(t.amount);
+        }
+      }
+
       res.json({
         accounts: accountList,
-        netCashFlow,
+        bankCashFlow,
+        invoiceRevenue: {
+          totalPaidInclGst: invoiceRevenue.paidAccrec,
+          totalPaidCount: invoiceRevenue.paidAccrecCount,
+          totalOutstandingInclGst: invoiceRevenue.outstandingAccrec,
+          totalOutstandingCount: invoiceRevenue.outstandingAccrecCount,
+          suppliersPaid: invoiceRevenue.paidAccpay,
+          suppliersPaidCount: invoiceRevenue.paidAccpayCount,
+          byClient: clientList,
+        },
+        payroll: {
+          totalGrossCost: payrollTotal,
+          payRunCount: payrollCount,
+        },
         amex: {
           totalCharged: amexTotalCharged,
           cardPurchases: amexTotalSpend,
@@ -2285,7 +2353,7 @@ export async function registerRoutes(
           outstandingDebt: amexDebt,
         },
         summary: {
-          totalRevenue: accountList.reduce((s, a) => s + a.totalIn, 0),
+          bankReceiveRevenue,
           totalExpenses: accountList.reduce((s, a) => s + a.totalOut, 0),
           linkedRevenue,
           linkedCost,
