@@ -236,7 +236,7 @@ export default function ProfitabilityPage() {
   };
 
   const rows = data?.rows || [];
-  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalProfit: 0, totalCashReceived: 0, totalPayrollFees: 0, avgMargin: 0, avgUtilisation: 0, totalActualHours: 0, totalExpectedHours: 0 };
+  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalCostIncPT: 0, totalProfit: 0, totalProfitExPT: 0, totalProfitIncPT: 0, totalPayrollTax: 0, totalCashReceived: 0, totalPayrollFees: 0, avgMargin: 0, avgMarginIncPT: 0, avgUtilisation: 0, totalActualHours: 0, totalExpectedHours: 0 };
 
   return (
     <div className="flex flex-col h-full" data-testid="page-profitability">

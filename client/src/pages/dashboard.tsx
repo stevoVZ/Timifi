@@ -103,7 +103,7 @@ export default function DashboardPage() {
 
   const recentPayRuns = payRuns
     ? [...payRuns]
-        .sort((a, b) => new Date(b.payDate).getTime() - new Date(a.payDate).getTime())
+        .sort((a, b) => new Date(String(b.payDate)).getTime() - new Date(String(a.payDate)).getTime())
         .slice(0, 5)
     : [];
 
@@ -356,7 +356,7 @@ export default function DashboardPage() {
                                   {n.title}
                                 </div>
                                 <div className="text-[11px] text-muted-foreground mt-0.5">
-                                  {timeAgo(n.createdAt)}
+                                  {timeAgo(String(n.createdAt))}
                                 </div>
                               </div>
                             </div>

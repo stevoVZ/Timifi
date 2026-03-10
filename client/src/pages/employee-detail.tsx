@@ -706,6 +706,27 @@ export default function EmployeeDetailPage() {
 const FULL_MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 function FinancialsTab({ reconciliation, employeeId }: { reconciliation: ReconciliationPeriod[]; employeeId: string }) {
+  const { toast } = useToast();
+  const [portalPwOpen, setPortalPwOpen] = useState(false);
+  const [portalPw, setPortalPw] = useState("");
+  const setPortalPwMutation = useMutation({
+    mutationFn: async (password: string) => {
+      const res = await fetch(`/api/employees/${employeeId}/set-portal-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message || "Failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Portal password set", description: "Employee can now log into the portal." });
+      setPortalPwOpen(false);
+      setPortalPw("");
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const { data: rateHistory } = useQuery<any[]>({
     queryKey: ["/api/employees", employeeId, "rate-history"],
     queryFn: async () => {
@@ -832,6 +853,47 @@ function FinancialsTab({ reconciliation, employeeId }: { reconciliation: Reconci
               </table>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Portal Access */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Lock className="w-4 h-4" />
+            Portal Access
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Set a password so this employee can log into the employee portal.
+            </p>
+            {!portalPwOpen ? (
+              <Button size="sm" variant="outline" onClick={() => setPortalPwOpen(true)} data-testid="button-open-set-portal-pw">
+                <Lock className="w-3.5 h-3.5 mr-1.5" /> Set Portal Password
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  className="h-8 text-sm border rounded px-3 w-48 bg-background"
+                  placeholder="Min. 6 characters"
+                  value={portalPw}
+                  onChange={e => setPortalPw(e.target.value)}
+                  data-testid="input-portal-password"
+                />
+                <Button size="sm" disabled={portalPw.length < 6 || setPortalPwMutation.isPending}
+                  onClick={() => setPortalPwMutation.mutate(portalPw)}
+                  data-testid="button-confirm-portal-pw">
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => { setPortalPwOpen(false); setPortalPw(""); }}>
+                  Cancel
+                </Button>
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 
