@@ -9,6 +9,7 @@ import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, 
 import { requireAuth, hashPassword } from "./auth";
 import { scanTimesheetPdf } from "./ocr";
 import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from "./rates";
+import { getACTWorkingDays, getACTExpectedHours } from "./act-working-days";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -2951,6 +2952,114 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to delete expected hours" });
+    }
+  });
+
+  app.get("/api/act-working-days", async (req, res) => {
+    try {
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const months = [];
+      for (let m = 1; m <= 12; m++) {
+        const info = getACTWorkingDays(year, m);
+        months.push({
+          month: m,
+          year,
+          ...info,
+          expectedHours: parseFloat((info.workingDays * 7.5).toFixed(2)),
+        });
+      }
+      res.json(months);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to calculate working days" });
+    }
+  });
+
+  app.post("/api/generate-expected-hours", async (req, res) => {
+    try {
+      const { startYear, endYear, tenantId: bodyTenantId } = req.body;
+      if (!startYear || !endYear || startYear > endYear) {
+        return res.status(400).json({ message: "Provide valid startYear and endYear" });
+      }
+
+      let tenantId = bodyTenantId;
+      if (!tenantId) {
+        const setting = await storage.getSetting("xero.tenantId");
+        tenantId = setting?.value;
+      }
+      if (!tenantId) {
+        return res.status(400).json({ message: "No tenant selected. Switch to an organisation first or provide tenantId." });
+      }
+
+      const { db } = await import("./db");
+      const { employees: empTable, placements: plTable, monthlyExpectedHours: mehTable } = await import("@shared/schema");
+      const { eq, and } = await import("drizzle-orm");
+
+      const allEmployees = await db.select().from(empTable).where(eq(empTable.tenantId, tenantId));
+
+      let created = 0;
+      let updated = 0;
+
+      for (const emp of allEmployees) {
+        const empPlacements = await db.select().from(plTable).where(eq(plTable.employeeId, emp.id));
+        if (empPlacements.length === 0) continue;
+
+        let earliestStart: Date | null = null;
+        let latestEnd: Date | null = null;
+        let hasActive = false;
+
+        for (const p of empPlacements) {
+          const start = p.startDate ? new Date(p.startDate) : null;
+          if (start && (!earliestStart || start < earliestStart)) earliestStart = start;
+          if (p.status === "ACTIVE") {
+            hasActive = true;
+          } else if (p.endDate) {
+            const end = new Date(p.endDate);
+            if (!latestEnd || end > latestEnd) latestEnd = end;
+          }
+        }
+
+        for (let year = startYear; year <= endYear; year++) {
+          for (let month = 1; month <= 12; month++) {
+            const monthStart = new Date(year, month - 1, 1);
+            const monthEnd = new Date(year, month, 0);
+
+            if (earliestStart && monthEnd < earliestStart) continue;
+            if (!hasActive && latestEnd && monthStart > latestEnd) continue;
+
+            const hours = getACTExpectedHours(year, month);
+            const { workingDays } = getACTWorkingDays(year, month);
+
+            const existing = await db.select().from(mehTable).where(
+              and(
+                eq(mehTable.employeeId, emp.id),
+                eq(mehTable.month, month),
+                eq(mehTable.year, year),
+              )
+            );
+
+            if (existing.length > 0) {
+              await db.update(mehTable)
+                .set({ expectedDays: workingDays.toString(), expectedHours: hours.toString(), tenantId, updatedAt: new Date() })
+                .where(eq(mehTable.id, existing[0].id));
+              updated++;
+            } else {
+              await db.insert(mehTable).values({
+                employeeId: emp.id,
+                month,
+                year,
+                expectedDays: workingDays.toString(),
+                expectedHours: hours.toString(),
+                tenantId,
+              });
+              created++;
+            }
+          }
+        }
+      }
+
+      res.json({ created, updated, totalEmployees: allEmployees.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to generate expected hours" });
     }
   });
 

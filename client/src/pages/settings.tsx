@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff } from "lucide-react";
+import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff, Calculator, CalendarDays } from "lucide-react";
 import type { Setting } from "@shared/schema";
 
 function useSettings() {
@@ -1171,6 +1171,168 @@ function UsersTab() {
   );
 }
 
+type ACTMonthData = {
+  month: number;
+  year: number;
+  workingDays: number;
+  totalWeekdays: number;
+  holidays: number;
+  shutdownDays: number;
+  expectedHours: number;
+};
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function DataTab() {
+  const { toast } = useToast();
+  const currentYear = new Date().getFullYear();
+  const [previewYear, setPreviewYear] = useState(currentYear);
+  const [startYear, setStartYear] = useState(2022);
+  const [endYear, setEndYear] = useState(currentYear);
+
+  const workingDaysQuery = useQuery<ACTMonthData[]>({
+    queryKey: ["/api/act-working-days", previewYear],
+    queryFn: async () => {
+      const res = await fetch(`/api/act-working-days?year=${previewYear}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/generate-expected-hours", { startYear, endYear });
+      return res.json();
+    },
+    onSuccess: (data: { created: number; updated: number; totalEmployees: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expected-hours"] });
+      toast({ title: `Generated expected hours: ${data.created} created, ${data.updated} updated across ${data.totalEmployees} employees` });
+    },
+    onError: (err: Error) => {
+      toast({ title: `Failed: ${err.message}`, variant: "destructive" });
+    },
+  });
+
+  const months = workingDaysQuery.data || [];
+  const totalWorkingDays = months.reduce((s, m) => s + m.workingDays, 0);
+  const totalHours = months.reduce((s, m) => s + m.expectedHours, 0);
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h3 className="text-sm font-semibold mb-1" data-testid="heading-act-working-days">ACT Working Days Calendar</h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Working days exclude weekends, ACT public holidays, and the Christmas/New Year shutdown period (~20 Dec – 3 Jan).
+          Standard day = 7.5 hours.
+        </p>
+
+        <div className="flex items-center gap-2 mb-4">
+          <Label className="text-xs">Year</Label>
+          <Select value={String(previewYear)} onValueChange={(v) => setPreviewYear(parseInt(v))}>
+            <SelectTrigger className="w-24 h-8 text-xs" data-testid="select-preview-year">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: 10 }, (_, i) => 2020 + i).map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {workingDaysQuery.isLoading ? (
+          <Skeleton className="h-48 w-full" />
+        ) : (
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-muted/50">
+                  <th className="text-left px-3 py-2 font-medium">Month</th>
+                  <th className="text-right px-3 py-2 font-medium">Weekdays</th>
+                  <th className="text-right px-3 py-2 font-medium">Holidays</th>
+                  <th className="text-right px-3 py-2 font-medium">Shutdown</th>
+                  <th className="text-right px-3 py-2 font-medium">Working Days</th>
+                  <th className="text-right px-3 py-2 font-medium">Hours (7.5h)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {months.map((m) => (
+                  <tr key={m.month} className="border-t" data-testid={`row-month-${m.month}`}>
+                    <td className="px-3 py-1.5 font-medium">{MONTH_NAMES[m.month - 1]}</td>
+                    <td className="text-right px-3 py-1.5 text-muted-foreground">{m.totalWeekdays}</td>
+                    <td className="text-right px-3 py-1.5">{m.holidays > 0 ? <span className="text-amber-600 dark:text-amber-400">{m.holidays}</span> : "—"}</td>
+                    <td className="text-right px-3 py-1.5">{m.shutdownDays > 0 ? <span className="text-red-600 dark:text-red-400">{m.shutdownDays}</span> : "—"}</td>
+                    <td className="text-right px-3 py-1.5 font-semibold">{m.workingDays}</td>
+                    <td className="text-right px-3 py-1.5 font-semibold">{m.expectedHours}</td>
+                  </tr>
+                ))}
+                <tr className="border-t bg-muted/30 font-semibold">
+                  <td className="px-3 py-2">Total</td>
+                  <td className="text-right px-3 py-2">{months.reduce((s, m) => s + m.totalWeekdays, 0)}</td>
+                  <td className="text-right px-3 py-2 text-amber-600 dark:text-amber-400">{months.reduce((s, m) => s + m.holidays, 0)}</td>
+                  <td className="text-right px-3 py-2 text-red-600 dark:text-red-400">{months.reduce((s, m) => s + m.shutdownDays, 0)}</td>
+                  <td className="text-right px-3 py-2">{totalWorkingDays}</td>
+                  <td className="text-right px-3 py-2">{totalHours.toFixed(2)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t pt-6">
+        <h3 className="text-sm font-semibold mb-1" data-testid="heading-generate-expected">Generate Expected Hours</h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Populate monthly expected hours for all employees with placements in the current organisation,
+          based on ACT working days. Only generates for months during each employee's placement period.
+        </p>
+
+        <div className="flex items-center gap-3 mb-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Label className="text-xs whitespace-nowrap">Start Year</Label>
+            <Select value={String(startYear)} onValueChange={(v) => setStartYear(parseInt(v))}>
+              <SelectTrigger className="w-24 h-8 text-xs" data-testid="select-start-year">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 10 }, (_, i) => 2020 + i).map(y => (
+                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="text-xs whitespace-nowrap">End Year</Label>
+            <Select value={String(endYear)} onValueChange={(v) => setEndYear(parseInt(v))}>
+              <SelectTrigger className="w-24 h-8 text-xs" data-testid="select-end-year">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 10 }, (_, i) => 2020 + i).map(y => (
+                  <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <Button
+          onClick={() => generateMutation.mutate()}
+          disabled={generateMutation.isPending}
+          data-testid="button-generate-expected-hours"
+        >
+          {generateMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Calculator className="w-4 h-4" />
+          )}
+          {generateMutation.isPending ? "Generating..." : "Generate Expected Hours"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 const tabs = [
   { id: "branding", label: "Branding", icon: Palette },
   { id: "company", label: "Company", icon: Building2 },
@@ -1178,6 +1340,7 @@ const tabs = [
   { id: "xero", label: "Xero", icon: RefreshCw },
   { id: "portal", label: "Portal", icon: Globe },
   { id: "users", label: "Users", icon: UserCog },
+  { id: "data", label: "Data", icon: CalendarDays },
 ];
 
 export default function SettingsPage() {
@@ -1233,6 +1396,9 @@ export default function SettingsPage() {
                 </TabsContent>
                 <TabsContent value="users" className="mt-0">
                   <UsersTab />
+                </TabsContent>
+                <TabsContent value="data" className="mt-0">
+                  <DataTab />
                 </TabsContent>
               </CardContent>
             </Card>

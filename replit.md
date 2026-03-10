@@ -52,3 +52,19 @@ The Recruitment Portal is built as a full-stack application.
 -   **wouter:** Lightweight React router.
 -   **Vite:** Frontend build tool.
 -   **DM Sans + DM Mono:** Chosen fonts for the application.
+
+## ACT Working Days Calculator
+
+The system includes an ACT (Australian Capital Territory) working days calculator (`server/act-working-days.ts`) that computes working days per month accounting for:
+- ACT public holidays (New Year's, Australia Day, Canberra Day, Easter, Anzac Day, Reconciliation Day, King's Birthday, Family & Community Day, Christmas, Boxing Day)
+- Christmas/New Year shutdown period (~20 Dec – 3 Jan)
+- Standard 7.5 hour working day
+
+Used for:
+- Populating `monthly_expected_hours` baseline data for profitability estimates
+- Settings > Data tab shows working days calendar by year
+- API: `GET /api/act-working-days?year=YYYY` and `POST /api/generate-expected-hours` (accepts `tenantId`, `startYear`, `endYear`)
+
+## Timesheet Auto-Population
+
+Timesheets are auto-created from invoiced hours: for every employee-month with invoice data, an APPROVED timesheet record exists with `total_hours` = sum of invoice hours. This feeds the three-tier hours model in profitability (Invoiced → Timesheet → Estimated).
