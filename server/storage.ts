@@ -33,6 +33,8 @@ import {
   type InvoicePayment, type InsertInvoicePayment,
   type MonthlyExpectedHours, type InsertMonthlyExpectedHours,
   monthlyExpectedHours,
+  type PayrollTaxRate, type InsertPayrollTaxRate,
+  payrollTaxRates,
 } from "@shared/schema";
 
 let _cachedTenantId: string | null = null;
@@ -202,6 +204,12 @@ export interface IStorage {
   getMonthlyExpectedHours(filters?: { employeeId?: string; month?: number; year?: number }): Promise<MonthlyExpectedHours[]>;
   upsertMonthlyExpectedHours(data: InsertMonthlyExpectedHours): Promise<MonthlyExpectedHours>;
   deleteMonthlyExpectedHours(id: string): Promise<void>;
+
+  getPayrollTaxRates(): Promise<PayrollTaxRate[]>;
+  getPayrollTaxRate(id: string): Promise<PayrollTaxRate | undefined>;
+  createPayrollTaxRate(data: InsertPayrollTaxRate): Promise<PayrollTaxRate>;
+  updatePayrollTaxRate(id: string, data: Partial<InsertPayrollTaxRate>): Promise<PayrollTaxRate | undefined>;
+  deletePayrollTaxRate(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1089,6 +1097,41 @@ export class DatabaseStorage implements IStorage {
 
   async deleteMonthlyExpectedHours(id: string): Promise<void> {
     await db.delete(monthlyExpectedHours).where(eq(monthlyExpectedHours.id, id));
+  }
+
+  async getPayrollTaxRates(): Promise<PayrollTaxRate[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(payrollTaxRates).where(eq(payrollTaxRates.tenantId, t)).orderBy(desc(payrollTaxRates.createdAt));
+    return db.select().from(payrollTaxRates).orderBy(desc(payrollTaxRates.createdAt));
+  }
+
+  async getPayrollTaxRate(id: string): Promise<PayrollTaxRate | undefined> {
+    const t = await this.tid();
+    const conditions = [eq(payrollTaxRates.id, id)];
+    if (t) conditions.push(eq(payrollTaxRates.tenantId, t));
+    const [rate] = await db.select().from(payrollTaxRates).where(and(...conditions));
+    return rate;
+  }
+
+  async createPayrollTaxRate(data: InsertPayrollTaxRate): Promise<PayrollTaxRate> {
+    const t = await this.tid();
+    const [rate] = await db.insert(payrollTaxRates).values({ ...data, tenantId: t }).returning();
+    return rate;
+  }
+
+  async updatePayrollTaxRate(id: string, data: Partial<InsertPayrollTaxRate>): Promise<PayrollTaxRate | undefined> {
+    const t = await this.tid();
+    const conditions = [eq(payrollTaxRates.id, id)];
+    if (t) conditions.push(eq(payrollTaxRates.tenantId, t));
+    const [rate] = await db.update(payrollTaxRates).set(data).where(and(...conditions)).returning();
+    return rate;
+  }
+
+  async deletePayrollTaxRate(id: string): Promise<void> {
+    const t = await this.tid();
+    const conditions = [eq(payrollTaxRates.id, id)];
+    if (t) conditions.push(eq(payrollTaxRates.tenantId, t));
+    await db.delete(payrollTaxRates).where(and(...conditions));
   }
 }
 

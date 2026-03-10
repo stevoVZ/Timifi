@@ -84,16 +84,45 @@ The system derives employee hourly pay rates from payslip data when Xero returns
 All cost calculations account for the full employer cost including taxes and statutory contributions:
 
 **Payroll employees:**
-- `Total Cost = Gross Earnings + Superannuation`
+- `Cost (ex PT) = Gross Earnings + Superannuation`
+- `Cost (inc PT) = Cost (ex PT) + Payroll Tax` (if applicable)
 - When Xero returns grossEarnings = 0 (salaried/monthly): `Gross = Net Pay + PAYG Withheld` (fallback to Net Pay if PAYG unavailable)
 - PAYG is already a component of gross earnings (gross = net + PAYG), so it's not double-counted
 
 **Contractor employees (paymentMethod = INVOICE):**
-- `Total Cost = Bank SPEND transactions / 1.1` (strips 10% Australian GST since agency claims input tax credits)
+- `Cost (ex PT) = Bank SPEND transactions / 1.1` (strips 10% Australian GST since agency claims input tax credits)
+- `Cost (inc PT) = Cost (ex PT) + Payroll Tax` (if applicable)
+- Contractor cost matching uses `supplierContactId` (Xero contact link) when set, falling back to `companyName` string matching
+
+**Payroll Tax:**
+- Per-state, per-financial-year rates stored in `payroll_tax_rates` table
+- Per-employee `payrollTaxApplicable` toggle (default true)
+- Taxable base: gross earnings (payroll) or ex-GST contractor cost
+- Financial year: `month >= 7 ? year : year - 1`
 
 **Revenue:** Always ex-GST (ACCREC invoices amountExclGst + RCTI amounts ex-GST)
-**Profit:** `Revenue (ex GST) - Total Cost`
+**Profit (ex PT):** `Revenue - Cost (ex PT)`
+**Profit (inc PT):** `Revenue - Cost (inc PT)`
 **Margin:** `Profit / Revenue * 100`
+
+## Supplier Contact Linking
+
+Contractors (paymentMethod=INVOICE) can be linked to a Xero supplier contact via `supplierContactId` on the employee record. This replaces fragile `companyName` string matching with reliable `xeroContactId` matching for bank transaction cost lookups. Multiple employees can share the same supplier contact.
+
+## Profitability Detail Page
+
+Route: `/profitability/:employeeId/:year/:month`
+- Shows comprehensive single-employee/month profitability breakdown
+- Rate economics, hours analysis, revenue breakdown (invoices + RCTIs), cost breakdown (payroll or contractor), payslip line items, payroll tax, management fees, profit summary with dual ex/inc PT columns
+- Linked from profitability table employee names
+
+## Profitability Table Features
+
+- Dual profit columns: "Profit (ex PT)" and "Profit (inc PT)"
+- Monthly totals row at bottom
+- Employee names link to profitability detail page
+- Client names link to employee detail page
+- Drill-down sheets on hours/revenue/cost/profit cells show payroll tax details
 
 ## Timesheet Auto-Population
 

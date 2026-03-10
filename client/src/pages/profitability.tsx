@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { TopBar } from "@/components/top-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -115,6 +116,10 @@ interface ProfitabilityRow {
     netPay: number;
     paygWithheld: number;
     totalCost: number;
+    totalCostIncPT: number;
+    payrollTaxRate: number;
+    payrollTaxAmount: number;
+    payrollTaxApplicable: boolean;
     costSource: "PAYROLL" | "CONTRACTOR_SPEND";
     contractorSpend: number;
     contractorSpendTxnCount: number;
@@ -122,6 +127,10 @@ interface ProfitabilityRow {
     contractorTxns: BankTxnDetail[];
   };
   payrollFeeRevenue: number;
+  profitExPayrollTax: number;
+  profitIncPayrollTax: number;
+  marginExPT: number;
+  marginIncPT: number;
   cashReceived: number;
   cashReceivedTxns: BankTxnDetail[];
   profit: number;
@@ -133,10 +142,16 @@ interface ProfitabilityData {
   totals: {
     totalRevenue: number;
     totalCost: number;
+    totalCostIncPT: number;
+    totalPayrollTax: number;
+    totalProfitExPT: number;
+    totalProfitIncPT: number;
     totalProfit: number;
     totalCashReceived: number;
     totalPayrollFees: number;
     avgMargin: number;
+    avgMarginExPT: number;
+    avgMarginIncPT: number;
     avgUtilisation: number;
     totalActualHours: number;
     totalExpectedHours: number;
@@ -272,16 +287,17 @@ export default function ProfitabilityPage() {
             />
             <KpiCard
               icon={<TrendingUp className="w-3.5 h-3.5" />}
-              label="Profit"
-              value={fmtCurrency(totals.totalProfit)}
-              valueColor={totals.totalProfit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
+              label="Profit (inc PT)"
+              value={fmtCurrency(totals.totalProfitIncPT)}
+              subtitle={totals.totalPayrollTax > 0 ? `PT: ${fmtCurrency(totals.totalPayrollTax)}` : undefined}
+              valueColor={totals.totalProfitIncPT >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
               testId="kpi-profit"
             />
             <KpiCard
               icon={<Percent className="w-3.5 h-3.5" />}
-              label="Avg Margin"
-              value={`${totals.avgMargin.toFixed(1)}%`}
-              valueColor={totals.avgMargin >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
+              label="Avg Margin (inc PT)"
+              value={`${totals.avgMarginIncPT.toFixed(1)}%`}
+              valueColor={totals.avgMarginIncPT >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
               testId="kpi-margin"
             />
             <KpiCard
@@ -324,23 +340,30 @@ export default function ProfitabilityPage() {
                       <th className="text-right px-4 py-2.5 font-medium">Hours</th>
                       <th className="text-right px-4 py-2.5 font-medium">Revenue</th>
                       <th className="text-right px-4 py-2.5 font-medium">Cost</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Profit</th>
+                      <th className="text-right px-4 py-2.5 font-medium">Profit (ex PT)</th>
+                      <th className="text-right px-4 py-2.5 font-medium">Profit (inc PT)</th>
                       <th className="text-right px-4 py-2.5 font-medium">Margin</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((row) => {
-                      const profitColor = row.profit > 0
+                      const profitExColor = row.profitExPayrollTax > 0
                         ? "text-green-600 dark:text-green-400"
-                        : row.profit < 0
+                        : row.profitExPayrollTax < 0
                         ? "text-red-600 dark:text-red-400"
                         : "";
-                      const marginColor = row.marginPercent > 15
+                      const profitIncColor = row.profitIncPayrollTax > 0
+                        ? "text-green-600 dark:text-green-400"
+                        : row.profitIncPayrollTax < 0
+                        ? "text-red-600 dark:text-red-400"
+                        : "";
+                      const marginColor = row.marginIncPT > 15
                         ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                        : row.marginPercent > 5
+                        : row.marginIncPT > 5
                         ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
                         : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400";
-                      const ProfitIcon = row.profit > 0 ? ArrowUpRight : row.profit < 0 ? ArrowDownRight : Minus;
+                      const ProfitExIcon = row.profitExPayrollTax > 0 ? ArrowUpRight : row.profitExPayrollTax < 0 ? ArrowDownRight : Minus;
+                      const ProfitIncIcon = row.profitIncPayrollTax > 0 ? ArrowUpRight : row.profitIncPayrollTax < 0 ? ArrowDownRight : Minus;
                       const spreadColor = row.rateSpread > 0
                         ? "text-green-600 dark:text-green-400"
                         : row.rateSpread < 0
@@ -350,19 +373,31 @@ export default function ProfitabilityPage() {
                       return (
                         <tr
                           key={row.placementId}
-                          className={`border-b hover:bg-muted/30 transition-colors ${row.placementStatus === "ENDED" ? "opacity-70" : ""}`}
+                          className={`border-b hover:bg-muted/30 transition-colors cursor-default ${row.placementStatus === "ENDED" ? "opacity-70" : ""}`}
                           data-testid={`row-profitability-${row.placementId}`}
                         >
                           <td className="px-4 py-3 font-medium" data-testid={`text-employee-${row.employee.id}`}>
                             <div className="flex items-center gap-2">
-                              {row.employee.firstName} {row.employee.lastName}
+                              <Link
+                                href={`/profitability/${row.employee.id}/${year}/${month}`}
+                                className="hover:underline text-foreground"
+                                data-testid={`link-employee-detail-${row.employee.id}`}
+                              >
+                                {row.employee.firstName} {row.employee.lastName}
+                              </Link>
                               {row.placementStatus === "ENDED" && (
                                 <Badge variant="outline" className="text-[10px] font-normal" data-testid={`badge-ended-${row.placementId}`}>Ended</Badge>
                               )}
                             </div>
                           </td>
                           <td className="px-4 py-3 text-muted-foreground" data-testid={`text-client-${row.placementId}`}>
-                            {row.client.name}
+                            <Link
+                              href={`/employees/${row.employee.id}`}
+                              className="hover:underline text-muted-foreground"
+                              data-testid={`link-client-${row.placementId}`}
+                            >
+                              {row.client.name}
+                            </Link>
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-muted-foreground" data-testid={`cell-charge-rate-${row.placementId}`}>
                             ${row.chargeOutRate.toFixed(0)}
@@ -411,18 +446,27 @@ export default function ProfitabilityPage() {
                             testId={`cell-cost-${row.placementId}`}
                           />
                           <td
-                            className={`px-4 py-3 text-right tabular-nums font-semibold ${profitColor} ${row.profit !== 0 ? "cursor-pointer hover:bg-muted/60 transition-colors" : ""}`}
-                            onClick={() => row.profit !== 0 && setDrillDown({ row, column: "profit" })}
-                            data-testid={`cell-profit-${row.placementId}`}
+                            className={`px-4 py-3 text-right tabular-nums font-semibold ${profitExColor}`}
+                            data-testid={`cell-profit-ex-pt-${row.placementId}`}
                           >
-                            <span className={`inline-flex items-center gap-1 ${row.profit !== 0 ? "border-b border-dashed border-current" : ""}`}>
-                              <ProfitIcon className="w-3.5 h-3.5" />
-                              {fmtCurrencyFull(row.profit)}
+                            <span className="inline-flex items-center gap-1">
+                              <ProfitExIcon className="w-3.5 h-3.5" />
+                              {fmtCurrencyFull(row.profitExPayrollTax)}
+                            </span>
+                          </td>
+                          <td
+                            className={`px-4 py-3 text-right tabular-nums font-semibold ${profitIncColor} ${row.profitIncPayrollTax !== 0 ? "cursor-pointer hover:bg-muted/60 transition-colors" : ""}`}
+                            onClick={() => row.profitIncPayrollTax !== 0 && setDrillDown({ row, column: "profit" })}
+                            data-testid={`cell-profit-inc-pt-${row.placementId}`}
+                          >
+                            <span className={`inline-flex items-center gap-1 ${row.profitIncPayrollTax !== 0 ? "border-b border-dashed border-current" : ""}`}>
+                              <ProfitIncIcon className="w-3.5 h-3.5" />
+                              {fmtCurrencyFull(row.profitIncPayrollTax)}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-right">
                             <Badge variant="secondary" className={`text-xs ${marginColor}`} data-testid={`badge-margin-${row.placementId}`}>
-                              {row.marginPercent.toFixed(1)}%
+                              {row.marginIncPT.toFixed(1)}%
                             </Badge>
                           </td>
                         </tr>
@@ -438,13 +482,24 @@ export default function ProfitabilityPage() {
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums">{fmtCurrencyFull(totals.totalRevenue)}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{fmtCurrencyFull(totals.totalCost)}</td>
-                        <td className={`px-4 py-3 text-right tabular-nums ${totals.totalProfit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                          {fmtCurrencyFull(totals.totalProfit)}
+                        <td className={`px-4 py-3 text-right tabular-nums ${totals.totalProfitExPT >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          {fmtCurrencyFull(totals.totalProfitExPT)}
+                        </td>
+                        <td className={`px-4 py-3 text-right tabular-nums ${totals.totalProfitIncPT >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          {fmtCurrencyFull(totals.totalProfitIncPT)}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <Badge variant="secondary" className="text-xs">{totals.avgMargin.toFixed(1)}%</Badge>
+                          <Badge variant="secondary" className="text-xs">{totals.avgMarginIncPT.toFixed(1)}%</Badge>
                         </td>
                       </tr>
+                      {totals.totalPayrollTax > 0 && (
+                        <tr className="bg-muted/30 text-sm text-muted-foreground">
+                          <td className="px-4 py-2" colSpan={8}>Payroll Tax Total</td>
+                          <td className="px-4 py-2 text-right tabular-nums" colSpan={3}>
+                            {fmtCurrencyFull(totals.totalPayrollTax)}
+                          </td>
+                        </tr>
+                      )}
                     </tfoot>
                   )}
                 </table>
@@ -1143,20 +1198,53 @@ function DrillDownDialog({
                   </div>
                 )}
 
-                <div className="border-t border-dashed pt-3 flex justify-between items-center font-semibold">
-                  <span className="flex items-center gap-2">
-                    <Calculator className="w-3.5 h-3.5" />
-                    Profit
-                  </span>
-                  <span className={`tabular-nums ${row.profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                    {fmtCurrencyFull(row.profit)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">Margin</span>
-                  <Badge variant="secondary" className="text-xs">
-                    {row.marginPercent.toFixed(1)}%
-                  </Badge>
+                {row.cost.payrollTaxAmount > 0 && (
+                  <>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground flex items-center gap-2">
+                        <Receipt className="w-3.5 h-3.5" />
+                        Payroll Tax ({row.cost.payrollTaxRate}%)
+                      </span>
+                      <span className="tabular-nums font-medium text-foreground">-{fmtCurrencyFull(row.cost.payrollTaxAmount)}</span>
+                    </div>
+                  </>
+                )}
+
+                <div className="border-t border-dashed pt-3 space-y-2">
+                  <div className="flex justify-between items-center font-semibold">
+                    <span className="flex items-center gap-2">
+                      <Calculator className="w-3.5 h-3.5" />
+                      Profit (ex PT)
+                    </span>
+                    <span className={`tabular-nums ${row.profitExPayrollTax >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                      {fmtCurrencyFull(row.profitExPayrollTax)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Margin (ex PT)</span>
+                    <Badge variant="secondary" className="text-xs">
+                      {row.marginExPT.toFixed(1)}%
+                    </Badge>
+                  </div>
+                  {row.cost.payrollTaxAmount > 0 && (
+                    <>
+                      <div className="flex justify-between items-center font-semibold">
+                        <span className="flex items-center gap-2">
+                          <Calculator className="w-3.5 h-3.5" />
+                          Profit (inc PT)
+                        </span>
+                        <span className={`tabular-nums ${row.profitIncPayrollTax >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          {fmtCurrencyFull(row.profitIncPayrollTax)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">Margin (inc PT)</span>
+                        <Badge variant="secondary" className="text-xs">
+                          {row.marginIncPT.toFixed(1)}%
+                        </Badge>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 

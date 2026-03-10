@@ -28,6 +28,7 @@ import PayItemsPage from "@/pages/pay-items";
 import ReconciliationPage from "@/pages/reconciliation";
 import BankStatementsPage from "@/pages/bank-statements";
 import ProfitabilityPage from "@/pages/profitability";
+import ProfitabilityDetailPage from "@/pages/profitability-detail";
 import ClientLedgerPage from "@/pages/client-ledger";
 import RctisPage from "@/pages/rctis";
 
@@ -54,6 +55,7 @@ function AdminRouter() {
       <Route path="/rctis" component={RctisPage} />
       <Route path="/reconciliation" component={ReconciliationPage} />
       <Route path="/bank-statements" component={BankStatementsPage} />
+      <Route path="/profitability/:employeeId/:year/:month" component={ProfitabilityDetailPage} />
       <Route path="/profitability" component={ProfitabilityPage} />
       <Route path="/client-ledger" component={ClientLedgerPage} />
       <Route path="/pay-items" component={PayItemsPage} />

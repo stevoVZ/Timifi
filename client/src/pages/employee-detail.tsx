@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
@@ -18,7 +19,7 @@ import {
   DollarSign, Clock, Pencil, Check, X, AlertTriangle, FileText,
   Receipt, User, Upload, CloudUpload, Trash2, Eye, FileBadge,
   Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File, Lock, RefreshCw,
-  TrendingUp, CheckCircle, AlertCircle, CircleDollarSign, Percent, History,
+  TrendingUp, CheckCircle, AlertCircle, CircleDollarSign, Percent, History, Calculator,
 } from "lucide-react";
 import type { Employee, Timesheet, Invoice, Document, Client, Placement } from "@shared/schema";
 
@@ -106,13 +107,22 @@ export default function EmployeeDetailPage() {
     queryKey: ["/api/clients"],
   });
 
+  const { data: invoiceContacts } = useQuery<{ name: string; xeroContactId: string | null }[]>({
+    queryKey: ["/api/clients/invoice-contacts"],
+  });
+
+  const { data: supplierContacts } = useQuery<{ contactName: string; xeroContactId: string }[]>({
+    queryKey: ["/api/supplier-contacts"],
+    enabled: !!id,
+  });
+
   const { data: placementsList } = useQuery<Placement[]>({
     queryKey: ["/api/employees", id, "placements"],
     enabled: !!id,
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (data: Record<string, string>) => {
+    mutationFn: async (data: Record<string, any>) => {
       const res = await apiRequest("PATCH", `/api/employees/${id}`, data);
       return res.json();
     },
@@ -331,8 +341,8 @@ export default function EmployeeDetailPage() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="__none__">Not assigned</SelectItem>
-                            {(clientsList || []).map((c) => (
-                              <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+                            {(invoiceContacts || []).map((c) => (
+                              <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -412,6 +422,31 @@ export default function EmployeeDetailPage() {
                           isPending={updateMutation.isPending}
                           testId="text-abn"
                         />
+                        <div className="flex items-center gap-3 py-2" data-testid="field-supplier-contact">
+                          <Landmark className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[11px] text-muted-foreground mb-0.5">Supplier Contact</div>
+                            <Select
+                              value={employee.supplierContactId || "__none__"}
+                              onValueChange={(v) => {
+                                const val = v === "__none__" ? null : v;
+                                updateMutation.mutate({ supplierContactId: val });
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-sm" data-testid="select-supplier-contact">
+                                <SelectValue placeholder="Select supplier contact" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">Not linked</SelectItem>
+                                {(supplierContacts || []).map((sc) => (
+                                  <SelectItem key={sc.xeroContactId} value={sc.xeroContactId}>
+                                    {sc.contactName}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
                       </>
                     )}
                     <InfoRow icon={Calendar} label="Start Date" value={employee.startDate ? new Date(employee.startDate).toLocaleDateString("en-AU") : "Not set"} testId="text-start-date" />
@@ -481,6 +516,24 @@ export default function EmployeeDetailPage() {
                       isPending={updateMutation.isPending}
                       testId="text-payroll-fee-percent"
                     />
+                    <div className="flex items-center gap-3 py-2" data-testid="field-payroll-tax-applicable">
+                      <Calculator className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] text-muted-foreground mb-0.5">Payroll Tax Applicable</div>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={employee.payrollTaxApplicable}
+                            onCheckedChange={(checked) => {
+                              updateMutation.mutate({ payrollTaxApplicable: checked });
+                            }}
+                            data-testid="switch-payroll-tax-applicable"
+                          />
+                          <span className="text-sm text-foreground" data-testid="text-payroll-tax-status">
+                            {employee.payrollTaxApplicable ? "Yes" : "No"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   {(employee.chargeOutRate || employee.hourlyRate) && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 p-3 rounded-lg bg-muted/50 border border-border">
@@ -571,6 +624,7 @@ export default function EmployeeDetailPage() {
                 employeeId={id!}
                 placements={placementsList || []}
                 clients={clientsList || []}
+                invoiceContacts={invoiceContacts || []}
               />
             </TabsContent>
 
@@ -735,7 +789,7 @@ function FinancialsTab({ reconciliation, employeeId }: { reconciliation: Reconci
                   <tr className="border-b border-border">
                     <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Effective Date</th>
                     <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Client</th>
-                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Pay Rate</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Pay Rate (Ex GST)</th>
                     <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Charge-Out (Ex GST)</th>
                     <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Super %</th>
                     <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Source</th>
@@ -1043,7 +1097,7 @@ function DocumentsTab({ employeeId, documents }: { employeeId: string; documents
   );
 }
 
-function PlacementsCard({ employeeId, placements, clients }: { employeeId: string; placements: Placement[]; clients: Client[] }) {
+function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { employeeId: string; placements: Placement[]; clients: Client[]; invoiceContacts: { name: string; xeroContactId: string | null }[] }) {
   const { toast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [endingPlacementId, setEndingPlacementId] = useState<string | null>(null);
@@ -1205,9 +1259,15 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">Select a client...</SelectItem>
-                    {clients.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))}
+                    {invoiceContacts.length > 0
+                      ? invoiceContacts.map((c) => {
+                          const matchedClient = clients.find(cl => cl.name === c.name);
+                          return <SelectItem key={c.name} value={matchedClient?.id || c.name}>{c.name}</SelectItem>;
+                        })
+                      : clients.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))
+                    }
                   </SelectContent>
                 </Select>
               </div>
@@ -1234,11 +1294,11 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                 </div>
               )}
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Charge Out Rate</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Charge Out Rate (Ex GST)</label>
                 <Input type="number" className="h-8 text-sm" placeholder="$/hr" value={formData.chargeOutRate} onChange={(e) => setFormData(prev => ({ ...prev, chargeOutRate: e.target.value }))} data-testid="input-placement-charge-rate" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Pay Rate</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Pay Rate (Ex GST)</label>
                 <Input type="number" className="h-8 text-sm" placeholder="$/hr" value={formData.payRate} onChange={(e) => setFormData(prev => ({ ...prev, payRate: e.target.value }))} data-testid="input-placement-pay-rate" />
               </div>
             </div>
@@ -1336,8 +1396,8 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                 </div>
                 <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                   <span>From: {p.startDate || "N/A"}</span>
-                  {p.chargeOutRate && <span>Charge: ${p.chargeOutRate}/hr</span>}
-                  {p.payRate && <span>Pay: ${p.payRate}/hr</span>}
+                  {p.chargeOutRate && <span>Charge (Ex GST): ${p.chargeOutRate}/hr</span>}
+                  {p.payRate && <span>Pay (Ex GST): ${p.payRate}/hr</span>}
                   {p.payrollFeePercent && parseFloat(p.payrollFeePercent) > 0 && <span>Fee: {p.payrollFeePercent}%</span>}
                   {p.notes && <span className="truncate max-w-[200px]">Notes: {p.notes}</span>}
                 </div>
@@ -1381,8 +1441,8 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                     </div>
                     <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                       <span>{p.startDate || "N/A"} — {p.endDate || "N/A"}</span>
-                      {p.chargeOutRate && <span>Charge: ${p.chargeOutRate}/hr</span>}
-                      {p.payRate && <span>Pay: ${p.payRate}/hr</span>}
+                      {p.chargeOutRate && <span>Charge (Ex GST): ${p.chargeOutRate}/hr</span>}
+                      {p.payRate && <span>Pay (Ex GST): ${p.payRate}/hr</span>}
                       {p.payrollFeePercent && parseFloat(p.payrollFeePercent) > 0 && <span>Fee: {p.payrollFeePercent}%</span>}
                       {p.notes && <span className="truncate max-w-[200px]">Notes: {p.notes}</span>}
                     </div>
@@ -1437,6 +1497,7 @@ function PlacementEditForm({
               ))}
             </SelectContent>
           </Select>
+
         </div>
         <div>
           <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
@@ -1459,7 +1520,7 @@ function PlacementEditForm({
           />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Charge Out Rate</label>
+          <label className="text-xs text-muted-foreground mb-1 block">Charge Out Rate (Ex GST)</label>
           <Input
             type="number"
             className="h-8 text-sm"
@@ -1470,7 +1531,7 @@ function PlacementEditForm({
           />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Pay Rate</label>
+          <label className="text-xs text-muted-foreground mb-1 block">Pay Rate (Ex GST)</label>
           <Input
             type="number"
             className="h-8 text-sm"

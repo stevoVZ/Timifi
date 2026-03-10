@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema } from "@shared/schema";
+import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, pushInvoiceToXero } from "./xero";
@@ -708,6 +708,47 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/payroll-tax-rates", async (_req, res) => {
+    try {
+      const rates = await storage.getPayrollTaxRates();
+      res.json(rates);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch payroll tax rates" });
+    }
+  });
+
+  app.post("/api/payroll-tax-rates", async (req, res) => {
+    try {
+      const parsed = insertPayrollTaxRateSchema.parse(req.body);
+      const rate = await storage.createPayrollTaxRate(parsed);
+      res.status(201).json(rate);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Invalid payroll tax rate data" });
+    }
+  });
+
+  app.put("/api/payroll-tax-rates/:id", async (req, res) => {
+    try {
+      const existing = await storage.getPayrollTaxRate(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Payroll tax rate not found" });
+      const rate = await storage.updatePayrollTaxRate(req.params.id, req.body);
+      res.json(rate);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to update payroll tax rate" });
+    }
+  });
+
+  app.delete("/api/payroll-tax-rates/:id", async (req, res) => {
+    try {
+      const existing = await storage.getPayrollTaxRate(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Payroll tax rate not found" });
+      await storage.deletePayrollTaxRate(req.params.id);
+      res.json({ message: "Payroll tax rate deleted" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete payroll tax rate" });
+    }
+  });
+
   app.get("/api/invoices/employee/:employeeId", async (req, res) => {
     try {
       const employeeId = req.params.employeeId;
@@ -885,11 +926,13 @@ export async function registerRoutes(
         const payRun = best?.payRun;
 
         let contractorCost: { total: number; transactionCount: number; companyName: string | null } | null = null;
-        if (emp.paymentMethod === "INVOICE" && emp.companyName) {
-          const companyNorm = normalizeCompanyName(emp.companyName);
-          const matchingSpend = spendTxns.filter(t =>
-            t.contactName && normalizeCompanyName(t.contactName) === companyNorm
-          );
+        if (emp.paymentMethod === "INVOICE" && (emp.supplierContactId || emp.companyName)) {
+          const matchingSpend = emp.supplierContactId
+            ? spendTxns.filter(t => t.xeroContactId && t.xeroContactId === emp.supplierContactId)
+            : spendTxns.filter(t => {
+                const companyNorm = normalizeCompanyName(emp.companyName!);
+                return t.contactName && normalizeCompanyName(t.contactName) === companyNorm;
+              });
           contractorCost = {
             total: matchingSpend.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0),
             transactionCount: matchingSpend.length,
@@ -1693,6 +1736,23 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/clients/invoice-contacts", async (_req, res) => {
+    try {
+      const invoices = await storage.getInvoices();
+      const accrecInvoices = invoices.filter(inv => inv.invoiceType === "ACCREC" && inv.contactName);
+      const contactMap = new Map<string, { name: string; xeroContactId: string | null }>();
+      for (const inv of accrecInvoices) {
+        if (inv.contactName && !contactMap.has(inv.contactName)) {
+          contactMap.set(inv.contactName, { name: inv.contactName, xeroContactId: inv.xeroContactId });
+        }
+      }
+      const contacts = Array.from(contactMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+      res.json(contacts);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch invoice contacts" });
+    }
+  });
+
   app.get("/api/clients", async (_req, res) => {
     try {
       const data = await storage.getClients();
@@ -1813,6 +1873,26 @@ export async function registerRoutes(
       res.json({ rate, date: date.toISOString().split("T")[0] });
     } catch (err) {
       res.status(500).json({ message: "Failed to get super rate" });
+    }
+  });
+
+  app.get("/api/supplier-contacts", async (_req, res) => {
+    try {
+      const data = await storage.getBankTransactions();
+      const spendTxns = data.filter(t => t.type === "SPEND" && t.contactName && t.xeroContactId);
+      const contactMap = new Map<string, { contactName: string; xeroContactId: string }>();
+      for (const txn of spendTxns) {
+        if (!contactMap.has(txn.xeroContactId!)) {
+          contactMap.set(txn.xeroContactId!, {
+            contactName: txn.contactName!,
+            xeroContactId: txn.xeroContactId!,
+          });
+        }
+      }
+      const contacts = Array.from(contactMap.values()).sort((a, b) => a.contactName.localeCompare(b.contactName));
+      res.json(contacts);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch supplier contacts" });
     }
   });
 
@@ -2378,7 +2458,7 @@ export async function registerRoutes(
       const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
 
-      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours] = await Promise.all([
+      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates] = await Promise.all([
         storage.getEmployees(),
         storage.getAllPlacements(),
         storage.getInvoices(),
@@ -2388,7 +2468,16 @@ export async function registerRoutes(
         storage.getRctis(),
         storage.getTimesheets(),
         storage.getMonthlyExpectedHours({ month, year }),
+        storage.getPayrollTaxRates(),
       ]);
+
+      const financialYear = month >= 7 ? year : year - 1;
+      const ptRatesByState: Record<string, number> = {};
+      for (const ptr of allPayrollTaxRates) {
+        if (ptr.financialYearStart === financialYear && !(ptr.state in ptRatesByState)) {
+          ptRatesByState[ptr.state] = parseFloat(ptr.rate);
+        }
+      }
 
       const periodStart = new Date(year, month - 1, 1);
       const periodEnd = new Date(year, month, 0);
@@ -2505,14 +2594,19 @@ export async function registerRoutes(
         let contractorSpendTxnCount = 0;
         let matchedSpendTxns: typeof periodBankTxns = [];
 
-        if (employee.paymentMethod === "INVOICE" && employee.companyName) {
-          const companyNorm = normalizeCompanyName(employee.companyName);
-          matchedSpendTxns = periodBankTxns.filter(t =>
-            !claimedBankTxnIds.has(t.id) &&
-            t.type === "SPEND" &&
-            t.contactName &&
-            normalizeCompanyName(t.contactName) === companyNorm
-          );
+        if (employee.paymentMethod === "INVOICE" && (employee.supplierContactId || employee.companyName)) {
+          matchedSpendTxns = employee.supplierContactId
+            ? periodBankTxns.filter(t =>
+                !claimedBankTxnIds.has(t.id) &&
+                t.type === "SPEND" &&
+                t.xeroContactId && t.xeroContactId === employee.supplierContactId
+              )
+            : periodBankTxns.filter(t =>
+                !claimedBankTxnIds.has(t.id) &&
+                t.type === "SPEND" &&
+                t.contactName &&
+                normalizeCompanyName(t.contactName) === normalizeCompanyName(employee.companyName!)
+              );
           matchedSpendTxns.forEach(t => claimedBankTxnIds.add(t.id));
           contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)) / 1.1, 0);
           contractorSpendTxnCount = matchedSpendTxns.length;
@@ -2525,8 +2619,21 @@ export async function registerRoutes(
         const feePercent = parseFloat(employee.payrollFeePercent || "0");
         const payrollFeeRevenue = grossEarnings * (feePercent / 100);
 
-        const profit = revenue - totalEmployeeCost;
-        const marginPercent = revenue > 0 ? (profit / revenue) * 100 : 0;
+        let payrollTaxRate = 0;
+        let payrollTaxAmount = 0;
+        if (employee.payrollTaxApplicable && employee.state && ptRatesByState[employee.state] !== undefined) {
+          payrollTaxRate = ptRatesByState[employee.state];
+          const taxableBase = costSource === "CONTRACTOR_SPEND" ? contractorSpend : grossEarnings;
+          payrollTaxAmount = taxableBase * (payrollTaxRate / 100);
+        }
+
+        const costExPayrollTax = totalEmployeeCost;
+        const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
+
+        const profitExPayrollTax = revenue - costExPayrollTax;
+        const profitIncPayrollTax = revenue - costIncPayrollTax;
+        const marginExPT = revenue > 0 ? (profitExPayrollTax / revenue) * 100 : 0;
+        const marginIncPT = revenue > 0 ? (profitIncPayrollTax / revenue) * 100 : 0;
 
         const clientBankTxns = periodBankTxns.filter(t =>
           !claimedBankTxnIds.has(t.id) &&
@@ -2602,7 +2709,11 @@ export async function registerRoutes(
             superAmount: Math.round(superAmount * 100) / 100,
             netPay: Math.round(netPay * 100) / 100,
             paygWithheld: Math.round(paygWithheld * 100) / 100,
-            totalCost: Math.round(totalEmployeeCost * 100) / 100,
+            totalCost: Math.round(costExPayrollTax * 100) / 100,
+            totalCostIncPT: Math.round(costIncPayrollTax * 100) / 100,
+            payrollTaxRate,
+            payrollTaxAmount: Math.round(payrollTaxAmount * 100) / 100,
+            payrollTaxApplicable: employee.payrollTaxApplicable,
             costSource,
             contractorSpend: Math.round(contractorSpend * 100) / 100,
             contractorSpendTxnCount,
@@ -2625,6 +2736,10 @@ export async function registerRoutes(
             })),
           },
           payrollFeeRevenue: Math.round(payrollFeeRevenue * 100) / 100,
+          profitExPayrollTax: Math.round(profitExPayrollTax * 100) / 100,
+          profitIncPayrollTax: Math.round(profitIncPayrollTax * 100) / 100,
+          marginExPT: Math.round(marginExPT * 10) / 10,
+          marginIncPT: Math.round(marginIncPT * 10) / 10,
           cashReceived: Math.round(cashReceived * 100) / 100,
           cashReceivedTxns: clientBankTxns.map(t => ({
             id: t.id,
@@ -2635,19 +2750,25 @@ export async function registerRoutes(
             reference: t.reference,
             description: t.description,
           })),
-          profit: Math.round(profit * 100) / 100,
-          marginPercent: Math.round(marginPercent * 10) / 10,
+          profit: Math.round(profitIncPayrollTax * 100) / 100,
+          marginPercent: Math.round(marginIncPT * 10) / 10,
         };
       }).filter(Boolean);
 
       const totals = {
         totalRevenue: rows.reduce((s, r: any) => s + r.revenue.amountExGst, 0),
         totalCost: rows.reduce((s, r: any) => s + r.cost.totalCost, 0),
+        totalCostIncPT: rows.reduce((s, r: any) => s + r.cost.totalCostIncPT, 0),
+        totalPayrollTax: rows.reduce((s, r: any) => s + r.cost.payrollTaxAmount, 0),
+        totalProfitExPT: rows.reduce((s, r: any) => s + r.profitExPayrollTax, 0),
+        totalProfitIncPT: rows.reduce((s, r: any) => s + r.profitIncPayrollTax, 0),
         totalProfit: rows.reduce((s, r: any) => s + r.profit, 0),
         totalCashReceived: rows.reduce((s, r: any) => s + r.cashReceived, 0),
         totalPayrollFees: rows.reduce((s, r: any) => s + r.payrollFeeRevenue, 0),
       };
-      const avgMargin = totals.totalRevenue > 0 ? (totals.totalProfit / totals.totalRevenue) * 100 : 0;
+      const avgMarginExPT = totals.totalRevenue > 0 ? (totals.totalProfitExPT / totals.totalRevenue) * 100 : 0;
+      const avgMarginIncPT = totals.totalRevenue > 0 ? (totals.totalProfitIncPT / totals.totalRevenue) * 100 : 0;
+      const avgMargin = avgMarginIncPT;
 
       const totalActualHours = rows.reduce((s, r: any) => s + r.revenue.bestAvailableHours, 0);
       const totalExpectedHours = rows.reduce((s, r: any) => s + r.expectedHours, 0);
@@ -2655,11 +2776,323 @@ export async function registerRoutes(
 
       res.json({
         rows,
-        totals: { ...totals, avgMargin: Math.round(avgMargin * 10) / 10, avgUtilisation, totalActualHours: Math.round(totalActualHours * 10) / 10, totalExpectedHours: Math.round(totalExpectedHours * 10) / 10 },
+        totals: {
+          ...totals,
+          avgMargin: Math.round(avgMargin * 10) / 10,
+          avgMarginExPT: Math.round(avgMarginExPT * 10) / 10,
+          avgMarginIncPT: Math.round(avgMarginIncPT * 10) / 10,
+          avgUtilisation,
+          totalActualHours: Math.round(totalActualHours * 10) / 10,
+          totalExpectedHours: Math.round(totalExpectedHours * 10) / 10,
+        },
         period: { month, year },
       });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to fetch profitability data" });
+    }
+  });
+
+  app.get("/api/profitability/:employeeId/:year/:month", async (req, res) => {
+    try {
+      const { employeeId } = req.params;
+      const month = parseInt(req.params.month);
+      const year = parseInt(req.params.year);
+      if (!employeeId || isNaN(month) || isNaN(year)) {
+        return res.status(400).json({ message: "Invalid parameters" });
+      }
+
+      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates] = await Promise.all([
+        storage.getEmployees(),
+        storage.getAllPlacements(),
+        storage.getInvoices(),
+        storage.getPayRuns(),
+        storage.getBankTransactions(),
+        storage.getClients(),
+        storage.getRctis(),
+        storage.getTimesheets(),
+        storage.getMonthlyExpectedHours({ month, year }),
+        storage.getPayrollTaxRates(),
+      ]);
+
+      const employee = allEmployees.find(e => e.id === employeeId);
+      if (!employee) {
+        return res.status(404).json({ message: "Employee not found" });
+      }
+
+      const financialYear = month >= 7 ? year : year - 1;
+      const ptRatesByState: Record<string, number> = {};
+      for (const ptr of allPayrollTaxRates) {
+        if (ptr.financialYearStart === financialYear && !(ptr.state in ptRatesByState)) {
+          ptRatesByState[ptr.state] = parseFloat(ptr.rate);
+        }
+      }
+
+      const periodStart = new Date(year, month - 1, 1);
+      const periodEnd = new Date(year, month, 0);
+
+      const empPlacements = allPlacements.filter(p => {
+        if (p.employeeId !== employeeId) return false;
+        if (p.startDate) {
+          const start = new Date(p.startDate);
+          if (start > periodEnd) return false;
+        }
+        if (p.endDate) {
+          const end = new Date(p.endDate);
+          if (end < periodStart) {
+            if (p.status === "ACTIVE") return false;
+            const graceEnd = new Date(end.getFullYear(), end.getMonth() + 2, 0);
+            if (periodStart > graceEnd) return false;
+          }
+        }
+        return p.status === "ACTIVE" || p.status === "ENDED";
+      });
+
+      const periodPayRuns = allPayRuns.filter(pr => pr.month === month && pr.year === year);
+      const empPayRunLines: { line: any; payRun: typeof periodPayRuns[0] }[] = [];
+      for (const pr of periodPayRuns) {
+        const lines = await storage.getPayRunLines(pr.id);
+        for (const line of lines) {
+          if (line.employeeId === employeeId) {
+            empPayRunLines.push({ line, payRun: pr });
+          }
+        }
+      }
+
+      const payslipLinesByPayRun: any[] = [];
+      for (const pl of empPayRunLines) {
+        const payslipLines = await storage.getPayslipLines(pl.line.id);
+        payslipLinesByPayRun.push({
+          payRunLineId: pl.line.id,
+          payDate: pl.payRun.payDate,
+          grossEarnings: parseFloat(pl.line.grossEarnings || "0"),
+          superAmount: parseFloat(pl.line.superAmount || "0"),
+          netPay: parseFloat(pl.line.netPay || "0"),
+          paygWithheld: parseFloat(pl.line.paygWithheld || "0"),
+          payslipLines: payslipLines.map(psl => ({
+            id: psl.id,
+            lineType: psl.lineType,
+            name: psl.name,
+            units: psl.units ? parseFloat(psl.units) : null,
+            rate: psl.rate ? parseFloat(psl.rate) : null,
+            amount: parseFloat(psl.amount),
+            percentage: psl.percentage ? parseFloat(psl.percentage) : null,
+          })),
+        });
+      }
+
+      const periodInvoices = allInvoices.filter(i => i.month === month && i.year === year);
+      const periodBankTxns = allBankTxns.filter(t => t.month === month && t.year === year);
+      const periodRctis = allRctis.filter(r => r.month === month && r.year === year);
+      const claimedInvoiceIds = new Set<string>();
+
+      const placementResults = empPlacements.map(placement => {
+        const client = allClients.find(c => c.id === placement.clientId);
+        const clientName = placement.clientName || client?.name || "Unknown";
+        const chargeOutRate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
+        const payRate = parseFloat(employee.hourlyRate || "0");
+
+        const empInvoices = periodInvoices.filter(inv => {
+          if (claimedInvoiceIds.has(inv.id)) return false;
+          const invType = (inv as any).invoiceType;
+          if (invType && invType !== "ACCREC") return false;
+          if (inv.employeeId === employee.id && inv.contactName === clientName) return true;
+          if (!inv.employeeId && inv.contactName === clientName) {
+            const invRate = inv.hours && parseFloat(inv.hours) > 0
+              ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
+              : 0;
+            return Math.abs(invRate - chargeOutRate) < 0.01;
+          }
+          return false;
+        });
+        empInvoices.forEach(inv => claimedInvoiceIds.add(inv.id));
+
+        const invoiceRevenue = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.amountExclGst || "0"), 0);
+        const invoiceHours = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.hours || "0"), 0);
+
+        const empRctis = periodRctis.filter(r => r.employeeId === employee.id && r.clientId === placement.clientId);
+        const rctiRevenue = empRctis.reduce((sum, r) => sum + parseFloat(r.amountExclGst || "0"), 0);
+        const rctiHours = empRctis.reduce((sum, r) => sum + parseFloat(r.hours || "0"), 0);
+
+        return {
+          placement: {
+            id: placement.id,
+            clientName,
+            clientId: client?.id || null,
+            chargeOutRate,
+            payRate,
+            status: placement.status,
+            startDate: placement.startDate,
+            endDate: placement.endDate,
+          },
+          invoices: empInvoices.map(inv => ({
+            id: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            contactName: inv.contactName,
+            hours: inv.hours ? parseFloat(inv.hours) : 0,
+            amountExclGst: parseFloat(inv.amountExclGst || "0"),
+            amountInclGst: parseFloat(inv.amountInclGst || "0"),
+            issueDate: inv.issueDate,
+            status: inv.status,
+          })),
+          rctis: empRctis.map(r => ({
+            id: r.id,
+            clientName: client?.name || clientName,
+            hours: r.hours ? parseFloat(r.hours) : 0,
+            amountExclGst: parseFloat(r.amountExclGst || "0"),
+            amountInclGst: parseFloat(r.amountInclGst || "0"),
+          })),
+          invoiceRevenue,
+          rctiRevenue,
+          totalRevenue: invoiceRevenue + rctiRevenue,
+          invoiceHours,
+          rctiHours,
+          totalHours: invoiceHours + rctiHours,
+        };
+      });
+
+      const totalRevenue = placementResults.reduce((s, p) => s + p.totalRevenue, 0);
+      const totalInvoicedHours = placementResults.reduce((s, p) => s + p.totalHours, 0);
+
+      const empTimesheets = allTimesheets.filter(t => t.employeeId === employeeId && t.month === month && t.year === year);
+      const timesheetHours = empTimesheets.reduce((sum, t) => sum + parseFloat(t.totalHours || "0"), 0);
+      const empExpected = allExpectedHours.filter(e => e.employeeId === employeeId);
+      const estimatedHours = empExpected.reduce((sum, e) => sum + parseFloat(e.expectedHours || "0"), 0);
+
+      let hoursSource: "INVOICED" | "TIMESHEET" | "ESTIMATED" = "ESTIMATED";
+      let bestAvailableHours = estimatedHours;
+      if (totalInvoicedHours > 0) {
+        hoursSource = "INVOICED";
+        bestAvailableHours = totalInvoicedHours;
+      } else if (timesheetHours > 0) {
+        hoursSource = "TIMESHEET";
+        bestAvailableHours = timesheetHours;
+      }
+      const utilisation = estimatedHours > 0 ? Math.round((bestAvailableHours / estimatedHours) * 1000) / 10 : 0;
+
+      const rawGrossEarnings = empPayRunLines.reduce((sum, pl) => sum + parseFloat(pl.line.grossEarnings || "0"), 0);
+      const superAmount = empPayRunLines.reduce((sum, pl) => sum + parseFloat(pl.line.superAmount || "0"), 0);
+      const netPay = empPayRunLines.reduce((sum, pl) => sum + parseFloat(pl.line.netPay || "0"), 0);
+      const paygWithheld = empPayRunLines.reduce((sum, pl) => sum + parseFloat(pl.line.paygWithheld || "0"), 0);
+      const usedFallbackGross = rawGrossEarnings === 0 && (netPay > 0 || paygWithheld > 0);
+      const grossEarnings = usedFallbackGross
+        ? (paygWithheld > 0 ? netPay + paygWithheld : netPay)
+        : rawGrossEarnings;
+
+      let totalEmployeeCost = grossEarnings + superAmount;
+      let costSource: "PAYROLL" | "CONTRACTOR_SPEND" = "PAYROLL";
+      let contractorSpend = 0;
+      let matchedSpendTxns: typeof periodBankTxns = [];
+
+      if (employee.paymentMethod === "INVOICE" && (employee.supplierContactId || employee.companyName)) {
+        matchedSpendTxns = employee.supplierContactId
+          ? periodBankTxns.filter(t => t.type === "SPEND" && t.xeroContactId && t.xeroContactId === employee.supplierContactId)
+          : periodBankTxns.filter(t => t.type === "SPEND" && t.contactName && normalizeCompanyName(t.contactName) === normalizeCompanyName(employee.companyName!));
+        contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)) / 1.1, 0);
+        if (contractorSpend > 0) {
+          totalEmployeeCost = contractorSpend;
+          costSource = "CONTRACTOR_SPEND";
+        }
+      }
+
+      const feePercent = parseFloat(employee.payrollFeePercent || "0");
+      const payrollFeeAmount = grossEarnings * (feePercent / 100);
+
+      let payrollTaxRate = 0;
+      let payrollTaxAmount = 0;
+      if (employee.payrollTaxApplicable && employee.state && ptRatesByState[employee.state] !== undefined) {
+        payrollTaxRate = ptRatesByState[employee.state];
+        const taxableBase = costSource === "CONTRACTOR_SPEND" ? contractorSpend : grossEarnings;
+        payrollTaxAmount = taxableBase * (payrollTaxRate / 100);
+      }
+
+      const costExPayrollTax = totalEmployeeCost;
+      const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
+      const profitExPayrollTax = totalRevenue - costExPayrollTax;
+      const profitIncPayrollTax = totalRevenue - costIncPayrollTax;
+      const marginExPT = totalRevenue > 0 ? (profitExPayrollTax / totalRevenue) * 100 : 0;
+      const marginIncPT = totalRevenue > 0 ? (profitIncPayrollTax / totalRevenue) * 100 : 0;
+
+      const primaryPlacement = empPlacements[0];
+      const primaryClient = primaryPlacement ? allClients.find(c => c.id === primaryPlacement.clientId) : null;
+      const chargeOutRate = primaryPlacement ? parseFloat(primaryPlacement.chargeOutRate || employee.chargeOutRate || "0") : 0;
+      const payRate = parseFloat(employee.hourlyRate || "0");
+
+      res.json({
+        employee: {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          paymentMethod: employee.paymentMethod,
+          companyName: employee.companyName,
+          state: employee.state,
+          hourlyRate: employee.hourlyRate,
+          chargeOutRate: employee.chargeOutRate,
+          payrollFeePercent: employee.payrollFeePercent,
+          payrollTaxApplicable: employee.payrollTaxApplicable,
+          employmentType: employee.employmentType,
+        },
+        period: { month, year, financialYear },
+        placements: placementResults,
+        hours: {
+          invoicedHours: Math.round(totalInvoicedHours * 10) / 10,
+          timesheetHours: Math.round(timesheetHours * 10) / 10,
+          estimatedHours: Math.round(estimatedHours * 10) / 10,
+          bestAvailableHours: Math.round(bestAvailableHours * 10) / 10,
+          hoursSource,
+          utilisation,
+        },
+        rateEconomics: {
+          chargeOutRate: Math.round(chargeOutRate * 100) / 100,
+          payRate: Math.round(payRate * 100) / 100,
+          spread: Math.round((chargeOutRate - payRate) * 100) / 100,
+          marginPerHour: bestAvailableHours > 0 ? Math.round((profitIncPayrollTax / bestAvailableHours) * 100) / 100 : 0,
+        },
+        revenue: {
+          total: Math.round(totalRevenue * 100) / 100,
+          byPlacement: placementResults.map(p => ({
+            placementId: p.placement.id,
+            clientName: p.placement.clientName,
+            invoiceRevenue: Math.round(p.invoiceRevenue * 100) / 100,
+            rctiRevenue: Math.round(p.rctiRevenue * 100) / 100,
+            total: Math.round(p.totalRevenue * 100) / 100,
+            hours: Math.round(p.totalHours * 10) / 10,
+          })),
+        },
+        cost: {
+          costSource,
+          grossEarnings: Math.round(grossEarnings * 100) / 100,
+          superAmount: Math.round(superAmount * 100) / 100,
+          netPay: Math.round(netPay * 100) / 100,
+          paygWithheld: Math.round(paygWithheld * 100) / 100,
+          contractorSpend: Math.round(contractorSpend * 100) / 100,
+          contractorTxns: matchedSpendTxns.map(t => ({
+            id: t.id,
+            contactName: t.contactName,
+            amount: Math.round(Math.abs(parseFloat(t.amount)) / 1.1 * 100) / 100,
+            amountInclGst: Math.abs(parseFloat(t.amount)),
+            date: t.date,
+            description: t.description,
+          })),
+          payrollFeePercent: feePercent,
+          payrollFeeAmount: Math.round(payrollFeeAmount * 100) / 100,
+          payrollTaxApplicable: employee.payrollTaxApplicable,
+          payrollTaxRate,
+          payrollTaxAmount: Math.round(payrollTaxAmount * 100) / 100,
+          totalCostExPT: Math.round(costExPayrollTax * 100) / 100,
+          totalCostIncPT: Math.round(costIncPayrollTax * 100) / 100,
+          payRunDetails: payslipLinesByPayRun,
+        },
+        profit: {
+          profitExPayrollTax: Math.round(profitExPayrollTax * 100) / 100,
+          profitIncPayrollTax: Math.round(profitIncPayrollTax * 100) / 100,
+          marginExPT: Math.round(marginExPT * 10) / 10,
+          marginIncPT: Math.round(marginIncPT * 10) / 10,
+        },
+        allInvoices: placementResults.flatMap(p => p.invoices),
+        allRctis: placementResults.flatMap(p => p.rctis),
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch profitability detail" });
     }
   });
 

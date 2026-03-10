@@ -51,6 +51,8 @@ export const employees = pgTable("employees", {
   contractCode: text("contract_code"),
   roleTitle: text("role_title"),
   xeroEmployeeId: text("xero_employee_id"),
+  supplierContactId: varchar("supplier_contact_id"),
+  payrollTaxApplicable: boolean("payroll_tax_applicable").notNull().default(true),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -345,6 +347,22 @@ export const payslipLines = pgTable("payslip_lines", {
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+export const payrollTaxRates = pgTable("payroll_tax_rates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  state: varchar("state", { length: 3 }).notNull(),
+  rate: numeric("rate", { precision: 5, scale: 3 }).notNull(),
+  financialYearStart: integer("financial_year_start").notNull(),
+  tenantId: varchar("tenant_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertPayrollTaxRateSchema = createInsertSchema(payrollTaxRates).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertPayrollTaxRate = z.infer<typeof insertPayrollTaxRateSchema>;
+export type PayrollTaxRate = typeof payrollTaxRates.$inferSelect;
 
 export const rateHistory = pgTable("rate_history", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

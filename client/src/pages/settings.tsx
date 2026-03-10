@@ -1404,10 +1404,252 @@ function DataTab() {
   );
 }
 
+type PayrollTaxRateRow = {
+  id: string;
+  state: string;
+  rate: string;
+  financialYearStart: number;
+  tenantId: string | null;
+  createdAt: string;
+};
+
+const AUSTRALIAN_STATES = ["ACT", "NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT"];
+
+function PayrollTaxTab() {
+  const { toast } = useToast();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editRate, setEditRate] = useState<PayrollTaxRateRow | null>(null);
+  const [formState, setFormState] = useState("");
+  const [formRate, setFormRate] = useState("");
+  const [formFY, setFormFY] = useState(String(new Date().getFullYear()));
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const { data: rates, isLoading } = useQuery<PayrollTaxRateRow[]>({
+    queryKey: ["/api/payroll-tax-rates"],
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: { state: string; rate: string; financialYearStart: number }) => {
+      const res = await apiRequest("POST", "/api/payroll-tax-rates", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/payroll-tax-rates"] });
+      setDialogOpen(false);
+      toast({ title: "Payroll tax rate created" });
+    },
+    onError: (err: Error) => {
+      toast({ title: err.message, variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: { state: string; rate: string; financialYearStart: number } }) => {
+      const res = await apiRequest("PUT", `/api/payroll-tax-rates/${id}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/payroll-tax-rates"] });
+      setDialogOpen(false);
+      toast({ title: "Payroll tax rate updated" });
+    },
+    onError: (err: Error) => {
+      toast({ title: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/payroll-tax-rates/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/payroll-tax-rates"] });
+      setDeleteConfirmId(null);
+      toast({ title: "Payroll tax rate deleted" });
+    },
+    onError: (err: Error) => {
+      toast({ title: err.message, variant: "destructive" });
+    },
+  });
+
+  const openCreate = () => {
+    setEditRate(null);
+    setFormState("ACT");
+    setFormRate("");
+    setFormFY(String(new Date().getFullYear()));
+    setDialogOpen(true);
+  };
+
+  const openEdit = (r: PayrollTaxRateRow) => {
+    setEditRate(r);
+    setFormState(r.state);
+    setFormRate(r.rate);
+    setFormFY(String(r.financialYearStart));
+    setDialogOpen(true);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const payload = { state: formState, rate: formRate, financialYearStart: parseInt(formFY) };
+    if (editRate) {
+      updateMutation.mutate({ id: editRate.id, data: payload });
+    } else {
+      createMutation.mutate(payload);
+    }
+  };
+
+  const isPending = createMutation.isPending || updateMutation.isPending;
+
+  if (isLoading) return <SettingsTabSkeleton />;
+
+  const sortedRates = [...(rates || [])].sort((a, b) => {
+    if (a.financialYearStart !== b.financialYearStart) return b.financialYearStart - a.financialYearStart;
+    return a.state.localeCompare(b.state);
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-muted-foreground" data-testid="text-payroll-tax-info">
+            Configure payroll tax rates per state and financial year. These rates are applied as an employer cost in profitability calculations.
+          </p>
+        </div>
+        <Button size="sm" onClick={openCreate} data-testid="button-add-payroll-tax-rate">
+          <Plus className="w-4 h-4 mr-1" />
+          Add Rate
+        </Button>
+      </div>
+
+      {sortedRates.length === 0 ? (
+        <div className="text-center py-10 text-muted-foreground text-sm" data-testid="text-no-payroll-tax-rates">
+          No payroll tax rates configured yet.
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm" data-testid="table-payroll-tax-rates">
+            <thead>
+              <tr className="bg-muted/50">
+                <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">State</th>
+                <th className="text-right px-3 py-2 text-xs font-semibold text-muted-foreground">Rate (%)</th>
+                <th className="text-right px-3 py-2 text-xs font-semibold text-muted-foreground">Financial Year</th>
+                <th className="text-right px-3 py-2 text-xs font-semibold text-muted-foreground">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRates.map((r) => (
+                <tr key={r.id} className="border-t" data-testid={`row-payroll-tax-${r.id}`}>
+                  <td className="px-3 py-2 font-medium">{r.state}</td>
+                  <td className="px-3 py-2 text-right font-mono">{parseFloat(r.rate).toFixed(3)}%</td>
+                  <td className="px-3 py-2 text-right text-muted-foreground">FY{r.financialYearStart}-{String(r.financialYearStart + 1).slice(2)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(r)} data-testid={`button-edit-payroll-tax-${r.id}`}>
+                        <Pencil className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => setDeleteConfirmId(r.id)} data-testid={`button-delete-payroll-tax-${r.id}`}>
+                        <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{editRate ? "Edit Payroll Tax Rate" : "Add Payroll Tax Rate"}</DialogTitle>
+            <DialogDescription>
+              {editRate ? "Update the payroll tax rate details." : "Add a new payroll tax rate for a state and financial year."}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="pt-state">State</Label>
+              <Select value={formState} onValueChange={setFormState}>
+                <SelectTrigger data-testid="select-payroll-tax-state">
+                  <SelectValue placeholder="Select state" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AUSTRALIAN_STATES.map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="pt-rate">Rate (%)</Label>
+              <Input
+                id="pt-rate"
+                type="number"
+                step="0.001"
+                min="0"
+                max="100"
+                value={formRate}
+                onChange={(e) => setFormRate(e.target.value)}
+                placeholder="e.g. 1.650"
+                required
+                data-testid="input-payroll-tax-rate"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="pt-fy">Financial Year Start</Label>
+              <Select value={formFY} onValueChange={setFormFY}>
+                <SelectTrigger data-testid="select-payroll-tax-fy">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 10 }, (_, i) => 2020 + i).map((y) => (
+                    <SelectItem key={y} value={String(y)}>FY{y}-{String(y + 1).slice(2)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" size="sm" disabled={isPending} data-testid="button-save-payroll-tax-rate">
+                {isPending ? "Saving..." : editRate ? "Save Changes" : "Add Rate"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Payroll Tax Rate</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this payroll tax rate? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)} data-testid="button-cancel-delete-payroll-tax">Cancel</Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={deleteMutation.isPending}
+              onClick={() => { if (deleteConfirmId) deleteMutation.mutate(deleteConfirmId); }}
+              data-testid="button-confirm-delete-payroll-tax"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 const tabs = [
   { id: "branding", label: "Branding", icon: Palette },
   { id: "company", label: "Company", icon: Building2 },
   { id: "payroll", label: "Payroll", icon: Banknote },
+  { id: "payroll-tax", label: "Payroll Tax", icon: Calculator },
   { id: "xero", label: "Xero", icon: RefreshCw },
   { id: "portal", label: "Portal", icon: Globe },
   { id: "users", label: "Users", icon: UserCog },
@@ -1458,6 +1700,9 @@ export default function SettingsPage() {
                 </TabsContent>
                 <TabsContent value="payroll" className="mt-0">
                   {isLoading ? <SettingsTabSkeleton /> : <PayrollTab settings={settings} />}
+                </TabsContent>
+                <TabsContent value="payroll-tax" className="mt-0">
+                  <PayrollTaxTab />
                 </TabsContent>
                 <TabsContent value="xero" className="mt-0">
                   {isLoading ? <SettingsTabSkeleton /> : <XeroTab settings={settings} />}
