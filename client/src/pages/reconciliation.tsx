@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { TopBar } from "@/components/top-bar";
@@ -30,7 +30,7 @@ import type { InvoiceLineItem, InvoicePayment } from "@shared/schema";
 import {
   Users, Clock, FileText, CreditCard, CheckCircle, XCircle, AlertTriangle,
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown, DollarSign, Percent,
-  ExternalLink, Loader2, Send, Building2,
+  ExternalLink, Loader2, Send, Building2, UploadCloud,
 } from "lucide-react";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -616,6 +616,48 @@ function TimesheetDetailDialog({
   const [hours, setHours] = useState(String(editTs?.hours || 0));
   const [regularHours, setRegularHours] = useState(String(editTs?.regularHours || 0));
   const [overtimeHours, setOvertimeHours] = useState(String(editTs?.overtimeHours || 0));
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePdfUpload = useCallback(async (files: FileList | null) => {
+    if (!files) return;
+    const pdfs = Array.from(files).filter(f => f.type === "application/pdf");
+    if (pdfs.length === 0) {
+      toast({ title: "Only PDF files are supported", variant: "destructive" });
+      return;
+    }
+    setScanning(true);
+    setScanError(null);
+    try {
+      const formData = new FormData();
+      pdfs.forEach(f => formData.append("files", f));
+      formData.append("month", String(month));
+      formData.append("year", String(year));
+      const res = await fetch("/api/timesheets/scan", { method: "POST", body: formData, credentials: "include" });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ message: "Scan failed" }));
+        throw new Error(errData.message || "Scan failed");
+      }
+      const data = await res.json();
+      const results = data.results || [];
+      if (results.length > 0) {
+        const r = results[0];
+        if (r.totalHours != null) setHours(String(r.totalHours));
+        if (r.regularHours != null) setRegularHours(String(r.regularHours));
+        if (r.overtimeHours != null) setOvertimeHours(String(r.overtimeHours));
+        toast({ title: "Timesheet scanned", description: `Extracted ${r.totalHours || 0} total hours` });
+      } else {
+        setScanError("No data could be extracted from the PDF");
+      }
+    } catch (err: any) {
+      setScanError(err.message || "Scan failed");
+      toast({ title: "Scan failed", description: err.message, variant: "destructive" });
+    } finally {
+      setScanning(false);
+    }
+  }, [month, year, toast]);
 
   const updateTimesheetMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Record<string, any> }) => {
@@ -722,6 +764,29 @@ function TimesheetDetailDialog({
               ))}
             </div>
           )}
+
+          <div
+            className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors cursor-pointer ${dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"}`}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={e => { e.preventDefault(); setDragOver(false); handlePdfUpload(e.dataTransfer.files); }}
+            onClick={() => fileInputRef.current?.click()}
+            data-testid="dropzone-timesheet-pdf"
+          >
+            <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={e => { handlePdfUpload(e.target.files); e.target.value = ""; }} data-testid="input-timesheet-pdf" />
+            {scanning ? (
+              <div className="flex flex-col items-center gap-2 py-1">
+                <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                <span className="text-xs text-muted-foreground">Scanning PDF...</span>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-1 py-1">
+                <UploadCloud className="w-5 h-5 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Drop a timesheet PDF or click to upload</span>
+              </div>
+            )}
+            {scanError && <p className="text-xs text-destructive mt-1">{scanError}</p>}
+          </div>
 
           <div className="space-y-3">
             <h4 className="text-sm font-semibold flex items-center gap-1.5">
