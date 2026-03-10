@@ -136,7 +136,7 @@ export default function EmployeesPage() {
   const filtered = useMemo(() => {
     if (!employeesWithStats) return [];
     let list = employeesWithStats.filter((c) => {
-      const matchSearch = `${c.firstName} ${c.lastName} ${c.email} ${c.clientName || ""}`
+      const matchSearch = `${c.preferredName || ""} ${c.firstName} ${c.lastName} ${c.email} ${c.clientName || ""}`
         .toLowerCase()
         .includes(search.toLowerCase());
       const matchStatus = filterStatus === "ALL" || c.status === filterStatus;
@@ -408,7 +408,7 @@ export default function EmployeesPage() {
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-sm font-medium text-foreground truncate" data-testid={`text-employee-name-${c.id}`}>
-                                    {c.firstName} {c.lastName}
+                                    {c.preferredName || c.firstName} {c.lastName}
                                   </span>
                                   {c.xeroEmployeeId && (
                                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800 shrink-0" data-testid={`badge-xero-${c.id}`}>

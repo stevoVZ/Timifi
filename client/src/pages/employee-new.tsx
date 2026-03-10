@@ -43,6 +43,7 @@ export default function EmployeeNewPage() {
     abn: "",
     hourlyRate: "",
     chargeOutRate: "",
+    preferredName: "",
     contractCode: "",
     roleTitle: "",
     contractHoursPA: "2000",
@@ -81,6 +82,7 @@ export default function EmployeeNewPage() {
       chargeOutRate: form.chargeOutRate || null,
       companyName: form.companyName || null,
       abn: form.abn || null,
+      preferredName: form.preferredName || null,
       contractCode: form.contractCode || null,
       roleTitle: form.roleTitle || null,
       contractHoursPA: parseInt(form.contractHoursPA) || 2000,
@@ -190,6 +192,10 @@ export default function EmployeeNewPage() {
             <div>
               <Label>Job Title</Label>
               <Input value={form.jobTitle} onChange={(e) => update("jobTitle", e.target.value)} data-testid="input-job-title" />
+            </div>
+            <div>
+              <Label>Preferred Name</Label>
+              <Input value={form.preferredName} onChange={(e) => update("preferredName", e.target.value)} placeholder="e.g. Raihan" data-testid="input-preferred-name" />
             </div>
             <div>
               <Label>Contract Code</Label>

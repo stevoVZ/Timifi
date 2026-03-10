@@ -187,7 +187,7 @@ export default function InvoicesPage() {
     const linkedIds: string[] = (inv as any).linkedEmployeeIds || (inv.employeeId ? [inv.employeeId] : []);
     const names = linkedIds.map(id => {
       const emp = employeeMap.get(id);
-      return emp ? `${emp.firstName} ${emp.lastName}` : "";
+      return emp ? `${emp.preferredName || emp.firstName} ${emp.lastName}` : "";
     }).join(" ");
     const contact = inv.contactName || "";
     return `${names} ${contact} ${inv.invoiceNumber || ""} ${inv.description || ""}`.toLowerCase().includes(search.toLowerCase());
@@ -255,8 +255,9 @@ export default function InvoicesPage() {
   const buildAutoFields = (empId: string, clientId: string, month: string, year: string) => {
     const emp = empId ? employeeMap.get(empId) : undefined;
     const result: Partial<typeof invForm> = {};
+    const displayFirst = emp?.preferredName || emp?.firstName;
     if (emp?.contractCode) {
-      result.description = `${emp.contractCode} - ${emp.firstName} ${emp.lastName} - ${emp.roleTitle || ""}`.replace(/ - $/, "");
+      result.description = `${emp.contractCode} - ${displayFirst} ${emp.lastName} - ${emp.roleTitle || ""}`.replace(/ - $/, "");
     } else {
       result.description = "";
     }
@@ -265,7 +266,7 @@ export default function InvoicesPage() {
       const clientShort = client?.name?.includes("Prime Minister") ? "PM&C" : (client?.name || "");
       const mo = parseInt(month);
       const yr = year.slice(-2);
-      result.reference = `${clientShort} - ${MONTHS_SHORT[mo]} ${yr} - ${emp.contractCode} - ${emp.firstName}`;
+      result.reference = `${clientShort} - ${MONTHS_SHORT[mo]} ${yr} - ${emp.contractCode} - ${displayFirst}`;
     } else {
       result.reference = "";
     }
@@ -335,7 +336,7 @@ export default function InvoicesPage() {
       amountInclGst: String((amountExcl * 1.1).toFixed(2)),
       hours: ts.totalHours,
       hourlyRate: c?.hourlyRate || "0",
-      description: `${MONTHS[ts.month]} ${ts.year} - ${c ? `${c.firstName} ${c.lastName}` : "Unknown"}`,
+      description: `${MONTHS[ts.month]} ${ts.year} - ${c ? `${c.preferredName || c.firstName} ${c.lastName}` : "Unknown"}`,
       status: "AUTHORISED",
     });
   };
@@ -392,7 +393,7 @@ export default function InvoicesPage() {
                     <SelectContent>
                       {employees?.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
-                          {c.firstName} {c.lastName}
+                          {c.preferredName || c.firstName} {c.lastName}
                           {c.contractCode ? ` (${c.contractCode})` : ""}
                         </SelectItem>
                       ))}
@@ -537,7 +538,7 @@ export default function InvoicesPage() {
                     <div key={ts.id} className="flex items-center justify-between gap-4 p-3 rounded-md bg-muted/50 flex-wrap" data-testid={`pending-invoice-${ts.id}`}>
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-foreground">
-                          {c ? `${c.firstName} ${c.lastName}` : "Unknown"}
+                          {c ? `${c.preferredName || c.firstName} ${c.lastName}` : "Unknown"}
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {MONTHS[ts.month]} {ts.year} · {ts.totalHours}h · {formatCurrency(ts.grossValue)}
@@ -685,7 +686,7 @@ export default function InvoicesPage() {
                               const linkedIds: string[] = (inv as any).linkedEmployeeIds || (inv.employeeId ? [inv.employeeId] : []);
                               const linkedNames = linkedIds.map(id => {
                                 const emp = employeeMap.get(id);
-                                return emp ? `${emp.firstName} ${emp.lastName}` : null;
+                                return emp ? `${emp.preferredName || emp.firstName} ${emp.lastName}` : null;
                               }).filter(Boolean);
                               const displayName = inv.contactName || linkedNames.join(", ") || "Unknown";
                               const isPaid = inv.status === "PAID";
@@ -1126,7 +1127,7 @@ function AlignmentWizardDialog({
                               return emp ? (
                                 <div key={id} className="flex items-center gap-1">
                                   <Users className="w-3 h-3 text-muted-foreground" />
-                                  <span className="font-medium">{emp.firstName} {emp.lastName}</span>
+                                  <span className="font-medium">{emp.preferredName || emp.firstName} {emp.lastName}</span>
                                   <button onClick={() => toggleEmployeeForProposal(p.invoiceId, id)} className="ml-auto text-muted-foreground hover:text-destructive">
                                     <X className="w-3 h-3" />
                                   </button>
@@ -1211,7 +1212,7 @@ function AlignmentWizardDialog({
                                     onChange={() => toggleEmployeeForProposal(p.invoiceId, e.id)}
                                     className="rounded border-border"
                                   />
-                                  <span className={isSelected ? "font-medium" : ""}>{e.firstName} {e.lastName}</span>
+                                  <span className={isSelected ? "font-medium" : ""}>{e.preferredName || e.firstName} {e.lastName}</span>
                                 </label>
                               );
                             })}
@@ -1328,7 +1329,7 @@ function InvoiceDetailDialog({
 
   const filteredEmps = employees.filter(e => {
     if (!empSearch) return true;
-    return `${e.firstName} ${e.lastName}`.toLowerCase().includes(empSearch.toLowerCase());
+    return `${e.preferredName || ""} ${e.firstName} ${e.lastName}`.toLowerCase().includes(empSearch.toLowerCase());
   });
 
   return (
@@ -1528,7 +1529,7 @@ function InvoiceDetailDialog({
                       className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-primary/10 text-primary font-medium"
                       data-testid={`chip-employee-${id}`}
                     >
-                      {emp.firstName} {emp.lastName}
+                      {emp.preferredName || emp.firstName} {emp.lastName}
                       <button
                         onClick={() => toggleEmployee(id)}
                         className="ml-0.5 hover:text-destructive"
@@ -1567,7 +1568,7 @@ function InvoiceDetailDialog({
                     className="rounded border-border"
                     data-testid={`checkbox-employee-${e.id}`}
                   />
-                  <span>{e.firstName} {e.lastName}</span>
+                  <span>{e.preferredName || e.firstName} {e.lastName}</span>
                   {(() => {
                     const placementRate = placementRateMap.get(e.id);
                     const rate = placementRate || e.chargeOutRate;

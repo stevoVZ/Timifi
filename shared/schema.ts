@@ -47,6 +47,7 @@ export const employees = pgTable("employees", {
   abn: text("abn"),
   paymentMethod: paymentMethodEnum("payment_method").notNull().default("PAYROLL"),
   payrollFeePercent: numeric("payroll_fee_percent", { precision: 5, scale: 2 }).default("0"),
+  preferredName: text("preferred_name"),
   contractCode: text("contract_code"),
   roleTitle: text("role_title"),
   xeroEmployeeId: text("xero_employee_id"),

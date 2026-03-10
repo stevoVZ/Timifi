@@ -178,7 +178,7 @@ export default function EmployeeDetailPage() {
   return (
     <div className="flex flex-col h-full">
       <TopBar
-        title={`${employee.firstName} ${employee.lastName}`}
+        title={`${employee.preferredName || employee.firstName} ${employee.lastName}`}
         subtitle={employee.jobTitle || "Employee"}
         actions={
           <Link href="/employees">
@@ -200,7 +200,10 @@ export default function EmployeeDetailPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 flex-wrap mb-2">
                     <h2 className="text-xl font-bold text-foreground" data-testid="text-employee-full-name">
-                      {employee.firstName} {employee.lastName}
+                      {employee.preferredName ? `${employee.preferredName} ${employee.lastName}` : `${employee.firstName} ${employee.lastName}`}
+                      {employee.preferredName && (
+                        <span className="text-sm font-normal text-muted-foreground ml-2">({employee.firstName})</span>
+                      )}
                     </h2>
                     <StatusBadge status={employee.status} />
                     {employee.xeroEmployeeId && (
@@ -334,6 +337,21 @@ export default function EmployeeDetailPage() {
                         </Select>
                       </div>
                     </div>
+                    <EditableField
+                      icon={User}
+                      label="Preferred Name"
+                      field="preferredName"
+                      value={employee.preferredName || "Not set"}
+                      rawValue={employee.preferredName || ""}
+                      editingField={editingField}
+                      editValues={editValues}
+                      setEditValues={setEditValues}
+                      onStartEdit={startEdit}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      isPending={updateMutation.isPending}
+                      testId="text-preferred-name"
+                    />
                     <EditableField
                       icon={FileBadge}
                       label="Contract Code"
