@@ -120,7 +120,7 @@ interface ProfitabilityRow {
     payrollTaxRate: number;
     payrollTaxAmount: number;
     payrollTaxApplicable: boolean;
-    costSource: "PAYROLL" | "CONTRACTOR_SPEND";
+    costSource: "PAYROLL" | "CONTRACTOR_SPEND" | "ESTIMATED";
     contractorSpend: number;
     contractorSpendTxnCount: number;
     payRunLines: PayRunLineDetail[];
@@ -1046,7 +1046,18 @@ function DrillDownDialog({
                 </>
               )}
               <div className="border-t pt-2 space-y-1">
-                {row.cost.costSource === "PAYROLL" ? (
+                {row.cost.costSource === "ESTIMATED" ? (
+                  <>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-[10px]" data-testid="badge-estimated-cost">Estimated</Badge>
+                      <span className="text-xs text-muted-foreground">Based on placement pay rates × hours (payroll not yet processed)</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Estimated Cost (pay rates × hours + super)</span>
+                      <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.totalCost)}</span>
+                    </div>
+                  </>
+                ) : row.cost.costSource === "PAYROLL" ? (
                   <>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Net Pay</span>

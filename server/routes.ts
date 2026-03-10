@@ -2744,7 +2744,7 @@ export async function registerRoutes(
 
         const effectiveRates = getEffectiveRate(rateIndex, employee.id, month, year, employee.hourlyRate, placement.chargeOutRate || employee.chargeOutRate);
         const chargeOutRate = parseFloat(placement.chargeOutRate || "0") || effectiveRates.chargeOutRate;
-        const payRate = effectiveRates.payRate;
+        const payRate = parseFloat(placement.payRate || "0") || effectiveRates.payRate;
         const rateSpread = chargeOutRate - payRate;
 
         const empInvoices = periodInvoices.filter(inv => {
@@ -2810,7 +2810,7 @@ export async function registerRoutes(
           : rawGrossEarnings;
 
         let totalEmployeeCost = grossEarnings + superAmount;
-        let costSource: "PAYROLL" | "CONTRACTOR_SPEND" = "PAYROLL";
+        let costSource: "PAYROLL" | "CONTRACTOR_SPEND" | "ESTIMATED" = "PAYROLL";
         let contractorSpend = 0;
         let contractorSpendTxnCount = 0;
         let matchedSpendTxns: typeof periodBankTxns = [];
@@ -2834,6 +2834,17 @@ export async function registerRoutes(
           if (contractorSpend > 0) {
             totalEmployeeCost = contractorSpend;
             costSource = "CONTRACTOR_SPEND";
+          }
+        }
+
+        if (totalEmployeeCost === 0 && costSource !== "CONTRACTOR_SPEND") {
+          const periodDate = new Date(year, month - 1, 15);
+          const superRateDecimal = getSuperRate(periodDate) / 100;
+          const placementPayRate = parseFloat(placement.payRate || "0") || payRate;
+          if (placementPayRate > 0 && bestAvailableHours > 0) {
+            const baseCost = bestAvailableHours * placementPayRate;
+            totalEmployeeCost = baseCost + (baseCost * superRateDecimal);
+            costSource = "ESTIMATED";
           }
         }
 
@@ -3115,7 +3126,7 @@ export async function registerRoutes(
         const client = allClients.find(c => c.id === placement.clientId);
         const clientName = placement.clientName || client?.name || "Unknown";
         const chargeOutRate = parseFloat(placement.chargeOutRate || "0") || effectiveRates.chargeOutRate;
-        const payRate = effectiveRates.payRate;
+        const payRate = parseFloat(placement.payRate || "0") || effectiveRates.payRate;
 
         const empInvoices = periodInvoices.filter(inv => {
           if (claimedInvoiceIds.has(inv.id)) return false;
@@ -3205,7 +3216,7 @@ export async function registerRoutes(
         : rawGrossEarnings;
 
       let totalEmployeeCost = grossEarnings + superAmount;
-      let costSource: "PAYROLL" | "CONTRACTOR_SPEND" = "PAYROLL";
+      let costSource: "PAYROLL" | "CONTRACTOR_SPEND" | "ESTIMATED" = "PAYROLL";
       let contractorSpend = 0;
       let matchedSpendTxns: typeof periodBankTxns = [];
 
@@ -3217,6 +3228,27 @@ export async function registerRoutes(
         if (contractorSpend > 0) {
           totalEmployeeCost = contractorSpend;
           costSource = "CONTRACTOR_SPEND";
+        }
+      }
+
+      if (totalEmployeeCost === 0 && costSource !== "CONTRACTOR_SPEND") {
+        const periodDate = new Date(year, month - 1, 15);
+        const superRate = getSuperRate(periodDate) / 100;
+        let estimatedCost = 0;
+        for (const pr of placementResults) {
+          const placementPayRate = parseFloat(pr.placement.payRate || "0") || effectiveRates.payRate;
+          if (placementPayRate > 0 && pr.totalHours > 0) {
+            const baseCost = pr.totalHours * placementPayRate;
+            estimatedCost += baseCost + (baseCost * superRate);
+          }
+        }
+        if (estimatedCost === 0 && bestAvailableHours > 0 && effectiveRates.payRate > 0) {
+          const baseCost = bestAvailableHours * effectiveRates.payRate;
+          estimatedCost = baseCost + (baseCost * superRate);
+        }
+        if (estimatedCost > 0) {
+          totalEmployeeCost = estimatedCost;
+          costSource = "ESTIMATED";
         }
       }
 

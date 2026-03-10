@@ -132,6 +132,7 @@ export default function ProfitabilityDetailPage() {
             <CardContent className="pt-5 pb-4 px-5">
               <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
                 <Users className="w-3.5 h-3.5" /> Total Cost (inc PT)
+                {cost.costSource === "ESTIMATED" && <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-[10px] ml-1" data-testid="badge-estimated-cost">Estimated</Badge>}
               </div>
               <div className="text-2xl font-bold tabular-nums" data-testid="text-total-cost">{fmtCurrency(cost.totalCostIncPT)}</div>
             </CardContent>
@@ -316,9 +317,27 @@ export default function ProfitabilityDetailPage() {
             <CardTitle className="text-sm flex items-center gap-2">
               <Users className="w-4 h-4" /> Cost Breakdown
               {cost.costSource === "CONTRACTOR_SPEND" && <Badge variant="outline" className="text-[10px]">Contractor</Badge>}
+              {cost.costSource === "ESTIMATED" && <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-[10px]">Estimated</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {cost.costSource === "ESTIMATED" && (
+              <div className="space-y-3">
+                <div className="bg-amber-50 border border-amber-200 rounded-md p-4 space-y-2">
+                  <div className="text-xs font-medium text-amber-700 mb-1">Estimated from placement pay rates (payroll not yet processed)</div>
+                  {placements && placements.map((p: any) => (
+                    <div key={p.placement.id} className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">{p.placement.clientName}: {p.totalHours.toFixed(1)}h × ${p.placement.payRate}/hr</span>
+                      <span className="tabular-nums">{fmtCurrency(p.totalHours * p.placement.payRate)}</span>
+                    </div>
+                  ))}
+                  <div className="border-t pt-2 flex justify-between text-sm font-medium">
+                    <span>Total Estimated Cost (inc super)</span>
+                    <span className="tabular-nums">{fmtCurrency(cost.totalCostExPT)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
             {cost.costSource === "PAYROLL" && (
               <div className="space-y-3">
                 <div className="bg-muted/50 rounded-md p-4 space-y-2">
@@ -421,7 +440,7 @@ export default function ProfitabilityDetailPage() {
             <div className="border-t mt-4 pt-3 space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">
-                  {cost.costSource === "PAYROLL" ? "Gross + Super" : "Contractor Cost (ex GST)"}
+                  {cost.costSource === "ESTIMATED" ? "Estimated (pay rates × hours + super)" : cost.costSource === "PAYROLL" ? "Gross + Super" : "Contractor Cost (ex GST)"}
                 </span>
                 <span className="tabular-nums font-medium" data-testid="text-base-cost">{fmtCurrency(cost.totalCostExPT)}</span>
               </div>
