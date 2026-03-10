@@ -65,11 +65,19 @@ import { Link } from "wouter";
 import type { Invoice, Employee, Timesheet, Placement, InvoiceLineItem, InvoicePayment } from "@shared/schema";
 
 interface GapAnalysisData {
-  missing: { employee: { id: string; firstName: string; lastName: string; preferredName?: string | null; clientName?: string | null; chargeOutRate?: string | null; contractCode?: string | null }; placement: { id: string; clientId: string; chargeOutRate?: string | null; roleTitle?: string | null } | null }[];
+  missing: { employee: { id: string; firstName: string; lastName: string; preferredName?: string | null; clientName?: string | null; chargeOutRate?: string | null; contractCode?: string | null }; placement: { id: string; clientId: string; clientName?: string | null; chargeOutRate?: string | null; payRate?: string | null; roleTitle?: string | null } | null }[];
   unlinked: { id: string; invoiceNumber?: string | null; contactName?: string | null; amountExclGst?: string | null; amountInclGst?: string | null; status: string; issueDate?: string | null; description?: string | null }[];
   unpaid: { id: string; invoiceNumber?: string | null; contactName?: string | null; amountExclGst?: string | null; amountInclGst?: string | null; status: string; issueDate?: string | null; employeeName?: string | null }[];
   month: number;
   year: number;
+}
+
+interface InvoiceLine {
+  description: string;
+  hours: string;
+  rate: string;
+  amount: string;
+  placementId?: string;
 }
 
 type ClientRecord = { id: string; name: string };
@@ -131,6 +139,7 @@ export default function InvoicesPage() {
     description: "",
     reference: "",
   });
+  const [invoiceLines, setInvoiceLines] = useState<InvoiceLine[]>([]);
   const { toast } = useToast();
 
   const { data: invoicesList, isLoading } = useQuery<Invoice[]>({
@@ -163,6 +172,7 @@ export default function InvoicesPage() {
 
   const resetForm = () => {
     setInvForm({ clientId: "", employeeId: "", year: String(now.getFullYear()), month: String(now.getMonth() + 1), issueDate: now.toISOString().split("T")[0], dueDate: "", hours: "", hourlyRate: "", amountExclGst: "", description: "", reference: "" });
+    setInvoiceLines([]);
   };
 
   const createMutation = useMutation({
@@ -276,18 +286,80 @@ export default function InvoicesPage() {
     return result;
   };
 
+  const buildLinesForEmployee = (empId: string, month: string, year: string) => {
+    if (!empId || !allPlacements) return [];
+    const emp = employeeMap.get(empId);
+    if (!emp) return [];
+    const empActivePlacements = allPlacements.filter(p => p.employeeId === empId && p.status === "ACTIVE");
+    const displayFirst = emp.preferredName || emp.firstName;
+    const mo = parseInt(month);
+    if (empActivePlacements.length <= 1) return [];
+    return empActivePlacements.map(p => {
+      const clientName = p.clientName || clients?.find(c => c.id === p.clientId)?.name || "";
+      const rate = p.chargeOutRate || emp.chargeOutRate || "";
+      return {
+        description: `${emp.contractCode || ""} - ${displayFirst} ${emp.lastName} - ${MONTHS_SHORT[mo]} ${year.slice(-2)} @ $${parseFloat(rate || "0").toFixed(2)}/hr`.replace(/^ - /, ""),
+        hours: "",
+        rate: rate || "",
+        amount: "",
+        placementId: p.id,
+      } as InvoiceLine;
+    });
+  };
+
   const handleEmployeeSelect = (empId: string) => {
-    setInvForm(f => ({ ...f, employeeId: empId, ...buildAutoFields(empId, f.clientId, f.month, f.year) }));
+    const autoFields = buildAutoFields(empId, invForm.clientId, invForm.month, invForm.year);
+    setInvForm(f => ({ ...f, employeeId: empId, ...autoFields }));
+    const lines = buildLinesForEmployee(empId, invForm.month, invForm.year);
+    setInvoiceLines(lines);
+    if (lines.length > 0 && !invForm.clientId) {
+      const firstPlacement = allPlacements?.find(p => p.id === lines[0].placementId);
+      if (firstPlacement?.clientId) {
+        const cf = buildAutoFields(empId, firstPlacement.clientId, invForm.month, invForm.year);
+        setInvForm(f => ({ ...f, employeeId: empId, clientId: firstPlacement.clientId, ...cf }));
+      }
+    }
   };
   const handleClientSelect = (clientId: string) => {
     setInvForm(f => ({ ...f, clientId, ...buildAutoFields(f.employeeId, clientId, f.month, f.year) }));
   };
   const handleMonthChange = (month: string) => {
-    setInvForm(f => ({ ...f, month, ...(f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, month, f.year).reference || "" } : {}) }));
+    setInvForm(f => {
+      const updated = { ...f, month, ...(f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, month, f.year).reference || "" } : {}) };
+      return updated;
+    });
+    if (invForm.employeeId) {
+      const lines = buildLinesForEmployee(invForm.employeeId, month, invForm.year);
+      if (lines.length > 0) setInvoiceLines(lines);
+    }
   };
   const handleYearChange = (year: string) => {
-    setInvForm(f => ({ ...f, year, ...(f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, f.month, year).reference || "" } : {}) }));
+    setInvForm(f => {
+      const updated = { ...f, year, ...(f.employeeId ? { reference: buildAutoFields(f.employeeId, f.clientId, f.month, year).reference || "" } : {}) };
+      return updated;
+    });
+    if (invForm.employeeId) {
+      const lines = buildLinesForEmployee(invForm.employeeId, invForm.month, year);
+      if (lines.length > 0) setInvoiceLines(lines);
+    }
   };
+
+  const updateLine = (idx: number, field: keyof InvoiceLine, value: string) => {
+    setInvoiceLines(prev => prev.map((l, i) => {
+      if (i !== idx) return l;
+      const updated = { ...l, [field]: value };
+      if (field === "hours" || field === "rate") {
+        const h = parseFloat(field === "hours" ? value : l.hours) || 0;
+        const r = parseFloat(field === "rate" ? value : l.rate) || 0;
+        updated.amount = h && r ? (h * r).toFixed(2) : "";
+      }
+      return updated;
+    }));
+  };
+  const addLine = () => setInvoiceLines(prev => [...prev, { description: "", hours: "", rate: "", amount: "" }]);
+  const removeLine = (idx: number) => setInvoiceLines(prev => prev.filter((_, i) => i !== idx));
+
+  const linesTotalExGst = invoiceLines.reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0);
 
   const existingInvoiceForPeriod = invForm.employeeId && invoicesList?.find(
     inv => inv.employeeId === invForm.employeeId && inv.month === parseInt(invForm.month) && inv.year === parseInt(invForm.year) && (inv as any).invoiceType === "ACCREC" && inv.status !== "VOIDED"
@@ -295,9 +367,27 @@ export default function InvoicesPage() {
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const hours = parseFloat(invForm.hours || "0");
-    const rate = parseFloat(invForm.hourlyRate || "0");
-    const amountExcl = hours && rate ? hours * rate : parseFloat(invForm.amountExclGst || "0");
+    const useLines = invoiceLines.length > 0;
+    let amountExcl: number;
+    let totalHours: number;
+    let lineItemsPayload: any[] | undefined;
+
+    if (useLines) {
+      amountExcl = linesTotalExGst;
+      totalHours = invoiceLines.reduce((sum, l) => sum + (parseFloat(l.hours) || 0), 0);
+      lineItemsPayload = invoiceLines.filter(l => parseFloat(l.amount) > 0 || parseFloat(l.hours) > 0).map(l => ({
+        description: l.description || invForm.description || undefined,
+        hours: parseFloat(l.hours) || 0,
+        rate: parseFloat(l.rate) || 0,
+        amount: parseFloat(l.amount) || 0,
+      }));
+    } else {
+      const hours = parseFloat(invForm.hours || "0");
+      const rate = parseFloat(invForm.hourlyRate || "0");
+      amountExcl = hours && rate ? hours * rate : parseFloat(invForm.amountExclGst || "0");
+      totalHours = hours;
+    }
+
     createMutation.mutate({
       employeeId: invForm.employeeId || undefined,
       clientId: invForm.clientId || undefined,
@@ -306,14 +396,15 @@ export default function InvoicesPage() {
       amountExclGst: String(amountExcl.toFixed(2)),
       gstAmount: String((amountExcl * 0.1).toFixed(2)),
       amountInclGst: String((amountExcl * 1.1).toFixed(2)),
-      hours: hours ? String(hours) : undefined,
-      hourlyRate: rate ? String(rate) : undefined,
+      hours: totalHours ? String(totalHours) : undefined,
+      hourlyRate: !useLines && parseFloat(invForm.hourlyRate || "0") ? invForm.hourlyRate : undefined,
       description: invForm.description || undefined,
       issueDate: invForm.issueDate || undefined,
       dueDate: invForm.dueDate || undefined,
       reference: invForm.reference || undefined,
       contactName: invForm.clientId ? clients?.find(c => c.id === invForm.clientId)?.name : undefined,
       status: "DRAFT",
+      lineItems: lineItemsPayload,
     });
   };
 
@@ -409,32 +500,40 @@ export default function InvoicesPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-3 max-h-[400px] overflow-y-auto">
-                  {gapData?.missing && gapData.missing.length > 0 && (
+                  {gapData?.missing && gapData.missing.length > 0 && (() => {
+                    const uniqueEmpIds = [...new Set(gapData.missing.map(m => m.employee.id))];
+                    return (
                     <div>
                       <p className="text-[11px] font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
                         <UserX className="w-3.5 h-3.5 text-red-500" />
-                        Missing Invoices ({gapData.missing.length})
+                        Missing Invoices ({uniqueEmpIds.length} employee{uniqueEmpIds.length !== 1 ? "s" : ""}, {gapData.missing.length} placement{gapData.missing.length !== 1 ? "s" : ""})
                       </p>
                       <div className="space-y-1">
-                        {gapData.missing.map(m => (
-                          <div key={m.employee.id} className="flex items-center justify-between p-2 rounded bg-red-50 dark:bg-red-950/20 text-xs" data-testid={`gap-missing-${m.employee.id}`}>
+                        {gapData.missing.map((m, idx) => (
+                          <div key={`${m.employee.id}-${m.placement?.id || idx}`} className="flex items-center justify-between p-2 rounded bg-red-50 dark:bg-red-950/20 text-xs" data-testid={`gap-missing-${m.employee.id}-${idx}`}>
                             <div>
                               <span className="font-medium">{m.employee.preferredName || m.employee.firstName} {m.employee.lastName}</span>
-                              {m.employee.clientName && <span className="text-muted-foreground ml-1.5">· {m.employee.clientName}</span>}
+                              {m.placement?.clientName && <span className="text-muted-foreground ml-1.5">· {m.placement.clientName}</span>}
+                              {m.placement?.chargeOutRate && (
+                                <span className="font-mono text-[10px] text-muted-foreground ml-1">@ ${parseFloat(m.placement.chargeOutRate).toFixed(2)}/hr</span>
+                              )}
                             </div>
                             <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => {
                               setCreateOpen(true);
                               const clientId = m.placement?.clientId || "";
                               const autoFields = buildAutoFields(m.employee.id, clientId, String(gapMonth), String(gapYear));
                               setInvForm(f => ({ ...f, employeeId: m.employee.id, clientId, month: String(gapMonth), year: String(gapYear), ...autoFields }));
-                            }} data-testid={`button-gap-create-${m.employee.id}`}>
+                              const lines = buildLinesForEmployee(m.employee.id, String(gapMonth), String(gapYear));
+                              setInvoiceLines(lines);
+                            }} data-testid={`button-gap-create-${m.employee.id}-${idx}`}>
                               <Plus className="w-3 h-3" /> Create
                             </Button>
                           </div>
                         ))}
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {gapData?.unlinked && gapData.unlinked.length > 0 && (
                     <div>
@@ -558,19 +657,73 @@ export default function InvoicesPage() {
                           <Label className="text-xs">Due Date</Label>
                           <Input type="date" className="h-8 text-xs" value={invForm.dueDate} onChange={e => setInvForm(f => ({ ...f, dueDate: e.target.value }))} data-testid="input-due-date" />
                         </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Hours</Label>
-                          <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.hours} onChange={e => setInvForm(f => ({ ...f, hours: e.target.value }))} data-testid="input-hours" />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Hourly Rate</Label>
-                          <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.hourlyRate} onChange={e => setInvForm(f => ({ ...f, hourlyRate: e.target.value }))} data-testid="input-hourly-rate" />
-                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Amount (excl. GST)</Label>
-                        <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.amountExclGst} onChange={e => setInvForm(f => ({ ...f, amountExclGst: e.target.value }))} placeholder="Auto from hours x rate" data-testid="input-amount" />
-                      </div>
+
+                      {invoiceLines.length > 0 ? (
+                        <div className="space-y-2" data-testid="section-invoice-lines">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs font-semibold">Line Items ({invoiceLines.length})</Label>
+                            <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={addLine} data-testid="button-add-line">
+                              <Plus className="w-3 h-3 mr-1" /> Add Line
+                            </Button>
+                          </div>
+                          {invoiceLines.map((line, idx) => (
+                            <div key={idx} className="p-2 rounded border bg-muted/30 space-y-1.5" data-testid={`line-item-${idx}`}>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-muted-foreground font-medium">Line {idx + 1}</span>
+                                {invoiceLines.length > 1 && (
+                                  <button type="button" className="text-red-400 hover:text-red-600" onClick={() => removeLine(idx)} data-testid={`button-remove-line-${idx}`}>
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                              <Input className="h-7 text-xs" placeholder="Description" value={line.description} onChange={e => updateLine(idx, "description", e.target.value)} data-testid={`input-line-desc-${idx}`} />
+                              <div className="grid grid-cols-3 gap-1.5">
+                                <div>
+                                  <span className="text-[10px] text-muted-foreground">Hours</span>
+                                  <Input type="number" step="0.01" className="h-7 text-xs font-mono" value={line.hours} onChange={e => updateLine(idx, "hours", e.target.value)} data-testid={`input-line-hours-${idx}`} />
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-muted-foreground">Rate</span>
+                                  <Input type="number" step="0.01" className="h-7 text-xs font-mono" value={line.rate} onChange={e => updateLine(idx, "rate", e.target.value)} data-testid={`input-line-rate-${idx}`} />
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-muted-foreground">Amount</span>
+                                  <Input type="number" step="0.01" className="h-7 text-xs font-mono bg-muted/50" value={line.amount} onChange={e => updateLine(idx, "amount", e.target.value)} data-testid={`input-line-amount-${idx}`} />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          <div className="flex items-center justify-between text-xs p-2 rounded bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                            <span className="font-medium">Total (excl. GST)</span>
+                            <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400" data-testid="text-lines-total">{formatCurrency(linesTotalExGst)}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs font-semibold">Billing</Label>
+                            <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={addLine} data-testid="button-add-line">
+                              <Plus className="w-3 h-3 mr-1" /> Multi-line
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Hours</Label>
+                              <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.hours} onChange={e => setInvForm(f => ({ ...f, hours: e.target.value }))} data-testid="input-hours" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Hourly Rate</Label>
+                              <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.hourlyRate} onChange={e => setInvForm(f => ({ ...f, hourlyRate: e.target.value }))} data-testid="input-hourly-rate" />
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Amount (excl. GST)</Label>
+                            <Input type="number" step="0.01" className="h-8 text-xs font-mono" value={invForm.amountExclGst} onChange={e => setInvForm(f => ({ ...f, amountExclGst: e.target.value }))} placeholder="Auto from hours x rate" data-testid="input-amount" />
+                          </div>
+                        </div>
+                      )}
+
                       <div className="space-y-1">
                         <Label className="text-xs">Description</Label>
                         <Input className="h-8 text-xs" value={invForm.description} onChange={e => setInvForm(f => ({ ...f, description: e.target.value }))} data-testid="input-description" />
@@ -580,7 +733,7 @@ export default function InvoicesPage() {
                         <Input className="h-8 text-xs" value={invForm.reference} onChange={e => setInvForm(f => ({ ...f, reference: e.target.value }))} placeholder="e.g. Contract number" data-testid="input-reference" />
                       </div>
                       <Button type="submit" size="sm" className="w-full" disabled={createMutation.isPending} data-testid="button-submit-invoice">
-                        {createMutation.isPending ? "Creating..." : "Create Draft Invoice"}
+                        {createMutation.isPending ? "Creating..." : invoiceLines.length > 0 ? `Create Draft (${invoiceLines.length} lines)` : "Create Draft Invoice"}
                       </Button>
                     </form>
                   </CardContent>
@@ -1227,7 +1380,8 @@ function InvoiceDetailDialog({
     },
   });
 
-  const canPushToXero = !invoice.xeroInvoiceId && invoice.status === "DRAFT";
+  const [confirmRePush, setConfirmRePush] = useState(false);
+  const isRePush = !!invoice.xeroInvoiceId || invoice.status !== "DRAFT";
 
   const periodChanged = editMonth !== invoice.month || editYear !== invoice.year;
 
@@ -1275,25 +1429,38 @@ function InvoiceDetailDialog({
               Invoice {invoice.invoiceNumber || "—"}
               <InvoiceTypeBadge type={(invoice as any).invoiceType} testId={`badge-type-detail-${invoice.id}`} />
             </DialogTitle>
-            {canPushToXero && (
-              <Button
-                size="sm"
-                onClick={() => pushToXeroMutation.mutate()}
-                disabled={pushToXeroMutation.isPending}
-                data-testid="button-push-to-xero"
-              >
-                {pushToXeroMutation.isPending ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Pushing...</>
-                ) : (
-                  <><Send className="w-4 h-4" /> Push to Xero</>
-                )}
-              </Button>
-            )}
-            {invoice.xeroInvoiceId && (
-              <Badge variant="outline" className="text-xs text-emerald-600 border-emerald-300">
-                Linked to Xero
-              </Badge>
-            )}
+            <div className="flex items-center gap-2">
+              {invoice.xeroInvoiceId && (
+                <Badge variant="outline" className="text-xs text-emerald-600 border-emerald-300">
+                  Linked to Xero
+                </Badge>
+              )}
+              {confirmRePush ? (
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-amber-600">Re-push?</span>
+                  <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { pushToXeroMutation.mutate(); setConfirmRePush(false); }} disabled={pushToXeroMutation.isPending} data-testid="button-confirm-repush">
+                    Yes
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setConfirmRePush(false)} data-testid="button-cancel-repush">
+                    No
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  variant={isRePush ? "outline" : "default"}
+                  onClick={() => isRePush ? setConfirmRePush(true) : pushToXeroMutation.mutate()}
+                  disabled={pushToXeroMutation.isPending}
+                  data-testid="button-push-to-xero"
+                >
+                  {pushToXeroMutation.isPending ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Pushing...</>
+                  ) : (
+                    <><Send className="w-4 h-4" /> {isRePush ? "Re-push" : "Push to Xero"}</>
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
         </DialogHeader>
 

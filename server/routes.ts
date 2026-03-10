@@ -480,9 +480,7 @@ export async function registerRoutes(
     try {
       const existing = await storage.getTimesheet(req.params.id);
       if (!existing) return res.status(404).json({ message: "Timesheet not found" });
-      if (existing.status !== "DRAFT") {
-        return res.status(400).json({ message: "Only draft timesheets can be deleted" });
-      }
+      
       await storage.deleteTimesheet(req.params.id);
       res.json({ message: "Timesheet deleted" });
     } catch (err: any) {
@@ -520,11 +518,23 @@ export async function registerRoutes(
 
   app.post("/api/invoices", async (req, res) => {
     try {
-      const { linkedEmployeeIds, ...invoiceData } = req.body;
+      const { linkedEmployeeIds, lineItems, ...invoiceData } = req.body;
       const parsed = insertInvoiceSchema.parse(invoiceData);
       const invoice = await storage.createInvoice(parsed);
       if (Array.isArray(linkedEmployeeIds) && linkedEmployeeIds.length > 0) {
         await storage.setInvoiceEmployees(invoice.id, linkedEmployeeIds);
+      }
+      if (Array.isArray(lineItems) && lineItems.length > 0) {
+        const liData = lineItems.map((li: any) => ({
+          invoiceId: invoice.id,
+          description: li.description || null,
+          quantity: li.hours ? String(li.hours) : (li.quantity ? String(li.quantity) : null),
+          unitAmount: li.rate ? String(li.rate) : (li.unitAmount ? String(li.unitAmount) : null),
+          lineAmount: li.amount ? String(li.amount) : (li.lineAmount ? String(li.lineAmount) : null),
+          accountCode: li.accountCode || "200",
+          taxType: li.taxType || "OUTPUT",
+        }));
+        await storage.setInvoiceLineItems(invoice.id, liData);
       }
       res.status(201).json({ ...invoice, linkedEmployeeIds: linkedEmployeeIds || [] });
     } catch (err: any) {
@@ -1083,36 +1093,43 @@ export async function registerRoutes(
       );
 
       const missing: { employee: any; placement: any }[] = [];
-      const employeesWithPlacements = new Set<string>();
+
+      const empPlacementMap = new Map<string, typeof activePlacements>();
       for (const p of activePlacements) {
-        employeesWithPlacements.add(p.employeeId);
+        const existing = empPlacementMap.get(p.employeeId) || [];
+        existing.push(p);
+        empPlacementMap.set(p.employeeId, existing);
       }
 
       for (const emp of activeEmployees) {
-        if (!employeesWithPlacements.has(emp.id)) continue;
+        const empPlacements = empPlacementMap.get(emp.id);
+        if (!empPlacements || empPlacements.length === 0) continue;
         const hasInvoice = acrecInvoices.some(inv => {
           const linkedIds: string[] = (inv as any).linkedEmployeeIds || [];
           return inv.employeeId === emp.id || linkedIds.includes(emp.id);
         });
         if (!hasInvoice) {
-          const placement = activePlacements.find(p => p.employeeId === emp.id);
-          missing.push({
-            employee: {
-              id: emp.id,
-              firstName: emp.firstName,
-              lastName: emp.lastName,
-              preferredName: emp.preferredName,
-              clientName: emp.clientName,
-              chargeOutRate: emp.chargeOutRate,
-              contractCode: emp.contractCode,
-            },
-            placement: placement ? {
-              id: placement.id,
-              clientId: placement.clientId,
-              chargeOutRate: placement.chargeOutRate,
-              roleTitle: placement.roleTitle,
-            } : null,
-          });
+          for (const placement of empPlacements) {
+            missing.push({
+              employee: {
+                id: emp.id,
+                firstName: emp.firstName,
+                lastName: emp.lastName,
+                preferredName: emp.preferredName,
+                clientName: placement.clientName || emp.clientName,
+                chargeOutRate: placement.chargeOutRate || emp.chargeOutRate,
+                contractCode: emp.contractCode,
+              },
+              placement: {
+                id: placement.id,
+                clientId: placement.clientId,
+                clientName: placement.clientName,
+                chargeOutRate: placement.chargeOutRate,
+                payRate: placement.payRate,
+                roleTitle: placement.roleTitle,
+              },
+            });
+          }
         }
       }
 

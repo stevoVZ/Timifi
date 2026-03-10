@@ -1468,8 +1468,6 @@ export async function pushInvoiceToXero(invoiceId: string): Promise<{ xeroInvoic
 
   const invoice = await storage.getInvoice(invoiceId);
   if (!invoice) throw new Error("Invoice not found");
-  if (invoice.status !== "DRAFT") throw new Error("Only DRAFT invoices can be pushed to Xero");
-  if (invoice.xeroInvoiceId) throw new Error("Invoice is already linked to Xero");
 
   let contactId = (invoice as any).xeroContactId;
   if (!contactId && (invoice as any).clientId) {
@@ -1478,39 +1476,57 @@ export async function pushInvoiceToXero(invoiceId: string): Promise<{ xeroInvoic
   }
   if (!contactId) throw new Error("No Xero contact linked. Please assign a client with a Xero contact ID first.");
 
-  const lineDescription = invoice.description || `${MONTHS_SHORT[invoice.month]} ${invoice.year} services`;
-  const amountExcl = parseFloat(invoice.amountExclGst);
-  const hours = invoice.hours ? parseFloat(invoice.hours) : 0;
-  const rate = invoice.hourlyRate ? parseFloat(invoice.hourlyRate) : 0;
+  const storedLineItems = await storage.getInvoiceLineItems(invoiceId);
 
-  let quantity: number;
-  let unitAmount: number;
-  if (hours > 0 && rate > 0) {
-    quantity = hours;
-    unitAmount = rate;
-  } else if (hours > 0 && amountExcl > 0) {
-    quantity = hours;
-    unitAmount = Math.round((amountExcl / hours) * 100) / 100;
+  let xeroLineItems: any[];
+  if (storedLineItems.length > 0) {
+    xeroLineItems = storedLineItems.map(li => ({
+      Description: li.description || `${MONTHS_SHORT[invoice.month]} ${invoice.year} services`,
+      Quantity: li.quantity ? parseFloat(li.quantity) : 1,
+      UnitAmount: li.unitAmount ? parseFloat(li.unitAmount) : (li.lineAmount ? parseFloat(li.lineAmount) : 0),
+      AccountCode: li.accountCode || "200",
+      TaxType: li.taxType || "OUTPUT",
+    }));
   } else {
-    quantity = 1;
-    unitAmount = amountExcl;
+    const lineDescription = invoice.description || `${MONTHS_SHORT[invoice.month]} ${invoice.year} services`;
+    const amountExcl = parseFloat(invoice.amountExclGst);
+    const hours = invoice.hours ? parseFloat(invoice.hours) : 0;
+    const rate = invoice.hourlyRate ? parseFloat(invoice.hourlyRate) : 0;
+
+    let quantity: number;
+    let unitAmount: number;
+    if (hours > 0 && rate > 0) {
+      quantity = hours;
+      unitAmount = rate;
+    } else if (hours > 0 && amountExcl > 0) {
+      quantity = hours;
+      unitAmount = Math.round((amountExcl / hours) * 100) / 100;
+    } else {
+      quantity = 1;
+      unitAmount = amountExcl;
+    }
+    xeroLineItems = [{
+      Description: lineDescription,
+      Quantity: quantity,
+      UnitAmount: unitAmount,
+      AccountCode: "200",
+      TaxType: "OUTPUT",
+    }];
   }
+
+  const isUpdate = !!invoice.xeroInvoiceId;
 
   const xeroInvoice: Record<string, any> = {
     Type: "ACCREC",
     Contact: { ContactID: contactId },
-    Status: "DRAFT",
+    Status: ["DRAFT", "AUTHORISED"].includes(invoice.status) ? invoice.status : "DRAFT",
     LineAmountTypes: "Exclusive",
-    LineItems: [
-      {
-        Description: lineDescription,
-        Quantity: quantity,
-        UnitAmount: unitAmount,
-        AccountCode: "200",
-        TaxType: "OUTPUT",
-      },
-    ],
+    LineItems: xeroLineItems,
   };
+
+  if (isUpdate) {
+    xeroInvoice.InvoiceID = invoice.xeroInvoiceId;
+  }
 
   if (invoice.issueDate) xeroInvoice.Date = invoice.issueDate;
   if (invoice.dueDate) xeroInvoice.DueDate = invoice.dueDate;

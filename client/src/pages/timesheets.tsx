@@ -1575,7 +1575,7 @@ function SubmissionsView() {
                         onApprove={() => updateMutation.mutate({ id: ts.id, data: { status: "APPROVED", reviewedAt: new Date().toISOString() } })}
                         onReject={() => updateMutation.mutate({ id: ts.id, data: { status: "REJECTED", reviewedAt: new Date().toISOString() } })}
                         onSubmit={() => updateMutation.mutate({ id: ts.id, data: { status: "SUBMITTED", submittedAt: new Date().toISOString() } })}
-                        onDelete={ts.status === "DRAFT" ? () => setDeleteConfirmId(ts.id) : undefined}
+                        onDelete={() => setDeleteConfirmId(ts.id)}
                       />
                     );
                   })}
@@ -1589,9 +1589,9 @@ function SubmissionsView() {
       <Dialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Delete Draft Timesheet</DialogTitle>
+            <DialogTitle>Delete Timesheet</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this draft timesheet? This action cannot be undone. Any attached documents will also be removed.
+              Are you sure you want to delete this timesheet? This action cannot be undone. Any attached documents will also be removed.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 pt-2">
@@ -1790,33 +1790,31 @@ function TimesheetRow({
                   {loadingDocs ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
                   <span className="ml-1">View</span>
                 </Button>
-                {ts.status === "SUBMITTED" && (
-                  <>
-                    <Button size="sm" onClick={onApprove} data-testid={`button-approve-${ts.id}`}>
-                      Approve
-                    </Button>
-                    <Button size="sm" variant="secondary" onClick={onReject} data-testid={`button-reject-${ts.id}`}>
-                      Reject
-                    </Button>
-                  </>
+                {ts.status !== "APPROVED" && (
+                  <Button size="sm" onClick={onApprove} data-testid={`button-approve-${ts.id}`}>
+                    {ts.status === "SUBMITTED" ? "Approve" : "Force Approve"}
+                  </Button>
                 )}
-                {ts.status === "DRAFT" && (
-                  <>
-                    <Button size="sm" onClick={onSubmit} data-testid={`button-submit-${ts.id}`}>
-                      Submit
-                    </Button>
-                    {onDelete && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={onDelete}
-                        data-testid={`button-delete-${ts.id}`}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    )}
-                  </>
+                {ts.status !== "REJECTED" && ts.status !== "DRAFT" && (
+                  <Button size="sm" variant="secondary" onClick={onReject} data-testid={`button-reject-${ts.id}`}>
+                    {ts.status === "SUBMITTED" ? "Reject" : "Force Reject"}
+                  </Button>
+                )}
+                {ts.status !== "SUBMITTED" && (
+                  <Button size="sm" variant={ts.status === "DRAFT" ? "default" : "outline"} onClick={onSubmit} data-testid={`button-submit-${ts.id}`}>
+                    {ts.status === "DRAFT" ? "Submit" : "Re-submit"}
+                  </Button>
+                )}
+                {onDelete && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={onDelete}
+                    data-testid={`button-delete-${ts.id}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
                 )}
                 <Button
                   size="sm"
