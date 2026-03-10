@@ -288,6 +288,11 @@ export async function refreshTokenIfNeeded(): Promise<{ accessToken: string; ten
   return { accessToken, tenantId };
 }
 
+async function tenantSyncKey(base: string): Promise<string> {
+  const tid = await getSettingValue("xero.tenantId");
+  return tid ? `${base}.${tid}` : base;
+}
+
 export async function isConnected(): Promise<{
   connected: boolean;
   tenantName: string;
@@ -295,7 +300,7 @@ export async function isConnected(): Promise<{
 }> {
   const connected = (await getSettingValue("xero.connected")) === "true";
   const tenantName = await getSettingValue("xero.tenantName");
-  const lastSyncAt = await getSettingValue("xero.lastSyncAt");
+  const lastSyncAt = await getSettingValue(await tenantSyncKey("xero.lastSyncAt"));
   return { connected, tenantName, lastSyncAt };
 }
 
@@ -476,8 +481,8 @@ export async function syncEmployees(): Promise<{
     }
   }
 
-  await saveSetting("xero.lastSyncAt", new Date().toISOString());
-  await saveSetting("xero.lastEmployeeSyncAt", new Date().toISOString());
+  await saveSetting(await tenantSyncKey("xero.lastSyncAt"), new Date().toISOString());
+  await saveSetting(await tenantSyncKey("xero.lastEmployeeSyncAt"), new Date().toISOString());
 
   return {
     total: employees.length,
@@ -810,7 +815,7 @@ export async function syncPayRuns(): Promise<{
     }
   }
 
-  await saveSetting("xero.lastPayRunSyncAt", new Date().toISOString());
+  await saveSetting(await tenantSyncKey("xero.lastPayRunSyncAt"), new Date().toISOString());
 
   return { total: payRuns.length, created, updated, errors };
 }
@@ -918,7 +923,7 @@ export async function syncTimesheets(): Promise<{
     }
   }
 
-  await saveSetting("xero.lastTimesheetSyncAt", new Date().toISOString());
+  await saveSetting(await tenantSyncKey("xero.lastTimesheetSyncAt"), new Date().toISOString());
 
   return { total: xeroTimesheets.length, created, updated, errors };
 }
@@ -1014,7 +1019,7 @@ export async function syncPayrollSettings(): Promise<{
     }
   } catch {}
 
-  await saveSetting("xero.lastSettingsSyncAt", new Date().toISOString());
+  await saveSetting(await tenantSyncKey("xero.lastSettingsSyncAt"), new Date().toISOString());
 
   return { calendars, earningsRates, leaveTypes, payItemsSynced };
 }
@@ -1251,7 +1256,7 @@ export async function syncInvoices(): Promise<{
     }
   }
 
-  await saveSetting("xero.lastInvoiceSyncAt", new Date().toISOString());
+  await saveSetting(await tenantSyncKey("xero.lastInvoiceSyncAt"), new Date().toISOString());
 
   return { total: xeroInvoices.length, created, updated, errors };
 }
@@ -1356,7 +1361,7 @@ export async function syncContacts(): Promise<{
     }
   }
 
-  await saveSetting("xero.lastContactSyncAt", new Date().toISOString());
+  await saveSetting(await tenantSyncKey("xero.lastContactSyncAt"), new Date().toISOString());
 
   return { total: allContacts.length, created, updated, errors };
 }
@@ -1446,7 +1451,7 @@ export async function syncBankTransactions(): Promise<{
     }
   }
 
-  await saveSetting("xero.lastBankTxnSyncAt", new Date().toISOString());
+  await saveSetting(await tenantSyncKey("xero.lastBankTxnSyncAt"), new Date().toISOString());
 
   return { total: allTxns.length, created, updated, errors };
 }

@@ -504,16 +504,17 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
   const tenantName = statusQuery.data?.tenantName || "";
   const lastSyncAt = statusQuery.data?.lastSyncAt || "";
 
-  const lastEmployeeSyncAt = useSettingValue(settings, "xero.lastEmployeeSyncAt", "");
-  const lastPayRunSyncAt = useSettingValue(settings, "xero.lastPayRunSyncAt", "");
-  const lastTimesheetSyncAt = useSettingValue(settings, "xero.lastTimesheetSyncAt", "");
-  const lastInvoiceSyncAt = useSettingValue(settings, "xero.lastInvoiceSyncAt", "");
-  const lastContactSyncAt = useSettingValue(settings, "xero.lastContactSyncAt", "");
-  const lastBankTxnSyncAt = useSettingValue(settings, "xero.lastBankTxnSyncAt", "");
-  const lastSettingsSyncAt = useSettingValue(settings, "xero.lastSettingsSyncAt", "");
-
   const tenants = tenantsQuery.data || [];
   const selectedTenantId = tenants.find(t => t.selected)?.tenantId || "";
+
+  const syncKeySuffix = selectedTenantId ? `.${selectedTenantId}` : "";
+  const lastEmployeeSyncAt = useSettingValue(settings, `xero.lastEmployeeSyncAt${syncKeySuffix}`, "");
+  const lastPayRunSyncAt = useSettingValue(settings, `xero.lastPayRunSyncAt${syncKeySuffix}`, "");
+  const lastTimesheetSyncAt = useSettingValue(settings, `xero.lastTimesheetSyncAt${syncKeySuffix}`, "");
+  const lastInvoiceSyncAt = useSettingValue(settings, `xero.lastInvoiceSyncAt${syncKeySuffix}`, "");
+  const lastContactSyncAt = useSettingValue(settings, `xero.lastContactSyncAt${syncKeySuffix}`, "");
+  const lastBankTxnSyncAt = useSettingValue(settings, `xero.lastBankTxnSyncAt${syncKeySuffix}`, "");
+  const lastSettingsSyncAt = useSettingValue(settings, `xero.lastSettingsSyncAt${syncKeySuffix}`, "");
 
   const syncItems = [
     { label: "Employees", endpoint: "/api/xero/sync", invalidateKeys: ["/api/employees"], lastSync: lastEmployeeSyncAt },
