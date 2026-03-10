@@ -334,6 +334,7 @@ export const bankTransactions = pgTable("bank_transactions", {
   year: smallint("year").notNull(),
   linkedInvoiceId: varchar("linked_invoice_id"),
   linkedEmployeeId: varchar("linked_employee_id"),
+  linkedCategory: text("linked_category"),
   linkedNotes: text("linked_notes"),
   linkStatus: text("link_status"),
   suggestedInvoiceId: varchar("suggested_invoice_id"),

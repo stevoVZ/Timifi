@@ -166,7 +166,7 @@ export interface IStorage {
   getBankTransactionByXeroId(xeroId: string): Promise<BankTransaction | undefined>;
   createBankTransaction(data: InsertBankTransaction): Promise<BankTransaction>;
   updateBankTransaction(id: string, data: Partial<InsertBankTransaction>): Promise<BankTransaction | undefined>;
-  updateBankTransactionLink(id: string, fields: { linkedInvoiceId?: string | null; linkedEmployeeId?: string | null; linkedNotes?: string | null; linkStatus?: string | null; suggestedInvoiceId?: string | null; suggestedEmployeeId?: string | null }): Promise<BankTransaction | undefined>;
+  updateBankTransactionLink(id: string, fields: { linkedInvoiceId?: string | null; linkedEmployeeId?: string | null; linkedCategory?: string | null; linkedNotes?: string | null; linkStatus?: string | null; suggestedInvoiceId?: string | null; suggestedEmployeeId?: string | null }): Promise<BankTransaction | undefined>;
   clearBankTransactionLink(id: string): Promise<BankTransaction | undefined>;
 
   getPayslipLines(payRunLineId: string): Promise<PayslipLine[]>;
@@ -922,7 +922,7 @@ export class DatabaseStorage implements IStorage {
     return txn;
   }
 
-  async updateBankTransactionLink(id: string, fields: { linkedInvoiceId?: string | null; linkedEmployeeId?: string | null; linkedNotes?: string | null; linkStatus?: string | null; suggestedInvoiceId?: string | null; suggestedEmployeeId?: string | null }): Promise<BankTransaction | undefined> {
+  async updateBankTransactionLink(id: string, fields: { linkedInvoiceId?: string | null; linkedEmployeeId?: string | null; linkedCategory?: string | null; linkedNotes?: string | null; linkStatus?: string | null; suggestedInvoiceId?: string | null; suggestedEmployeeId?: string | null }): Promise<BankTransaction | undefined> {
     const [txn] = await db.update(bankTransactions).set(fields).where(eq(bankTransactions.id, id)).returning();
     return txn;
   }
@@ -931,6 +931,7 @@ export class DatabaseStorage implements IStorage {
     const [txn] = await db.update(bankTransactions).set({
       linkedInvoiceId: null,
       linkedEmployeeId: null,
+      linkedCategory: null,
       linkedNotes: null,
       linkStatus: null,
       suggestedInvoiceId: null,

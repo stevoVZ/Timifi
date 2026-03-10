@@ -4389,6 +4389,13 @@ export async function registerRoutes(
         invoicesByContact.get(key)!.push(inv);
       }
 
+      const invoicesByNumber = new Map<string, typeof allInvoices[0]>();
+      for (const inv of allInvoices) {
+        if (inv.invoiceNumber && inv.invoiceType === "ACCREC" && inv.status !== "VOIDED") {
+          invoicesByNumber.set(inv.invoiceNumber, inv);
+        }
+      }
+
       const linkage: Record<string, {
         status: "linked_invoice" | "linked_rcti" | "matched_contact" | "confirmed" | "manual" | "suggested" | "rejected" | "unlinked";
         invoiceId?: string;
@@ -4398,6 +4405,7 @@ export async function registerRoutes(
         isRctiClient?: boolean;
         employeeId?: string;
         employeeName?: string;
+        category?: string;
         notes?: string;
         employees?: { id: string; name: string; placementId: string }[];
       }> = {};
@@ -4417,6 +4425,7 @@ export async function registerRoutes(
             invoiceNumber: inv?.invoiceNumber || undefined,
             employeeId: txn.linkedEmployeeId || undefined,
             employeeName: emp ? `${emp.firstName} ${emp.lastName}` : undefined,
+            category: txn.linkedCategory || undefined,
             notes: txn.linkedNotes || undefined,
           };
           continue;
@@ -4453,6 +4462,16 @@ export async function registerRoutes(
             status: "linked_invoice",
             invoiceId: paymentMatch.invoiceId,
             invoiceNumber: paymentMatch.invoiceNumber,
+          };
+          continue;
+        }
+
+        if (txn.reference && txn.type === "RECEIVE" && invoicesByNumber.has(txn.reference)) {
+          const refInv = invoicesByNumber.get(txn.reference)!;
+          linkage[txnId] = {
+            status: "linked_invoice",
+            invoiceId: refInv.id,
+            invoiceNumber: refInv.invoiceNumber,
           };
           continue;
         }
@@ -4546,6 +4565,14 @@ export async function registerRoutes(
       }
 
       let suggestedCount = 0;
+      let autoLinkedCount = 0;
+
+      const invoicesByNumber2 = new Map<string, typeof allInvoices[0]>();
+      for (const inv of allInvoices) {
+        if (inv.invoiceNumber && inv.invoiceType === "ACCREC" && inv.status !== "VOIDED") {
+          invoicesByNumber2.set(inv.invoiceNumber, inv);
+        }
+      }
 
       for (const txn of bankTxns) {
         if (txn.linkStatus === "confirmed" || txn.linkStatus === "manual" || txn.linkStatus === "rejected" || txn.linkStatus === "suggested") {
@@ -4553,6 +4580,16 @@ export async function registerRoutes(
         }
 
         if (rctiBankTxnIds.has(txn.id)) continue;
+
+        if (txn.reference && txn.type === "RECEIVE" && invoicesByNumber2.has(txn.reference)) {
+          const refInv = invoicesByNumber2.get(txn.reference)!;
+          await storage.updateBankTransactionLink(txn.id, {
+            linkedInvoiceId: refInv.id,
+            linkStatus: "confirmed",
+          });
+          autoLinkedCount++;
+          continue;
+        }
 
         const paymentKey = `${txn.bankAccountId || ""}__${txn.date || ""}__${Math.abs(parseFloat(String(txn.amount))).toFixed(2)}`;
         const paymentMatch = invoicePaymentsByKey.get(paymentKey);
@@ -4598,7 +4635,7 @@ export async function registerRoutes(
         }
       }
 
-      res.json({ suggestedCount, totalTransactions: bankTxns.length });
+      res.json({ suggestedCount, autoLinkedCount, totalTransactions: bankTxns.length });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to auto-suggest links" });
     }
@@ -4608,7 +4645,7 @@ export async function registerRoutes(
   app.patch("/api/bank-transactions/:id/link", async (req, res) => {
     try {
       const { id } = req.params;
-      const { action, invoiceId, employeeId, notes } = req.body;
+      const { action, invoiceId, employeeId, category, notes } = req.body;
 
       if (!action || !["confirm", "manual", "reject"].includes(action)) {
         return res.status(400).json({ message: "action must be 'confirm', 'manual', or 'reject'" });
@@ -4629,8 +4666,8 @@ export async function registerRoutes(
           linkStatus: "confirmed",
         });
       } else if (action === "manual") {
-        if (!invoiceId && !employeeId) {
-          return res.status(400).json({ message: "invoiceId or employeeId required for manual link" });
+        if (!invoiceId && !employeeId && !category) {
+          return res.status(400).json({ message: "invoiceId, employeeId, or category required for manual link" });
         }
         if (invoiceId) {
           const allInvoices = await storage.getInvoices();
@@ -4647,6 +4684,7 @@ export async function registerRoutes(
         await storage.updateBankTransactionLink(id, {
           linkedInvoiceId: invoiceId || null,
           linkedEmployeeId: employeeId || null,
+          linkedCategory: category || null,
           linkedNotes: notes || null,
           linkStatus: "manual",
           suggestedInvoiceId: null,
@@ -4659,6 +4697,7 @@ export async function registerRoutes(
           suggestedEmployeeId: null,
           linkedInvoiceId: null,
           linkedEmployeeId: null,
+          linkedCategory: null,
           linkedNotes: null,
         });
       }

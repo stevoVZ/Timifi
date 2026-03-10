@@ -84,6 +84,16 @@ Transfer direction: "Bank Transfer from X" = incoming (despite Xero recording as
 Amex repayments = transfer SPEND entries on the Amex account side.
 Bank gap metric uses clean RECEIVE-only revenue (no transfers, no Amex) for comparison against invoice data.
 
+## Bank Statements Page
+
+The Bank Statements page (`/bank-statements`) provides a comprehensive bank transaction management interface:
+- **KPI Cards:** Income (total RECEIVE), Expenses (total SPEND), Net Flow, Linked count/%, Unlinked count
+- **Linked/Unlinked Split:** "Needs Attention" section (amber) shows unlinked + suggested transactions; "Linked Transactions" section (green) shows confirmed/manual/auto-linked transactions
+- **Link Dialog:** Three tabs — Invoice (search/match), Employee (search/select), Category (14 predefined expense categories: Payroll, Superannuation, ATO/Tax, Contractor Payment, Office Expense, Software/IT, Professional Fees, Insurance, Travel, Bank Fees, Utilities, Marketing, Training, Other)
+- **Auto-Link:** Reference-based matching (txn.reference → invoice.invoiceNumber) for RECEIVE transactions against ACCREC non-voided invoices, auto-confirmed. Contact-based matching creates suggestions for user review.
+- **Filters:** Account dropdown, Income/Expenses/All toggle, search by contact/description/reference, month/year selectors
+- **Schema:** `bank_transactions` table has `linked_category` text column for expense categorization alongside `linked_invoice_id` and `linked_employee_id`
+
 ## Bank Transaction Linkages
 
 All MSG employee bank transactions have been manually linked to their respective employee records:
