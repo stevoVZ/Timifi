@@ -2140,6 +2140,158 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/cash-position", async (_req, res) => {
+    try {
+      const allTxns = await storage.getBankTransactions();
+
+      const isTransfer = (t: any) =>
+        (!t.contactName || t.contactName === "") &&
+        (t.description || "").startsWith("Bank Transfer");
+
+      const accounts: Record<string, { name: string; totalIn: number; totalOut: number; net: number; txnCount: number; earliest: string | null; latest: string | null }> = {};
+      let totalTransferAmount = 0;
+      const monthlyFlow: Record<string, { month: string; cashIn: number; cashOut: number; net: number }> = {};
+      let linkedCount = 0;
+      let unlinkedCount = 0;
+      let linkedRevenue = 0;
+      let linkedCost = 0;
+      let atoSpend = 0;
+      let superSpend = 0;
+      let businessExpenses = 0;
+      let amexTotalSpend = 0;
+      let amexTotalCredits = 0;
+      let amexRepayments = 0;
+
+      const employeeCosts: Record<string, { name: string; revenue: number; cost: number; txns: number }> = {};
+
+      const employees = await storage.getEmployees();
+      const empMap: Record<string, string> = {};
+      for (const e of employees) {
+        empMap[e.id] = `${e.firstName} ${e.lastName}`;
+      }
+
+      for (const t of allTxns) {
+        const amt = parseFloat(t.amount);
+        const acctName = t.bankAccountName || "Unknown";
+        const monthKey = `${t.year}-${String(t.month).padStart(2, "0")}`;
+
+        if (!accounts[acctName]) {
+          accounts[acctName] = { name: acctName, totalIn: 0, totalOut: 0, net: 0, txnCount: 0, earliest: null, latest: null };
+        }
+        const acct = accounts[acctName];
+        acct.txnCount++;
+        if (!acct.earliest || t.date < acct.earliest) acct.earliest = t.date;
+        if (!acct.latest || t.date > acct.latest) acct.latest = t.date;
+
+        if (isTransfer(t)) {
+          totalTransferAmount += amt;
+        } else {
+          if (t.type === "RECEIVE") {
+            acct.totalIn += amt;
+            acct.net += amt;
+          } else {
+            acct.totalOut += amt;
+            acct.net -= amt;
+          }
+        }
+
+        if (!monthlyFlow[monthKey]) {
+          monthlyFlow[monthKey] = { month: monthKey, cashIn: 0, cashOut: 0, net: 0 };
+        }
+        if (!isTransfer(t)) {
+          if (t.type === "RECEIVE") {
+            monthlyFlow[monthKey].cashIn += amt;
+          } else {
+            monthlyFlow[monthKey].cashOut += amt;
+          }
+          monthlyFlow[monthKey].net = monthlyFlow[monthKey].cashIn - monthlyFlow[monthKey].cashOut;
+        }
+
+        if (t.linkedEmployeeId) {
+          linkedCount++;
+          const empName = empMap[t.linkedEmployeeId] || "Unknown";
+          if (!employeeCosts[t.linkedEmployeeId]) {
+            employeeCosts[t.linkedEmployeeId] = { name: empName, revenue: 0, cost: 0, txns: 0 };
+          }
+          employeeCosts[t.linkedEmployeeId].txns++;
+          if (t.type === "RECEIVE") {
+            linkedRevenue += amt;
+            employeeCosts[t.linkedEmployeeId].revenue += amt;
+          } else {
+            linkedCost += amt;
+            employeeCosts[t.linkedEmployeeId].cost += amt;
+          }
+        } else if (!isTransfer(t)) {
+          unlinkedCount++;
+          const cn = (t.contactName || "").toLowerCase();
+          if (cn.includes("ato")) atoSpend += (t.type === "SPEND" ? amt : 0);
+          else if (cn.includes("super choice")) superSpend += (t.type === "SPEND" ? amt : 0);
+          else if (acctName.includes("American Express") && t.type === "SPEND") businessExpenses += amt;
+        }
+
+        if (acctName.includes("American Express")) {
+          if (t.type === "SPEND") {
+            if (isTransfer(t)) {
+              amexRepayments += amt;
+            } else {
+              amexTotalSpend += amt;
+            }
+          }
+          if (t.type === "RECEIVE") amexTotalCredits += amt;
+        }
+
+      }
+
+      const accountList = Object.values(accounts).sort((a, b) => {
+        const order: Record<string, number> = { "MSG RECRUITMENT": 0, "Tax Account": 1, "Macquarie Platinum Transaction Account": 2 };
+        return (order[a.name] ?? 3) - (order[b.name] ?? 3);
+      });
+
+      const monthlyFlowSorted = Object.values(monthlyFlow).sort((a, b) => a.month.localeCompare(b.month));
+
+      const operatingAccounts = accountList.filter(a => !a.name.includes("American Express"));
+      const netCashPosition = operatingAccounts.reduce((sum, a) => sum + a.net, 0);
+      const amexDebt = amexTotalSpend - amexTotalCredits;
+
+      const employeeList = Object.entries(employeeCosts)
+        .map(([id, data]) => ({ id, ...data }))
+        .sort((a, b) => (b.revenue + b.cost) - (a.revenue + a.cost));
+
+      const amexTotalCharged = amexTotalSpend + amexRepayments;
+      const amexTotalPaidOff = amexRepayments + amexTotalCredits;
+
+      res.json({
+        accounts: accountList,
+        netCashPosition,
+        amex: {
+          totalCharged: amexTotalCharged,
+          cardPurchases: amexTotalSpend,
+          totalCredits: amexTotalCredits,
+          repaymentsFromBank: amexRepayments,
+          totalPaidOff: amexTotalPaidOff,
+          outstandingDebt: amexDebt,
+        },
+        summary: {
+          totalRevenue: accountList.reduce((s, a) => s + a.totalIn, 0),
+          totalExpenses: accountList.reduce((s, a) => s + a.totalOut, 0),
+          linkedRevenue,
+          linkedCost,
+          atoSpend,
+          superSpend,
+          businessExpenses,
+          interAccountTransfers: totalTransferAmount,
+          linkedTxns: linkedCount,
+          unlinkedTxns: unlinkedCount,
+        },
+        employees: employeeList,
+        monthlyFlow: monthlyFlowSorted,
+      });
+    } catch (err) {
+      console.error("Cash position error:", err);
+      res.status(500).json({ message: "Failed to calculate cash position" });
+    }
+  });
+
   app.get("/api/bank-transactions", async (req, res) => {
     try {
       const month = req.query.month ? parseInt(req.query.month as string) : undefined;

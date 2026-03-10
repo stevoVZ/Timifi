@@ -64,3 +64,33 @@ The system detects duplicate timesheets using a multi-layered approach:
 Detection applies to both:
 - **Main Timesheets Upload Page** (`client/src/pages/timesheets.tsx`): Amber warnings on queue items.
 - **Reconciliation Dialog** (`client/src/pages/reconciliation.tsx`): Amber warning after PDF scan.
+
+## Cash Position Dashboard
+
+The Cash Position page (`/cash-position`) provides a treasury overview across all bank accounts:
+- **KPI Cards:** Net Cash Position, Amex Outstanding Debt, Total Revenue, Total Employee Costs
+- **Per-Account Cards:** MSG Recruitment, Tax Account, Macquarie Platinum, Amex — showing in/out/net flows (excluding inter-account transfers)
+- **Amex Debt Tracker:** Total charged vs credits vs repayments from bank, with progress bar and outstanding balance
+- **Expense Categories:** ATO/Tax, Superannuation, Business Expenses (Amex), Inter-Account Transfers, Linked/Unlinked transaction counts
+- **Monthly Cash Flow:** Last 12 months with horizontal bar chart showing in vs out per month
+- **Employee Cash Flow Summary:** Revenue received and costs paid per employee, with net margin
+
+API endpoint: `GET /api/cash-position` in `server/routes.ts`.
+Inter-account transfers are detected by blank contact name + "Bank Transfer" description prefix and excluded from operating flow calculations.
+Amex repayments are detected from transfer SPEND entries on the Amex account side.
+
+## Bank Transaction Linkages
+
+All MSG employee bank transactions have been manually linked to their respective employee records:
+- Ben Sharman: DFAT (revenue) + B E Sharman (payroll)
+- Stuart Underwood: Stuart Underwood + To Stuart and Shareen Underwood
+- Edmond Apoderado: GGWP Consulting
+- Guy Davy: PayMe
+- Summer Field-Sinclair: Summer Field-Sinclair + To Summer D Field-Sinclair
+- Monica Vannasy: Monica Vannasy + Monica Vanassy + Mon + MV
+- Mohammed Halim: Mohammed Halim
+- Zean Gonzales: Zean Gonzales
+- Alison Howard: Alison Howard + Alison Howae + County Corp
+- Anthony Ikic: Anthony Ikic + To IKIC ANTHONY ANTE
+- Simon Lenz: Simon Lenz + Finite Group (revenue)
+- Panatda Phaiyakounh: MK + Panadtda Phaiyakounh

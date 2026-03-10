@@ -24,6 +24,7 @@ const navItems = [
   { title: "RCTIs", url: "/rctis", icon: Receipt },
   { title: "Reconciliation", url: "/reconciliation", icon: ClipboardCheck },
   { title: "Bank Statements", url: "/bank-statements", icon: Wallet },
+  { title: "Cash Position", url: "/cash-position", icon: DollarSign },
   { title: "Profitability", url: "/profitability", icon: TrendingUp },
   { title: "Client Ledger", url: "/client-ledger", icon: BookOpen },
   { title: "Pay Items", url: "/pay-items", icon: DollarSign },
