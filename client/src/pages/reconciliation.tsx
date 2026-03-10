@@ -35,6 +35,16 @@ import {
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+interface TimesheetEntry {
+  id: string; hours: number; regularHours: number; overtimeHours: number; status: string; grossValue: number;
+  clientId?: string | null; placementId?: string | null;
+}
+
+interface InvoiceEntry {
+  id: string; amount: number; amountExGst: number; invoiceNumber: string | null; status: string;
+  paidDate: string | null; issueDate?: string | null; month?: number; year?: number; description?: string | null;
+}
+
 interface ReconciliationRow {
   employee: {
     id: string;
@@ -47,8 +57,12 @@ interface ReconciliationRow {
     payrollFeePercent: string | null;
     companyName?: string | null;
   };
-  timesheet: { id: string; hours: number; regularHours: number; overtimeHours: number; status: string; grossValue: number } | null;
-  invoice: { id: string; amount: number; amountExGst: number; invoiceNumber: string | null; status: string; paidDate: string | null; issueDate?: string | null; month?: number; year?: number; description?: string | null } | null;
+  timesheet: TimesheetEntry | null;
+  timesheets?: TimesheetEntry[];
+  timesheetSummary?: { totalHours: number; status: string | null; count: number };
+  invoice: InvoiceEntry | null;
+  invoices?: InvoiceEntry[];
+  invoiceSummary?: { totalExGst: number; totalInclGst: number; count: number; allPaid: boolean };
   payroll: { payRunId: string | null; grossEarnings: number; netPay: number; hoursWorked: number; payRunStatus: string | null; paygWithheld?: number; superAmount?: number } | null;
   contractorCost?: { total: number; transactionCount: number; companyName: string | null } | null;
   financials: { expectedRevenue: number; employeeCost: number; margin: number; marginPercent: number; payrollFeeRevenue: number };
@@ -66,15 +80,25 @@ function StatusIcon({ status, type }: { status: "complete" | "partial" | "missin
   return <XCircle className="w-4 h-4 text-red-400 dark:text-red-500" data-testid={`icon-${type}-missing`} />;
 }
 
-function getTimesheetStatus(ts: ReconciliationRow["timesheet"]): "complete" | "partial" | "missing" {
-  if (!ts) return "missing";
-  if (ts.status === "APPROVED") return "complete";
+function getTimesheetStatus(row: ReconciliationRow): "complete" | "partial" | "missing" {
+  const summary = row.timesheetSummary;
+  if (summary && summary.count > 0) {
+    if (summary.status === "APPROVED") return "complete";
+    return "partial";
+  }
+  if (!row.timesheet) return "missing";
+  if (row.timesheet.status === "APPROVED") return "complete";
   return "partial";
 }
 
-function getInvoiceStatus(inv: ReconciliationRow["invoice"]): "complete" | "partial" | "missing" {
-  if (!inv) return "missing";
-  if (inv.status === "PAID") return "complete";
+function getInvoiceStatus(row: ReconciliationRow): "complete" | "partial" | "missing" {
+  const summary = row.invoiceSummary;
+  if (summary && summary.count > 0) {
+    if (summary.allPaid) return "complete";
+    return "partial";
+  }
+  if (!row.invoice) return "missing";
+  if (row.invoice.status === "PAID") return "complete";
   return "partial";
 }
 
@@ -88,8 +112,8 @@ function getPayrollStatus(row: ReconciliationRow): "complete" | "partial" | "mis
 }
 
 function getRowCompleteness(row: ReconciliationRow): { complete: number; total: number; status: "complete" | "partial" | "missing" } {
-  const ts = getTimesheetStatus(row.timesheet);
-  const inv = getInvoiceStatus(row.invoice);
+  const ts = getTimesheetStatus(row);
+  const inv = getInvoiceStatus(row);
   const pay = getPayrollStatus(row);
   const items = [ts, inv, pay];
   const complete = items.filter(i => i === "complete").length;
@@ -134,10 +158,10 @@ export default function ReconciliationPage() {
   const cashFlow = data?.cashFlow || { cashIn: 0, cashOut: 0, netCashFlow: 0 };
   const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalMargin: 0, totalPayrollFeeRevenue: 0 };
   const total = rows.length;
-  const tsReceived = rows.filter((r) => r.timesheet).length;
-  const tsApproved = rows.filter((r) => r.timesheet?.status === "APPROVED").length;
-  const invRaised = rows.filter((r) => r.invoice).length;
-  const invPaid = rows.filter((r) => r.invoice?.status === "PAID").length;
+  const tsReceived = rows.filter((r) => (r.timesheetSummary?.count || 0) > 0 || !!r.timesheet).length;
+  const tsApproved = rows.filter((r) => (r.timesheetSummary?.status === "APPROVED") || (r.timesheet?.status === "APPROVED")).length;
+  const invRaised = rows.filter((r) => (r.invoiceSummary?.count || 0) > 0 || !!r.invoice).length;
+  const invPaid = rows.filter((r) => r.invoiceSummary?.allPaid || r.invoice?.status === "PAID").length;
 
   const prevMonth = () => { if (month === 1) { setMonth(12); setYear(year - 1); } else setMonth(month - 1); };
   const nextMonth = () => { if (month === 12) { setMonth(1); setYear(year + 1); } else setMonth(month + 1); };
@@ -342,8 +366,8 @@ export default function ReconciliationPage() {
                     </thead>
                     <tbody>
                       {rows.map((row) => {
-                        const tsStatus = getTimesheetStatus(row.timesheet);
-                        const invStatus = getInvoiceStatus(row.invoice);
+                        const tsStatus = getTimesheetStatus(row);
+                        const invStatus = getInvoiceStatus(row);
                         const payStatus = getPayrollStatus(row);
                         const isContractor = row.employee.paymentMethod === "INVOICE";
 
@@ -377,7 +401,15 @@ export default function ReconciliationPage() {
                               >
                                 <StatusIcon status={tsStatus} type="ts" />
                                 <div className="text-center min-w-[60px]">
-                                  {row.timesheet ? (
+                                  {(row.timesheetSummary?.count || 0) > 0 ? (
+                                    <>
+                                      <div className="font-mono text-xs font-semibold text-primary">{row.timesheetSummary!.totalHours}h</div>
+                                      <div className="text-[10px] text-muted-foreground">
+                                        {row.timesheetSummary!.status}
+                                        {(row.timesheetSummary!.count || 0) > 1 && <span className="ml-0.5">({row.timesheetSummary!.count})</span>}
+                                      </div>
+                                    </>
+                                  ) : row.timesheet ? (
                                     <>
                                       <div className="font-mono text-xs font-semibold text-primary">{row.timesheet.hours}h</div>
                                       <div className="text-[10px] text-muted-foreground">{row.timesheet.status}</div>
@@ -392,12 +424,20 @@ export default function ReconciliationPage() {
                               <div
                                 className="flex items-center justify-center gap-2 cursor-pointer rounded-md px-1 py-0.5 hover:bg-muted/60 transition-colors"
                                 onClick={() => setInvoiceDetail({ row })}
-                                title={row.invoice ? `Invoice ${row.invoice.invoiceNumber || ""}` : "No invoice — click to view"}
+                                title={row.invoiceSummary && row.invoiceSummary.count > 0 ? `${row.invoiceSummary.count} invoice(s)` : row.invoice ? `Invoice ${row.invoice.invoiceNumber || ""}` : "No invoice — click to view"}
                                 data-testid={`cell-inv-${row.employee.id}`}
                               >
                                 <StatusIcon status={invStatus} type="inv" />
                                 <div className="text-center min-w-[70px]">
-                                  {row.invoice ? (
+                                  {row.invoiceSummary && row.invoiceSummary.count > 0 ? (
+                                    <>
+                                      <div className="font-mono text-xs font-semibold text-primary">{fmtCurrency(row.invoiceSummary.totalInclGst)}</div>
+                                      <div className="text-[10px] text-muted-foreground">
+                                        {row.invoiceSummary.allPaid ? "PAID" : row.invoice?.status || "—"}
+                                        {row.invoiceSummary.count > 1 && <span className="ml-0.5">({row.invoiceSummary.count})</span>}
+                                      </div>
+                                    </>
+                                  ) : row.invoice ? (
                                     <>
                                       <div className="font-mono text-xs font-semibold text-primary">{fmtCurrency(row.invoice.amount)}</div>
                                       <div className="text-[10px] text-muted-foreground">{row.invoice.status}</div>
@@ -569,9 +609,13 @@ function TimesheetDetailDialog({
   onClose: () => void;
 }) {
   const { toast } = useToast();
-  const [hours, setHours] = useState(String(row.timesheet?.hours || 0));
-  const [regularHours, setRegularHours] = useState(String(row.timesheet?.regularHours || 0));
-  const [overtimeHours, setOvertimeHours] = useState(String(row.timesheet?.overtimeHours || 0));
+  const allTs = row.timesheets && row.timesheets.length > 0 ? row.timesheets : (row.timesheet ? [row.timesheet] : []);
+  const summary = row.timesheetSummary || { totalHours: row.timesheet?.hours || 0, status: row.timesheet?.status || null, count: allTs.length };
+  const [editIdx, setEditIdx] = useState<number | null>(null);
+  const editTs = editIdx !== null ? allTs[editIdx] : allTs[0] || null;
+  const [hours, setHours] = useState(String(editTs?.hours || 0));
+  const [regularHours, setRegularHours] = useState(String(editTs?.regularHours || 0));
+  const [overtimeHours, setOvertimeHours] = useState(String(editTs?.overtimeHours || 0));
 
   const updateTimesheetMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Record<string, any> }) => {
@@ -609,9 +653,9 @@ function TimesheetDetailDialog({
     const ot = parseFloat(overtimeHours) || 0;
     const rate = row.employee.hourlyRate ? parseFloat(row.employee.hourlyRate) : 0;
 
-    if (row.timesheet?.id) {
+    if (editTs?.id) {
       updateTimesheetMutation.mutate({
-        id: row.timesheet.id,
+        id: editTs.id,
         data: { totalHours: String(total), regularHours: String(reg), overtimeHours: String(ot), grossValue: String(total * rate) },
       });
     } else {
@@ -650,27 +694,39 @@ function TimesheetDetailDialog({
             </div>
             <div>
               <span className="text-muted-foreground">Status</span>
-              <div className="font-semibold">{row.timesheet ? row.timesheet.status : "No timesheet"}</div>
+              <div className="font-semibold">{summary.status || "No timesheet"}</div>
             </div>
           </div>
 
-          {row.timesheet && (
-            <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-muted/50 text-xs">
-              <div>
-                <span className="text-muted-foreground">Gross Value</span>
-                <div className="font-semibold font-mono">{fmtCurrencyFull(row.timesheet.grossValue)}</div>
+          {allTs.length > 0 && (
+            <div className="p-3 rounded-lg bg-muted/50 text-xs space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground font-medium">
+                  {allTs.length > 1 ? `${allTs.length} Timesheets` : "Timesheet"}
+                </span>
+                <span className="font-semibold font-mono">{summary.totalHours}h total</span>
               </div>
-              <div>
-                <span className="text-muted-foreground">Total Hours</span>
-                <div className="font-semibold font-mono">{row.timesheet.hours}h</div>
-              </div>
+              {allTs.map((ts, idx) => (
+                <div
+                  key={ts.id}
+                  className={`flex justify-between items-center p-2 rounded border cursor-pointer transition-colors ${editIdx === idx || (editIdx === null && idx === 0) ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
+                  onClick={() => { setEditIdx(idx); setHours(String(ts.hours)); setRegularHours(String(ts.regularHours)); setOvertimeHours(String(ts.overtimeHours)); }}
+                  data-testid={`ts-entry-${idx}`}
+                >
+                  <div>
+                    <span className="font-mono font-semibold">{ts.hours}h</span>
+                    <Badge variant="secondary" className="text-[9px] ml-1.5">{ts.status}</Badge>
+                  </div>
+                  <span className="font-mono text-muted-foreground">{fmtCurrencyFull(ts.grossValue)}</span>
+                </div>
+              ))}
             </div>
           )}
 
           <div className="space-y-3">
             <h4 className="text-sm font-semibold flex items-center gap-1.5">
-              Edit Hours
-              {row.timesheet && <Badge variant="secondary" className="text-[10px] ml-auto">{row.timesheet.status}</Badge>}
+              {allTs.length === 0 ? "Create Timesheet" : `Edit Hours${allTs.length > 1 ? ` — Entry ${(editIdx ?? 0) + 1}` : ""}`}
+              {editTs && <Badge variant="secondary" className="text-[10px] ml-auto">{editTs.status}</Badge>}
             </h4>
             <div className="grid grid-cols-3 gap-2">
               <div>
@@ -688,7 +744,7 @@ function TimesheetDetailDialog({
             </div>
             <div className="flex gap-2">
               <Button size="sm" onClick={handleSaveHours} disabled={isPending} data-testid="button-save-hours">
-                {isPending ? "Saving..." : row.timesheet ? "Update Hours" : "Create Timesheet"}
+                {isPending ? "Saving..." : editTs?.id ? "Update Hours" : "Create Timesheet"}
               </Button>
               <Button size="sm" variant="outline" onClick={onClose}>Cancel</Button>
             </div>
@@ -712,30 +768,34 @@ function InvoiceDetailDialog({
 }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
-  const inv = row.invoice;
-  const [editMonth, setEditMonth] = useState<number>(inv?.month || month);
-  const [editYear, setEditYear] = useState<number>(inv?.year || year);
+  const allInvs = row.invoices && row.invoices.length > 0 ? row.invoices : (row.invoice ? [row.invoice] : []);
+  const summary = row.invoiceSummary || { totalExGst: row.invoice?.amountExGst || 0, totalInclGst: row.invoice?.amount || 0, count: allInvs.length, allPaid: row.invoice?.status === "PAID" };
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const selectedInv = allInvs[selectedIdx] || null;
+
+  const [editMonth, setEditMonth] = useState<number>(selectedInv?.month || month);
+  const [editYear, setEditYear] = useState<number>(selectedInv?.year || year);
 
   const { data: lineItems, isLoading: lineItemsLoading } = useQuery<InvoiceLineItem[]>({
-    queryKey: ["/api/invoices", inv?.id, "line-items"],
+    queryKey: ["/api/invoices", selectedInv?.id, "line-items"],
     queryFn: async () => {
-      if (!inv?.id) return [];
-      const res = await fetch(`/api/invoices/${inv.id}/line-items`, { credentials: "include" });
+      if (!selectedInv?.id) return [];
+      const res = await fetch(`/api/invoices/${selectedInv.id}/line-items`, { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!inv?.id,
+    enabled: !!selectedInv?.id,
   });
 
   const { data: payments } = useQuery<InvoicePayment[]>({
-    queryKey: ["/api/invoices", inv?.id, "payments"],
+    queryKey: ["/api/invoices", selectedInv?.id, "payments"],
     queryFn: async () => {
-      if (!inv?.id) return [];
-      const res = await fetch(`/api/invoices/${inv.id}/payments`, { credentials: "include" });
+      if (!selectedInv?.id) return [];
+      const res = await fetch(`/api/invoices/${selectedInv.id}/payments`, { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!inv?.id,
+    enabled: !!selectedInv?.id,
   });
 
   const updateMutation = useMutation({
@@ -754,9 +814,7 @@ function InvoiceDetailDialog({
     },
   });
 
-  const periodChanged = inv && (editMonth !== (inv.month || month) || editYear !== (inv.year || year));
-
-  if (!inv) {
+  if (allInvs.length === 0) {
     return (
       <Dialog open onOpenChange={() => onClose()}>
         <DialogContent className="max-w-md" data-testid="dialog-invoice-detail-missing">
@@ -783,6 +841,7 @@ function InvoiceDetailDialog({
     );
   }
 
+  const periodChanged = selectedInv && (editMonth !== (selectedInv.month || month) || editYear !== (selectedInv.year || year));
   const nowYear = new Date().getFullYear();
   const minYear = Math.min(nowYear - 5, editYear);
   const maxYear = Math.max(nowYear + 4, editYear);
@@ -794,114 +853,141 @@ function InvoiceDetailDialog({
         <DialogHeader>
           <DialogTitle className="text-base flex items-center gap-2">
             <FileText className="w-4 h-4" />
-            Invoice {inv.invoiceNumber || "—"} — {row.employee.firstName} {row.employee.lastName}
+            {allInvs.length > 1 ? `Invoices (${allInvs.length})` : `Invoice ${selectedInv?.invoiceNumber || "—"}`} — {row.employee.firstName} {row.employee.lastName}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-xs text-muted-foreground block">Amount (excl. GST)</span>
-              <span className="font-mono font-medium">{fmtCurrencyFull(inv.amountExGst)}</span>
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground block">Amount (incl. GST)</span>
-              <span className="font-mono font-medium">{fmtCurrencyFull(inv.amount)}</span>
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground block">Status</span>
-              <StatusBadge status={inv.status} />
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground block">Issue Date</span>
-              <span>{inv.issueDate ? new Date(inv.issueDate).toLocaleDateString("en-AU") : "—"}</span>
-            </div>
-            {inv.paidDate && (
-              <div>
-                <span className="text-xs text-muted-foreground block">Paid Date</span>
-                <span>{new Date(inv.paidDate).toLocaleDateString("en-AU")}</span>
+          {allInvs.length > 1 && (
+            <div className="p-3 rounded-lg bg-muted/50 text-xs space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground font-medium">{allInvs.length} Invoices</span>
+                <span className="font-semibold font-mono">{fmtCurrencyFull(summary.totalExGst)} ex. GST</span>
               </div>
-            )}
-            {inv.description && (
-              <div className="col-span-2">
-                <span className="text-xs text-muted-foreground block">Description</span>
-                <span className="text-sm">{inv.description}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="border-t pt-3">
-            <span className="text-xs text-muted-foreground block mb-1">Work Period</span>
-            <div className="flex items-center gap-2">
-              <Select value={String(editMonth)} onValueChange={val => setEditMonth(parseInt(val))}>
-                <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-recon-period-month"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {MONTHS.slice(1).map((m, i) => <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={String(editYear)} onValueChange={val => setEditYear(parseInt(val))}>
-                <SelectTrigger className="h-8 w-24 text-xs" data-testid="select-recon-period-year"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {yearOptions.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {periodChanged && <span className="text-xs text-amber-600 dark:text-amber-400">Changed</span>}
-            </div>
-          </div>
-
-          {lineItemsLoading && <div className="border-t pt-3"><Skeleton className="h-4 w-full" /><Skeleton className="h-4 w-3/4 mt-2" /></div>}
-
-          {!lineItemsLoading && lineItems && lineItems.length > 0 && (
-            <div className="border-t pt-3" data-testid="section-line-items">
-              <Label className="text-sm font-semibold mb-2 block">Line Items ({lineItems.length})</Label>
-              <div className="border rounded-md overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="text-xs">
-                      <TableHead>Description</TableHead>
-                      <TableHead className="text-right w-20">Qty</TableHead>
-                      <TableHead className="text-right w-24">Rate</TableHead>
-                      <TableHead className="text-right w-24">Amount</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {lineItems.map((li, idx) => (
-                      <TableRow key={li.id || idx} className="text-xs">
-                        <TableCell className="py-1.5">{li.description || "—"}</TableCell>
-                        <TableCell className="text-right font-mono py-1.5">{li.quantity ? parseFloat(li.quantity).toFixed(2) : "—"}</TableCell>
-                        <TableCell className="text-right font-mono py-1.5">{li.unitAmount ? fmtCurrencyFull(li.unitAmount) : "—"}</TableCell>
-                        <TableCell className="text-right font-mono py-1.5">{li.lineAmount ? fmtCurrencyFull(li.lineAmount) : "—"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              {allInvs.map((inv, idx) => (
+                <div
+                  key={inv.id}
+                  className={`flex justify-between items-center p-2 rounded border cursor-pointer transition-colors ${selectedIdx === idx ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
+                  onClick={() => { setSelectedIdx(idx); setEditMonth(inv.month || month); setEditYear(inv.year || year); }}
+                  data-testid={`inv-entry-${idx}`}
+                >
+                  <div>
+                    <span className="font-medium">{inv.invoiceNumber || "—"}</span>
+                    <Badge variant="secondary" className="text-[9px] ml-1.5">{inv.status}</Badge>
+                  </div>
+                  <span className="font-mono">{fmtCurrencyFull(inv.amountExGst)}</span>
+                </div>
+              ))}
             </div>
           )}
 
-          {payments && payments.length > 0 && (
-            <div className="border-t pt-3" data-testid="section-payments">
-              <Label className="text-sm font-semibold mb-2 block">Payments ({payments.length})</Label>
-              <div className="space-y-2">
-                {payments.map((pmt, idx) => (
-                  <div key={pmt.id || idx} className="flex items-center justify-between p-2.5 rounded-md bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-sm">
-                    <div>
-                      <span className="font-medium text-emerald-700 dark:text-emerald-400">{fmtCurrencyFull(pmt.amount)}</span>
-                      <span className="text-xs text-muted-foreground ml-2">
-                        {pmt.paymentDate ? new Date(pmt.paymentDate).toLocaleDateString("en-AU") : "—"}
-                      </span>
-                    </div>
+          {selectedInv && (
+            <>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <span className="text-xs text-muted-foreground block">Amount (excl. GST)</span>
+                  <span className="font-mono font-medium">{fmtCurrencyFull(selectedInv.amountExGst)}</span>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground block">Amount (incl. GST)</span>
+                  <span className="font-mono font-medium">{fmtCurrencyFull(selectedInv.amount)}</span>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground block">Status</span>
+                  <StatusBadge status={selectedInv.status} />
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground block">Issue Date</span>
+                  <span>{selectedInv.issueDate ? new Date(selectedInv.issueDate).toLocaleDateString("en-AU") : "—"}</span>
+                </div>
+                {selectedInv.paidDate && (
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Paid Date</span>
+                    <span>{new Date(selectedInv.paidDate).toLocaleDateString("en-AU")}</span>
                   </div>
-                ))}
+                )}
+                {selectedInv.description && (
+                  <div className="col-span-2">
+                    <span className="text-xs text-muted-foreground block">Description</span>
+                    <span className="text-sm">{selectedInv.description}</span>
+                  </div>
+                )}
               </div>
-            </div>
+
+              <div className="border-t pt-3">
+                <span className="text-xs text-muted-foreground block mb-1">Work Period</span>
+                <div className="flex items-center gap-2">
+                  <Select value={String(editMonth)} onValueChange={val => setEditMonth(parseInt(val))}>
+                    <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-recon-period-month"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {MONTHS.slice(1).map((m, i) => <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Select value={String(editYear)} onValueChange={val => setEditYear(parseInt(val))}>
+                    <SelectTrigger className="h-8 w-24 text-xs" data-testid="select-recon-period-year"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {yearOptions.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {periodChanged && <span className="text-xs text-amber-600 dark:text-amber-400">Changed</span>}
+                </div>
+              </div>
+
+              {lineItemsLoading && <div className="border-t pt-3"><Skeleton className="h-4 w-full" /><Skeleton className="h-4 w-3/4 mt-2" /></div>}
+
+              {!lineItemsLoading && lineItems && lineItems.length > 0 && (
+                <div className="border-t pt-3" data-testid="section-line-items">
+                  <Label className="text-sm font-semibold mb-2 block">Line Items ({lineItems.length})</Label>
+                  <div className="border rounded-md overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="text-xs">
+                          <TableHead>Description</TableHead>
+                          <TableHead className="text-right w-20">Qty</TableHead>
+                          <TableHead className="text-right w-24">Rate</TableHead>
+                          <TableHead className="text-right w-24">Amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {lineItems.map((li, idx) => (
+                          <TableRow key={li.id || idx} className="text-xs">
+                            <TableCell className="py-1.5">{li.description || "—"}</TableCell>
+                            <TableCell className="text-right font-mono py-1.5">{li.quantity ? parseFloat(li.quantity).toFixed(2) : "—"}</TableCell>
+                            <TableCell className="text-right font-mono py-1.5">{li.unitAmount ? fmtCurrencyFull(li.unitAmount) : "—"}</TableCell>
+                            <TableCell className="text-right font-mono py-1.5">{li.lineAmount ? fmtCurrencyFull(li.lineAmount) : "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+
+              {payments && payments.length > 0 && (
+                <div className="border-t pt-3" data-testid="section-payments">
+                  <Label className="text-sm font-semibold mb-2 block">Payments ({payments.length})</Label>
+                  <div className="space-y-2">
+                    {payments.map((pmt, idx) => (
+                      <div key={pmt.id || idx} className="flex items-center justify-between p-2.5 rounded-md bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-sm">
+                        <div>
+                          <span className="font-medium text-emerald-700 dark:text-emerald-400">{fmtCurrencyFull(pmt.amount)}</span>
+                          <span className="text-xs text-muted-foreground ml-2">
+                            {pmt.paymentDate ? new Date(pmt.paymentDate).toLocaleDateString("en-AU") : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           <div className="flex gap-2 justify-end border-t pt-3">
             <Button size="sm" variant="outline" onClick={() => navigate("/invoices")} data-testid="button-go-invoices">
               <ExternalLink className="w-3 h-3 mr-1" /> View in Invoices
             </Button>
-            {periodChanged && (
-              <Button size="sm" onClick={() => updateMutation.mutate({ id: inv.id, data: { month: editMonth, year: editYear } })} disabled={updateMutation.isPending} data-testid="button-save-period">
+            {periodChanged && selectedInv && (
+              <Button size="sm" onClick={() => updateMutation.mutate({ id: selectedInv.id, data: { month: editMonth, year: editYear } })} disabled={updateMutation.isPending} data-testid="button-save-period">
                 {updateMutation.isPending ? "Saving..." : "Save Period"}
               </Button>
             )}

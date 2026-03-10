@@ -896,13 +896,20 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid month or year" });
       }
 
-      const [allEmployees, allTimesheets, allInvoices, allPayRuns, allBankTxns] = await Promise.all([
+      const [allEmployees, allTimesheets, allInvoices, allPayRuns, allBankTxns, allInvEmpLinks] = await Promise.all([
         storage.getEmployees(),
         storage.getTimesheets(),
         storage.getInvoices(),
         storage.getPayRuns(),
         storage.getBankTransactions(),
+        storage.getAllInvoiceEmployees(),
       ]);
+
+      const invEmpMap: Record<string, string[]> = {};
+      for (const link of allInvEmpLinks) {
+        if (!invEmpMap[link.invoiceId]) invEmpMap[link.invoiceId] = [];
+        invEmpMap[link.invoiceId].push(link.employeeId);
+      }
 
       const activeEmployees = allEmployees.filter((e) => e.status === "ACTIVE");
 
@@ -921,15 +928,23 @@ export async function registerRoutes(
       const cashOut = periodBankTxns.filter(t => t.type === "SPEND").reduce((sum, t) => sum + parseFloat(t.amount), 0);
 
       const statusPriority: Record<string, number> = { FILED: 3, REVIEW: 2, DRAFT: 1 };
+      const tsPriority: Record<string, number> = { APPROVED: 3, SUBMITTED: 2, DRAFT: 1 };
       const spendTxns = periodBankTxns.filter(t => t.type === "SPEND");
 
       const result = activeEmployees.map((emp) => {
-        const ts = allTimesheets.find(
+        const empTimesheets = allTimesheets.filter(
           (t) => t.employeeId === emp.id && t.month === month && t.year === year
         );
-        const inv = allInvoices.find(
-          (i) => i.employeeId === emp.id && i.month === month && i.year === year
-        );
+
+        const empInvoices = allInvoices.filter((i) => {
+          if (i.month !== month || i.year !== year) return false;
+          if (i.invoiceType === "ACCPAY") return false;
+          if (i.employeeId === emp.id) return true;
+          const linked = invEmpMap[i.id];
+          if (linked && linked.includes(emp.id)) return true;
+          return false;
+        });
+
         const empPayLines = allPayRunLines
           .filter((pl) => pl.line.employeeId === emp.id)
           .sort((a, b) => (statusPriority[b.payRun.status] || 0) - (statusPriority[a.payRun.status] || 0));
@@ -952,10 +967,19 @@ export async function registerRoutes(
           };
         }
 
-        const hours = ts ? parseFloat(ts.totalHours || "0") : 0;
+        const totalHours = empTimesheets.reduce((sum, t) => sum + parseFloat(t.totalHours || "0"), 0);
+        const bestTsStatus = empTimesheets.length > 0
+          ? empTimesheets.reduce((best, t) => (tsPriority[t.status] || 0) > (tsPriority[best] || 0) ? t.status : best, empTimesheets[0].status)
+          : null;
+
         const chargeOutRate = emp.chargeOutRate ? parseFloat(emp.chargeOutRate) : 0;
         const payRate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
-        const expectedRevenue = hours * chargeOutRate;
+
+        const invoiceTotalExGst = empInvoices.reduce((sum, i) => sum + parseFloat(i.amountExclGst || "0"), 0);
+        const invoiceTotalInclGst = empInvoices.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
+
+        const expectedRevenue = empInvoices.length > 0 ? invoiceTotalExGst : totalHours * chargeOutRate;
+
         let employeeCost: number;
         if (emp.paymentMethod === "INVOICE" && contractorCost && contractorCost.total > 0) {
           employeeCost = contractorCost.total / 1.1;
@@ -975,7 +999,7 @@ export async function registerRoutes(
             }
           }
         } else {
-          employeeCost = hours * payRate;
+          employeeCost = totalHours * payRate;
         }
         const margin = expectedRevenue - employeeCost;
         const marginPercent = expectedRevenue > 0 ? (margin / expectedRevenue) * 100 : 0;
@@ -990,6 +1014,9 @@ export async function registerRoutes(
           }
         }
         const payrollFeeRevenue = grossForFee * (feePercent / 100);
+
+        const ts = empTimesheets[0] || null;
+        const inv = empInvoices[0] || null;
 
         return {
           employee: {
@@ -1006,13 +1033,28 @@ export async function registerRoutes(
           timesheet: ts
             ? {
                 id: ts.id,
-                hours,
+                hours: parseFloat(ts.totalHours || "0"),
                 regularHours: parseFloat(ts.regularHours || "0"),
                 overtimeHours: parseFloat(ts.overtimeHours || "0"),
                 status: ts.status,
                 grossValue: parseFloat(ts.grossValue || "0"),
               }
             : null,
+          timesheets: empTimesheets.map(t => ({
+            id: t.id,
+            hours: parseFloat(t.totalHours || "0"),
+            regularHours: parseFloat(t.regularHours || "0"),
+            overtimeHours: parseFloat(t.overtimeHours || "0"),
+            status: t.status,
+            grossValue: parseFloat(t.grossValue || "0"),
+            clientId: t.clientId || null,
+            placementId: t.placementId || null,
+          })),
+          timesheetSummary: {
+            totalHours,
+            status: bestTsStatus,
+            count: empTimesheets.length,
+          },
           invoice: inv
             ? {
                 id: inv.id,
@@ -1027,6 +1069,24 @@ export async function registerRoutes(
                 description: inv.description || null,
               }
             : null,
+          invoices: empInvoices.map(i => ({
+            id: i.id,
+            amount: parseFloat(i.amountInclGst || "0"),
+            amountExGst: parseFloat(i.amountExclGst || "0"),
+            invoiceNumber: i.invoiceNumber,
+            status: i.status,
+            paidDate: i.paidDate,
+            issueDate: i.issueDate || null,
+            month: i.month || null,
+            year: i.year || null,
+            description: i.description || null,
+          })),
+          invoiceSummary: {
+            totalExGst: invoiceTotalExGst,
+            totalInclGst: invoiceTotalInclGst,
+            count: empInvoices.length,
+            allPaid: empInvoices.length > 0 && empInvoices.every(i => i.status === "PAID"),
+          },
           payroll: payLine
             ? {
                 payRunId: payRun?.id || null,

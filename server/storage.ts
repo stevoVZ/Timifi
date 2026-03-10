@@ -184,6 +184,7 @@ export interface IStorage {
 
   getInvoiceEmployees(invoiceId: string): Promise<InvoiceEmployee[]>;
   getInvoiceEmployeesByInvoice(invoiceIds: string[]): Promise<InvoiceEmployee[]>;
+  getAllInvoiceEmployees(): Promise<InvoiceEmployee[]>;
   setInvoiceEmployees(invoiceId: string, employeeIds: string[]): Promise<InvoiceEmployee[]>;
   getInvoiceIdsByEmployee(employeeId: string): Promise<string[]>;
 
@@ -970,6 +971,12 @@ export class DatabaseStorage implements IStorage {
     const conds = [inArray(invoiceEmployees.invoiceId, invoiceIds)];
     if (t) conds.push(eq(invoiceEmployees.tenantId, t));
     return db.select().from(invoiceEmployees).where(and(...conds));
+  }
+
+  async getAllInvoiceEmployees(): Promise<InvoiceEmployee[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(invoiceEmployees).where(eq(invoiceEmployees.tenantId, t));
+    return db.select().from(invoiceEmployees);
   }
 
   async setInvoiceEmployees(invoiceId: string, employeeIds: string[]): Promise<InvoiceEmployee[]> {
