@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Wallet, TrendingUp, TrendingDown, CreditCard, Building2,
   ArrowUpDown, Users, Receipt, DollarSign, Landmark, PiggyBank,
-  FileText, AlertTriangle, CheckCircle2
+  FileText, CheckCircle2
 } from "lucide-react";
 
 interface AccountSummary {
@@ -69,6 +69,7 @@ interface CashPositionData {
   };
   summary: {
     bankReceiveRevenue: number;
+    incomeByContact: { name: string; total: number; count: number }[];
     totalExpenses: number;
     linkedRevenue: number;
     linkedCost: number;
@@ -190,7 +191,7 @@ export default function CashPositionPage() {
     );
   }
 
-  const invoiceRevenue = data.invoiceRevenue.totalPaidInclGst;
+  const totalIncome = data.summary.bankReceiveRevenue;
   const invoiceOutstanding = data.invoiceRevenue.totalOutstandingInclGst;
   const amexDebt = data.amex.outstandingDebt;
   const payrollCost = data.payroll.totalGrossCost;
@@ -198,9 +199,6 @@ export default function CashPositionPage() {
 
   const operatingAccounts = data.accounts.filter(a => !a.name.includes("American Express"));
   const totalCashBalance = operatingAccounts.reduce((s, a) => s + a.currentBalance, 0);
-
-  const bankIn = data.summary.bankReceiveRevenue;
-  const bankMissing = invoiceRevenue - bankIn;
 
   const recentMonths = data.monthlyFlow.slice(-12);
   const maxBar = Math.max(...recentMonths.map(m => Math.max(m.cashIn, m.cashOut)), 1);
@@ -220,12 +218,12 @@ export default function CashPositionPage() {
             testId="kpi-cash-balance"
           />
           <KpiCard
-            title="Revenue Collected"
-            value={fmt(invoiceRevenue)}
-            subtitle={`${data.invoiceRevenue.totalPaidCount} paid invoices (incl. GST)`}
+            title="Total Income"
+            value={fmt(totalIncome)}
+            subtitle="All bank deposits (incl. GST)"
             icon={TrendingUp}
             variant="positive"
-            testId="kpi-revenue-collected"
+            testId="kpi-total-income"
           />
           <KpiCard
             title="Outstanding Invoices"
@@ -253,64 +251,41 @@ export default function CashPositionPage() {
           />
         </div>
 
-        {bankMissing > 50000 && (
-          <Card className="border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30" data-testid="card-bank-gap-warning">
-            <CardContent className="pt-4 pb-4 px-5">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Bank Data Gap Detected</p>
-                  <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
-                    Xero shows {fmt(invoiceRevenue)} in paid invoices, but only {fmt(bankIn)} appears in synced bank transactions — a gap of {fmt(bankMissing)}.
-                    This likely means client payments (e.g. PM&C) are going to a bank account not connected as a bank feed in Xero.
-                    The figures below use invoice data from Xero for revenue, which is the complete picture.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
-          <Card data-testid="card-revenue-by-client">
+          <Card data-testid="card-income-by-source">
             <CardHeader className="pb-3 px-5 pt-4">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Building2 className="w-4 h-4" />
-                Revenue by Client (Invoices)
+                Income by Source (Bank Deposits)
               </CardTitle>
             </CardHeader>
             <CardContent className="px-5 pb-4">
               <div className="space-y-3">
-                {data.invoiceRevenue.byClient.map(client => {
-                  const total = client.paid + client.outstanding;
-                  const paidPct = total > 0 ? (client.paid / total) * 100 : 0;
+                {data.summary.incomeByContact.map(source => {
+                  const pct = totalIncome > 0 ? (source.total / totalIncome) * 100 : 0;
                   return (
-                    <div key={client.name} data-testid={`client-row-${client.name.replace(/\s+/g, "-").toLowerCase()}`}>
+                    <div key={source.name} data-testid={`income-row-${source.name.replace(/\s+/g, "-").toLowerCase()}`}>
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium truncate mr-2">{client.name}</span>
-                        <span className="text-sm font-semibold tabular-nums shrink-0">{fmt(total)}</span>
+                        <span className="text-sm font-medium truncate mr-2">{source.name}</span>
+                        <span className="text-sm font-semibold tabular-nums shrink-0">{fmt(source.total)}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${paidPct}%` }} />
+                          <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${pct}%` }} />
                         </div>
                         <span className="text-[11px] tabular-nums text-muted-foreground shrink-0 w-16 text-right">
-                          {client.count} inv.
+                          {source.count} txns
                         </span>
                       </div>
-                      {client.outstanding > 0 && (
-                        <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">
-                          {fmt(client.outstanding)} outstanding
-                        </p>
-                      )}
                     </div>
                   );
                 })}
               </div>
               <div className="border-t mt-4 pt-3 flex justify-between">
-                <span className="text-sm font-semibold">Total Invoiced</span>
-                <span className="text-sm font-bold tabular-nums">{fmt(invoiceRevenue + invoiceOutstanding)}</span>
+                <span className="text-sm font-semibold">Total Income</span>
+                <span className="text-sm font-bold tabular-nums">{fmt(totalIncome)}</span>
               </div>
             </CardContent>
           </Card>

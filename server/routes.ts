@@ -2331,12 +2331,22 @@ export async function registerRoutes(
         .sort((a, b) => (b.revenue + b.cost) - (a.revenue + a.cost));
 
       let bankReceiveRevenue = 0;
+      const incomeByContact: Record<string, { name: string; total: number; count: number }> = {};
       for (const t of allTxns) {
         const acctName = t.bankAccountName || "";
         if (!acctName.includes("American Express") && t.type === "RECEIVE" && !isTransfer(t)) {
-          bankReceiveRevenue += parseFloat(t.amount);
+          const amt = parseFloat(t.amount);
+          bankReceiveRevenue += amt;
+          const contactName = t.contactName || "Unknown";
+          if (!incomeByContact[contactName]) {
+            incomeByContact[contactName] = { name: contactName, total: 0, count: 0 };
+          }
+          incomeByContact[contactName].total += amt;
+          incomeByContact[contactName].count++;
         }
       }
+      const incomeByContactList = Object.values(incomeByContact)
+        .sort((a, b) => b.total - a.total);
 
       res.json({
         accounts: accountList,
@@ -2364,6 +2374,7 @@ export async function registerRoutes(
         },
         summary: {
           bankReceiveRevenue,
+          incomeByContact: incomeByContactList,
           totalExpenses: accountList.reduce((s, a) => s + a.totalOut, 0),
           linkedRevenue,
           linkedCost,
