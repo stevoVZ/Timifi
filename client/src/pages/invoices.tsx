@@ -1273,6 +1273,8 @@ function InvoiceDetailDialog({
     : invoice.employeeId ? [invoice.employeeId] : [];
   const [selectedIds, setSelectedIds] = useState<string[]>(initialIds);
   const [empSearch, setEmpSearch] = useState("");
+  const [editMonth, setEditMonth] = useState<number>(invoice.month);
+  const [editYear, setEditYear] = useState<number>(invoice.year);
 
   const { data: lineItems, isLoading: lineItemsLoading } = useQuery<InvoiceLineItem[]>({
     queryKey: [`/api/invoices/${invoice.id}/line-items`],
@@ -1299,7 +1301,10 @@ function InvoiceDetailDialog({
 
   const canPushToXero = !invoice.xeroInvoiceId && invoice.status === "DRAFT";
 
+  const periodChanged = editMonth !== invoice.month || editYear !== invoice.year;
+
   const hasChanged = (() => {
+    if (periodChanged) return true;
     const origSet = new Set(initialIds);
     const newSet = new Set(selectedIds);
     if (origSet.size !== newSet.size) return true;
@@ -1400,9 +1405,44 @@ function InvoiceDetailDialog({
               <span className="text-xs text-muted-foreground block">Issue Date</span>
               <span>{invoice.issueDate ? new Date(invoice.issueDate).toLocaleDateString("en-AU") : "—"}</span>
             </div>
-            <div>
-              <span className="text-xs text-muted-foreground block">Period</span>
-              <span>{MONTHS[invoice.month]} {invoice.year}</span>
+            <div className="col-span-2">
+              <span className="text-xs text-muted-foreground block">Work Period</span>
+              <div className="flex items-center gap-2 mt-1">
+                <Select
+                  value={String(editMonth)}
+                  onValueChange={(val) => setEditMonth(parseInt(val))}
+                >
+                  <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-period-month">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MONTHS.slice(1).map((m, i) => (
+                      <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={String(editYear)}
+                  onValueChange={(val) => setEditYear(parseInt(val))}
+                >
+                  <SelectTrigger className="h-8 w-24 text-xs" data-testid="select-period-year">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(() => {
+                      const now = new Date().getFullYear();
+                      const minYear = Math.min(now - 5, invoice.year);
+                      const maxYear = Math.max(now + 4, invoice.year);
+                      return Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i).map(y => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ));
+                    })()}
+                  </SelectContent>
+                </Select>
+                {periodChanged && (
+                  <span className="text-xs text-amber-600 dark:text-amber-400">Changed</span>
+                )}
+              </div>
             </div>
             {(invoice as any).reference && (
               <div className="col-span-2">
@@ -1591,6 +1631,8 @@ function InvoiceDetailDialog({
               onClick={() => onSave(invoice.id, {
                 employeeId: selectedIds.length === 1 ? selectedIds[0] : selectedIds.length === 0 ? null : selectedIds[0],
                 linkedEmployeeIds: selectedIds,
+                month: editMonth,
+                year: editYear,
               })}
               data-testid="button-detail-save"
             >
