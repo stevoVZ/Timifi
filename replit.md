@@ -79,6 +79,22 @@ The system derives employee hourly pay rates from payslip data when Xero returns
 **API:** `POST /api/employees/derive-pay-rates` — uses current active tenant from session settings
 **UI:** Settings > Data tab has a "Derive Pay Rates from Payslips" button
 
+## Profitability Cost Formulas
+
+All cost calculations account for the full employer cost including taxes and statutory contributions:
+
+**Payroll employees:**
+- `Total Cost = Gross Earnings + Superannuation`
+- When Xero returns grossEarnings = 0 (salaried/monthly): `Gross = Net Pay + PAYG Withheld` (fallback to Net Pay if PAYG unavailable)
+- PAYG is already a component of gross earnings (gross = net + PAYG), so it's not double-counted
+
+**Contractor employees (paymentMethod = INVOICE):**
+- `Total Cost = Bank SPEND transactions / 1.1` (strips 10% Australian GST since agency claims input tax credits)
+
+**Revenue:** Always ex-GST (ACCREC invoices amountExclGst + RCTI amounts ex-GST)
+**Profit:** `Revenue (ex GST) - Total Cost`
+**Margin:** `Profit / Revenue * 100`
+
 ## Timesheet Auto-Population
 
 Timesheets are auto-created from invoiced hours: for every employee-month with invoice data, an APPROVED timesheet record exists with `total_hours` = sum of invoice hours. This feeds the three-tier hours model in profitability (Invoiced → Timesheet → Estimated).

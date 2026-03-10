@@ -61,6 +61,7 @@ interface PayRunLineDetail {
   grossEarnings: number;
   superAmount: number;
   netPay: number;
+  paygWithheld: number;
 }
 
 interface BankTxnDetail {
@@ -112,6 +113,7 @@ interface ProfitabilityRow {
     grossEarnings: number;
     superAmount: number;
     netPay: number;
+    paygWithheld: number;
     totalCost: number;
     costSource: "PAYROLL" | "CONTRACTOR_SPEND";
     contractorSpend: number;
@@ -989,14 +991,31 @@ function DrillDownDialog({
                 </>
               )}
               <div className="border-t pt-2 space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Actual Gross Earnings</span>
-                  <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.grossEarnings)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">+ Superannuation</span>
-                  <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.superAmount)}</span>
-                </div>
+                {row.cost.costSource === "PAYROLL" ? (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Net Pay</span>
+                      <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.netPay)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">+ PAYG Withheld</span>
+                      <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.paygWithheld)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm border-t pt-1">
+                      <span className="text-muted-foreground">= Gross Earnings</span>
+                      <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.grossEarnings)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">+ Superannuation</span>
+                      <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.superAmount)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Contractor Spend (ex GST)</span>
+                    <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.contractorSpend)}</span>
+                  </div>
+                )}
                 <div className="border-t pt-2 flex justify-between text-sm font-semibold">
                   <span>Total Employee Cost</span>
                   <span className="tabular-nums">{fmtCurrencyFull(row.cost.totalCost)}</span>
@@ -1012,6 +1031,7 @@ function DrillDownDialog({
                       <TableRow className="text-xs">
                         <TableHead>Pay Date</TableHead>
                         <TableHead className="text-right">Gross</TableHead>
+                        <TableHead className="text-right">PAYG</TableHead>
                         <TableHead className="text-right">Super</TableHead>
                         <TableHead className="text-right">Net Pay</TableHead>
                       </TableRow>
@@ -1021,6 +1041,7 @@ function DrillDownDialog({
                         <TableRow key={idx} className="text-sm" data-testid={`drilldown-payline-${idx}`}>
                           <TableCell className="whitespace-nowrap">{fmtDate(pl.payDate)}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.grossEarnings)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.paygWithheld)}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.superAmount)}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.netPay)}</TableCell>
                         </TableRow>
@@ -1028,6 +1049,7 @@ function DrillDownDialog({
                       <TableRow className="bg-muted/50 font-semibold text-sm">
                         <TableCell>Totals</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.grossEarnings, 0))}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.paygWithheld, 0))}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.superAmount, 0))}</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.netPay, 0))}</TableCell>
                       </TableRow>
@@ -1106,7 +1128,7 @@ function DrillDownDialog({
                 {row.cost.costSource === "PAYROLL" && row.cost.payRunLines.length > 0 && (
                   <div className="pl-6 text-xs text-muted-foreground space-y-0.5">
                     <div className="flex justify-between">
-                      <span>Gross earnings</span>
+                      <span>Gross earnings (net + PAYG)</span>
                       <span className="tabular-nums">{fmtCurrencyFull(row.cost.grossEarnings)}</span>
                     </div>
                     <div className="flex justify-between">
@@ -1117,7 +1139,7 @@ function DrillDownDialog({
                 )}
                 {row.cost.costSource === "CONTRACTOR_SPEND" && (
                   <div className="pl-6 text-xs text-muted-foreground">
-                    <span>{row.cost.contractorSpendTxnCount} payment{row.cost.contractorSpendTxnCount !== 1 ? "s" : ""} to {row.employee.companyName}</span>
+                    <span>{row.cost.contractorSpendTxnCount} payment{row.cost.contractorSpendTxnCount !== 1 ? "s" : ""} to {row.employee.companyName} (ex GST)</span>
                   </div>
                 )}
 

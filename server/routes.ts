@@ -903,14 +903,20 @@ export async function registerRoutes(
         const expectedRevenue = hours * chargeOutRate;
         let employeeCost: number;
         if (emp.paymentMethod === "INVOICE" && contractorCost && contractorCost.total > 0) {
-          employeeCost = contractorCost.total;
+          employeeCost = contractorCost.total / 1.1;
         } else if (payLine) {
-          employeeCost = parseFloat(payLine.grossEarnings || "0");
-          if (employeeCost === 0) {
+          const plGross = parseFloat(payLine.grossEarnings || "0");
+          const plSuper = parseFloat(payLine.superAmount || "0");
+          if (plGross > 0) {
+            employeeCost = plGross + plSuper;
+          } else {
             const plNet = parseFloat(payLine.netPay || "0");
-            const plSuper = parseFloat(payLine.superAmount || "0");
-            if (plNet > 0 && plSuper > 0) {
-              employeeCost = plNet + plSuper;
+            const plPayg = parseFloat(payLine.paygWithheld || "0");
+            if (plNet > 0 || plPayg > 0) {
+              const reconstructedGross = plPayg > 0 ? plNet + plPayg : plNet;
+              employeeCost = reconstructedGross + plSuper;
+            } else {
+              employeeCost = 0;
             }
           }
         } else {
@@ -923,9 +929,9 @@ export async function registerRoutes(
         let grossForFee = payLine ? parseFloat(payLine.grossEarnings || "0") : 0;
         if (payLine && grossForFee === 0) {
           const plNet = parseFloat(payLine.netPay || "0");
-          const plSuper = parseFloat(payLine.superAmount || "0");
-          if (plNet > 0 && plSuper > 0) {
-            grossForFee = plNet + plSuper;
+          const plPayg = parseFloat(payLine.paygWithheld || "0");
+          if (plNet > 0 || plPayg > 0) {
+            grossForFee = plPayg > 0 ? plNet + plPayg : plNet;
           }
         }
         const payrollFeeRevenue = grossForFee * (feePercent / 100);
@@ -2485,10 +2491,13 @@ export async function registerRoutes(
         const rawGrossEarnings = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.grossEarnings || "0"), 0);
         const superAmount = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.superAmount || "0"), 0);
         const netPay = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.netPay || "0"), 0);
-        const usedFallbackGross = rawGrossEarnings === 0 && netPay > 0 && superAmount > 0;
-        const grossEarnings = usedFallbackGross ? netPay + superAmount : rawGrossEarnings;
+        const paygWithheld = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.paygWithheld || "0"), 0);
+        const usedFallbackGross = rawGrossEarnings === 0 && (netPay > 0 || paygWithheld > 0);
+        const grossEarnings = usedFallbackGross
+          ? (paygWithheld > 0 ? netPay + paygWithheld : netPay)
+          : rawGrossEarnings;
 
-        let totalEmployeeCost = usedFallbackGross ? grossEarnings : grossEarnings + superAmount;
+        let totalEmployeeCost = grossEarnings + superAmount;
         let costSource: "PAYROLL" | "CONTRACTOR_SPEND" = "PAYROLL";
         let contractorSpend = 0;
         let contractorSpendTxnCount = 0;
@@ -2503,7 +2512,7 @@ export async function registerRoutes(
             normalizeCompanyName(t.contactName) === companyNorm
           );
           matchedSpendTxns.forEach(t => claimedBankTxnIds.add(t.id));
-          contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0);
+          contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)) / 1.1, 0);
           contractorSpendTxnCount = matchedSpendTxns.length;
           if (contractorSpend > 0) {
             totalEmployeeCost = contractorSpend;
@@ -2590,6 +2599,7 @@ export async function registerRoutes(
             grossEarnings: Math.round(grossEarnings * 100) / 100,
             superAmount: Math.round(superAmount * 100) / 100,
             netPay: Math.round(netPay * 100) / 100,
+            paygWithheld: Math.round(paygWithheld * 100) / 100,
             totalCost: Math.round(totalEmployeeCost * 100) / 100,
             costSource,
             contractorSpend: Math.round(contractorSpend * 100) / 100,
@@ -2600,11 +2610,13 @@ export async function registerRoutes(
               grossEarnings: parseFloat(pl.line.grossEarnings || "0"),
               superAmount: parseFloat(pl.line.superAmount || "0"),
               netPay: parseFloat(pl.line.netPay || "0"),
+              paygWithheld: parseFloat(pl.line.paygWithheld || "0"),
             })),
             contractorTxns: matchedSpendTxns.map(t => ({
               id: t.id,
               contactName: t.contactName,
-              amount: Math.abs(parseFloat(t.amount)),
+              amount: Math.round(Math.abs(parseFloat(t.amount)) / 1.1 * 100) / 100,
+              amountInclGst: Math.abs(parseFloat(t.amount)),
               date: t.date,
               description: t.description,
               bankAccountName: t.bankAccountName,
@@ -3136,22 +3148,26 @@ export async function registerRoutes(
           let totalNetPay = 0;
           let totalSuper = 0;
           let totalGross = 0;
+          let totalPayg = 0;
           for (const line of lines) {
             const net = parseFloat(line.netPay || "0");
             const sup = parseFloat(line.superAmount || "0");
             const gross = parseFloat(line.grossEarnings || "0");
+            const payg = parseFloat(line.paygWithheld || "0");
             totalNetPay += net;
             totalSuper += sup;
             totalGross += gross;
+            totalPayg += payg;
           }
 
-          let derivedGross = 0;
-          if (totalNetPay > 0 && totalSuper > 0) {
-            derivedGross = totalNetPay + totalSuper;
-          } else if (totalGross > 0) {
-            derivedGross = totalGross;
+          let totalEmployerCost = 0;
+          if (totalGross > 0) {
+            totalEmployerCost = totalGross + totalSuper;
+          } else if (totalNetPay > 0 || totalPayg > 0) {
+            const reconstructedGross = totalPayg > 0 ? totalNetPay + totalPayg : totalNetPay;
+            totalEmployerCost = reconstructedGross + totalSuper;
           }
-          if (derivedGross <= 0) continue;
+          if (totalEmployerCost <= 0) continue;
 
           let hours = 0;
           const empTs = allTimesheets.filter(t =>
@@ -3172,7 +3188,7 @@ export async function registerRoutes(
 
           if (hours <= 0) continue;
 
-          const payRate = Math.round((derivedGross / hours) * 100) / 100;
+          const payRate = Math.round((totalEmployerCost / hours) * 100) / 100;
           if (payRate <= 0 || payRate > 1000) continue;
 
           processed++;
