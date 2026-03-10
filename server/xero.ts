@@ -730,9 +730,10 @@ export async function syncPayRuns(): Promise<{
       const periodStart = parseXeroDate(pr.PayRunPeriodStartDate);
       const periodEnd = parseXeroDate(pr.PayRunPeriodEndDate);
 
-      const payDateObj = payDate ? new Date(payDate) : new Date();
-      const year = payDateObj.getFullYear();
-      const month = payDateObj.getMonth() + 1;
+      const workPeriodDate = periodEnd || payDate;
+      const workPeriodObj = workPeriodDate ? new Date(workPeriodDate) : new Date();
+      const year = workPeriodObj.getFullYear();
+      const month = workPeriodObj.getMonth() + 1;
 
       let xeroStatus = (pr.PayRunStatus || "").toUpperCase();
       let localStatus = "DRAFT";
@@ -769,6 +770,8 @@ export async function syncPayRuns(): Promise<{
           totalNet: newNet,
           employeeCount,
           calendarName,
+          year,
+          month,
         });
 
         if (pr.PayRunID) {
@@ -1129,8 +1132,12 @@ export async function syncInvoices(): Promise<{
       const invoiceDate = parseXeroDate(inv.Date) || new Date().toISOString().split("T")[0];
       const dueDate = parseXeroDate(inv.DueDate);
       const invoiceDateObj = new Date(invoiceDate);
-      const year = invoiceDateObj.getFullYear();
-      const month = invoiceDateObj.getMonth() + 1;
+      const isAccRec = inv.Type === "ACCREC";
+      const workPeriodDateObj = isAccRec
+        ? new Date(invoiceDateObj.getFullYear(), invoiceDateObj.getMonth() - 1, 1)
+        : invoiceDateObj;
+      const year = workPeriodDateObj.getFullYear();
+      const month = workPeriodDateObj.getMonth() + 1;
 
       const amountExclGst = inv.SubTotal || inv.Total || 0;
       const gstAmount = inv.TotalTax || 0;
