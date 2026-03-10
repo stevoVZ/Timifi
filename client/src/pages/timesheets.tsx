@@ -175,7 +175,27 @@ function UploadView() {
     queryKey: ["/api/employees"],
   });
 
+  const { data: existingTimesheets } = useQuery<Timesheet[]>({
+    queryKey: ["/api/timesheets"],
+  });
+
   const activeEmployees = employees?.filter((c) => c.status === "ACTIVE") || [];
+
+  const getDuplicateWarning = useCallback((item: QueueItem): string | null => {
+    if (!existingTimesheets || !item.assignedEmployeeId) return null;
+    const matching = existingTimesheets.filter(ts =>
+      ts.employeeId === item.assignedEmployeeId &&
+      ts.month === item.assignedMonth &&
+      ts.year === item.assignedYear
+    );
+    if (matching.length === 0) return null;
+    const fileNameMatch = item.file?.name && matching.find(ts => ts.fileName === item.file.name);
+    if (fileNameMatch) {
+      return `Duplicate file — "${item.file.name}" already uploaded (${fileNameMatch.totalHours}h, ${fileNameMatch.status})`;
+    }
+    const best = matching[0];
+    return `Existing timesheet found for this employee/month (${best.totalHours}h, ${best.status})`;
+  }, [existingTimesheets]);
 
   const readFileBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -736,6 +756,7 @@ function UploadView() {
               onAssignMonth={(m) => updItem(item.id, { assignedMonth: m })}
               onAssignYear={(y) => updItem(item.id, { assignedYear: y })}
               employees={activeEmployees}
+              duplicateWarning={getDuplicateWarning(item)}
             />
           ))}
 
@@ -1025,7 +1046,7 @@ function PdfViewerDialog({
 
 function FileQueueCard({
   item, idx, expanded, onToggleExpand, onExclude, onRemove,
-  onAssignEmployee, onAssignMonth, onAssignYear, employees,
+  onAssignEmployee, onAssignMonth, onAssignYear, employees, duplicateWarning,
 }: {
   item: QueueItem;
   idx: number;
@@ -1037,6 +1058,7 @@ function FileQueueCard({
   onAssignMonth: (m: number) => void;
   onAssignYear: (y: number) => void;
   employees: Employee[];
+  duplicateWarning: string | null;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const r = item.result;
@@ -1156,6 +1178,13 @@ function FileQueueCard({
                       Skip
                     </Button>
                   )}
+                </div>
+              )}
+
+              {duplicateWarning && !item.excluded && (
+                <div className="flex items-center gap-1.5 mt-1.5 text-xs text-amber-600" data-testid={`text-duplicate-warning-${item.id}`}>
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>{duplicateWarning}</span>
                 </div>
               )}
 

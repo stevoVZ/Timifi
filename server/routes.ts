@@ -1091,6 +1091,7 @@ export async function registerRoutes(
             grossValue: parseFloat(t.grossValue || "0"),
             clientId: t.clientId || null,
             placementId: t.placementId || null,
+            fileName: t.fileName || null,
           })),
           timesheetSummary: {
             totalHours,

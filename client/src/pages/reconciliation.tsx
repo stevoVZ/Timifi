@@ -37,7 +37,7 @@ const MONTHS = ["", "January", "February", "March", "April", "May", "June", "Jul
 
 interface TimesheetEntry {
   id: string; hours: number; regularHours: number; overtimeHours: number; status: string; grossValue: number;
-  clientId?: string | null; placementId?: string | null;
+  clientId?: string | null; placementId?: string | null; fileName?: string | null;
 }
 
 interface InvoiceEntry {
@@ -618,6 +618,7 @@ function TimesheetDetailDialog({
   const [overtimeHours, setOvertimeHours] = useState(String(editTs?.overtimeHours || 0));
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scanWarning, setScanWarning] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -627,6 +628,12 @@ function TimesheetDetailDialog({
     if (pdfs.length === 0) {
       toast({ title: "Only PDF files are supported", variant: "destructive" });
       return;
+    }
+    setScanWarning(null);
+    const fileName = pdfs[0].name;
+    const existingMatch = allTs.find(ts => ts.fileName && ts.fileName === fileName);
+    if (existingMatch) {
+      setScanWarning(`"${fileName}" was already uploaded (${existingMatch.hours}h, ${existingMatch.status})`);
     }
     setScanning(true);
     setScanError(null);
@@ -647,7 +654,12 @@ function TimesheetDetailDialog({
         if (r.totalHours != null) setHours(String(r.totalHours));
         if (r.regularHours != null) setRegularHours(String(r.regularHours));
         if (r.overtimeHours != null) setOvertimeHours(String(r.overtimeHours));
-        toast({ title: "Timesheet scanned", description: `Extracted ${r.totalHours || 0} total hours` });
+        const extractedTotal = r.totalHours || 0;
+        const hoursMatch = allTs.find(ts => Math.abs(ts.hours - extractedTotal) < 0.01 && extractedTotal > 0);
+        if (hoursMatch && !existingMatch) {
+          setScanWarning(`Extracted hours (${extractedTotal}h) match an existing timesheet`);
+        }
+        toast({ title: "Timesheet scanned", description: `Extracted ${extractedTotal} total hours` });
       } else {
         setScanError("No data could be extracted from the PDF");
       }
@@ -657,7 +669,7 @@ function TimesheetDetailDialog({
     } finally {
       setScanning(false);
     }
-  }, [month, year, toast]);
+  }, [month, year, toast, allTs]);
 
   const updateTimesheetMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Record<string, any> }) => {
@@ -786,6 +798,12 @@ function TimesheetDetailDialog({
               </div>
             )}
             {scanError && <p className="text-xs text-destructive mt-1">{scanError}</p>}
+            {scanWarning && (
+              <div className="flex items-center gap-1.5 mt-1.5 text-xs text-amber-600" data-testid="text-scan-warning">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{scanWarning}</span>
+              </div>
+            )}
           </div>
 
           <div className="space-y-3">
