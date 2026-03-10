@@ -2426,6 +2426,8 @@ export async function registerRoutes(
         const clientName = placement.clientName || client?.name || "Unknown";
 
         const chargeOutRate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
+        const payRate = parseFloat(employee.hourlyRate || "0");
+        const rateSpread = chargeOutRate - payRate;
 
         const empInvoices = periodInvoices.filter(inv => {
           if (claimedInvoiceIds.has(inv.id)) return false;
@@ -2475,6 +2477,8 @@ export async function registerRoutes(
           hoursSource = "TIMESHEET";
           bestAvailableHours = timesheetHours;
         }
+
+        const utilisation = estimatedHours > 0 ? Math.round((bestAvailableHours / estimatedHours) * 1000) / 10 : 0;
 
         const empPayLines = allPayRunLines.filter(pl => pl.line.employeeId === employee.id);
 
@@ -2527,6 +2531,11 @@ export async function registerRoutes(
           placementId: placement.id,
           placementStatus: placement.status,
           placementEndDate: placement.endDate || null,
+          chargeOutRate: Math.round(chargeOutRate * 100) / 100,
+          payRate: Math.round(payRate * 100) / 100,
+          rateSpread: Math.round(rateSpread * 100) / 100,
+          expectedHours: Math.round(estimatedHours * 10) / 10,
+          utilisation,
           employee: {
             id: employee.id,
             firstName: employee.firstName,
@@ -2626,9 +2635,13 @@ export async function registerRoutes(
       };
       const avgMargin = totals.totalRevenue > 0 ? (totals.totalProfit / totals.totalRevenue) * 100 : 0;
 
+      const totalActualHours = rows.reduce((s, r: any) => s + r.revenue.bestAvailableHours, 0);
+      const totalExpectedHours = rows.reduce((s, r: any) => s + r.expectedHours, 0);
+      const avgUtilisation = totalExpectedHours > 0 ? Math.round((totalActualHours / totalExpectedHours) * 1000) / 10 : 0;
+
       res.json({
         rows,
-        totals: { ...totals, avgMargin: Math.round(avgMargin * 10) / 10 },
+        totals: { ...totals, avgMargin: Math.round(avgMargin * 10) / 10, avgUtilisation, totalActualHours: Math.round(totalActualHours * 10) / 10, totalExpectedHours: Math.round(totalExpectedHours * 10) / 10 },
         period: { month, year },
       });
     } catch (err: any) {

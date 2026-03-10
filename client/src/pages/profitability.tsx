@@ -26,7 +26,7 @@ import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown,
   DollarSign, Percent, Users, FileText, Wallet, Link2,
   ArrowUpRight, ArrowDownRight, Minus, X, Calculator,
-  CreditCard, Receipt, Clock, Plus,
+  CreditCard, Receipt, Clock, Plus, Activity,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -77,6 +77,11 @@ interface ProfitabilityRow {
   placementId: string;
   placementStatus: string;
   placementEndDate: string | null;
+  chargeOutRate: number;
+  payRate: number;
+  rateSpread: number;
+  expectedHours: number;
+  utilisation: number;
   employee: {
     id: string;
     firstName: string;
@@ -130,13 +135,17 @@ interface ProfitabilityData {
     totalCashReceived: number;
     totalPayrollFees: number;
     avgMargin: number;
+    avgUtilisation: number;
+    totalActualHours: number;
+    totalExpectedHours: number;
   };
   period: { month: number; year: number };
 }
 
 function fmtCurrency(n: number): string {
   if (n === 0) return "$0";
-  return "$" + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const prefix = n < 0 ? "-" : "";
+  return prefix + "$" + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 function fmtCurrencyFull(n: number): string {
@@ -144,7 +153,7 @@ function fmtCurrencyFull(n: number): string {
   return prefix + "$" + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-type DrillDownColumn = "revenue" | "hours" | "grossPay" | "super" | "totalCost" | "cashIn" | "profit";
+type DrillDownColumn = "revenue" | "hours" | "cost" | "profit";
 
 interface DrillDownState {
   row: ProfitabilityRow;
@@ -210,7 +219,7 @@ export default function ProfitabilityPage() {
   };
 
   const rows = data?.rows || [];
-  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalProfit: 0, totalCashReceived: 0, totalPayrollFees: 0, avgMargin: 0 };
+  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalProfit: 0, totalCashReceived: 0, totalPayrollFees: 0, avgMargin: 0, avgUtilisation: 0, totalActualHours: 0, totalExpectedHours: 0 };
 
   return (
     <div className="flex flex-col h-full" data-testid="page-profitability">
@@ -247,61 +256,40 @@ export default function ProfitabilityPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4" data-testid="kpi-cards">
-            <Card>
-              <CardContent className="pt-4 pb-3 px-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium mb-1">
-                  <FileText className="w-3.5 h-3.5" />
-                  Revenue (ex GST)
-                </div>
-                <div className="text-xl font-bold" data-testid="kpi-revenue">
-                  {fmtCurrency(totals.totalRevenue)}
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3 px-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium mb-1">
-                  <Users className="w-3.5 h-3.5" />
-                  Employee Cost
-                </div>
-                <div className="text-xl font-bold" data-testid="kpi-cost">
-                  {fmtCurrency(totals.totalCost)}
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3 px-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium mb-1">
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  Profit
-                </div>
-                <div className={`text-xl font-bold ${totals.totalProfit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} data-testid="kpi-profit">
-                  {totals.totalProfit < 0 ? "-" : ""}{fmtCurrency(totals.totalProfit)}
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3 px-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium mb-1">
-                  <Percent className="w-3.5 h-3.5" />
-                  Avg Margin
-                </div>
-                <div className={`text-xl font-bold ${totals.avgMargin >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} data-testid="kpi-margin">
-                  {totals.avgMargin.toFixed(1)}%
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3 px-4">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium mb-1">
-                  <Wallet className="w-3.5 h-3.5" />
-                  Cash Received
-                </div>
-                <div className="text-xl font-bold" data-testid="kpi-cash-received">
-                  {fmtCurrency(totals.totalCashReceived)}
-                </div>
-              </CardContent>
-            </Card>
+            <KpiCard
+              icon={<FileText className="w-3.5 h-3.5" />}
+              label="Revenue (ex GST)"
+              value={fmtCurrency(totals.totalRevenue)}
+              testId="kpi-revenue"
+            />
+            <KpiCard
+              icon={<Users className="w-3.5 h-3.5" />}
+              label="Employee Cost"
+              value={fmtCurrency(totals.totalCost)}
+              testId="kpi-cost"
+            />
+            <KpiCard
+              icon={<TrendingUp className="w-3.5 h-3.5" />}
+              label="Profit"
+              value={fmtCurrency(totals.totalProfit)}
+              valueColor={totals.totalProfit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
+              testId="kpi-profit"
+            />
+            <KpiCard
+              icon={<Percent className="w-3.5 h-3.5" />}
+              label="Avg Margin"
+              value={`${totals.avgMargin.toFixed(1)}%`}
+              valueColor={totals.avgMargin >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
+              testId="kpi-margin"
+            />
+            <KpiCard
+              icon={<Activity className="w-3.5 h-3.5" />}
+              label="Avg Utilisation"
+              value={`${totals.avgUtilisation.toFixed(1)}%`}
+              subtitle={`${totals.totalActualHours.toFixed(0)}h / ${totals.totalExpectedHours.toFixed(0)}h`}
+              valueColor={totals.avgUtilisation >= 90 ? "text-green-600 dark:text-green-400" : totals.avgUtilisation >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}
+              testId="kpi-utilisation"
+            />
           </div>
         )}
 
@@ -328,15 +316,14 @@ export default function ProfitabilityPage() {
                     <tr className="border-b bg-muted/50">
                       <th className="text-left px-4 py-2.5 font-medium">Employee</th>
                       <th className="text-left px-4 py-2.5 font-medium">Client</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Rate</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Invoiced Hrs</th>
+                      <th className="text-right px-4 py-2.5 font-medium">Charge</th>
+                      <th className="text-right px-4 py-2.5 font-medium">Pay</th>
+                      <th className="text-right px-4 py-2.5 font-medium">Spread</th>
+                      <th className="text-right px-4 py-2.5 font-medium">Hours</th>
                       <th className="text-right px-4 py-2.5 font-medium">Revenue</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Gross Pay</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Super</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Total Cost</th>
+                      <th className="text-right px-4 py-2.5 font-medium">Cost</th>
                       <th className="text-right px-4 py-2.5 font-medium">Profit</th>
                       <th className="text-right px-4 py-2.5 font-medium">Margin</th>
-                      <th className="text-right px-4 py-2.5 font-medium">Cash In</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -346,12 +333,17 @@ export default function ProfitabilityPage() {
                         : row.profit < 0
                         ? "text-red-600 dark:text-red-400"
                         : "";
-                      const marginColor = row.marginPercent > 10
+                      const marginColor = row.marginPercent > 15
                         ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
-                        : row.marginPercent > 0
+                        : row.marginPercent > 5
                         ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
                         : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400";
                       const ProfitIcon = row.profit > 0 ? ArrowUpRight : row.profit < 0 ? ArrowDownRight : Minus;
+                      const spreadColor = row.rateSpread > 0
+                        ? "text-green-600 dark:text-green-400"
+                        : row.rateSpread < 0
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-muted-foreground";
 
                       return (
                         <tr
@@ -370,55 +362,51 @@ export default function ProfitabilityPage() {
                           <td className="px-4 py-3 text-muted-foreground" data-testid={`text-client-${row.placementId}`}>
                             {row.client.name}
                           </td>
-                          <td className="px-4 py-3 text-right tabular-nums">
-                            ${parseFloat(row.employee.chargeOutRate || "0").toFixed(0)}/hr
+                          <td className="px-4 py-3 text-right tabular-nums text-muted-foreground" data-testid={`cell-charge-rate-${row.placementId}`}>
+                            ${row.chargeOutRate.toFixed(0)}
+                          </td>
+                          <td className="px-4 py-3 text-right tabular-nums text-muted-foreground" data-testid={`cell-pay-rate-${row.placementId}`}>
+                            {row.payRate > 0 ? `$${row.payRate.toFixed(0)}` : "—"}
+                          </td>
+                          <td className={`px-4 py-3 text-right tabular-nums font-medium ${spreadColor}`} data-testid={`cell-spread-${row.placementId}`}>
+                            {row.rateSpread !== 0 ? `$${row.rateSpread.toFixed(0)}` : "—"}
                           </td>
                           <td
                             className="px-4 py-3 text-right tabular-nums cursor-pointer hover:bg-muted/60 transition-colors"
                             onClick={() => setDrillDown({ row, column: "hours" })}
                             data-testid={`cell-hours-${row.placementId}`}
                           >
-                            <span className="inline-flex items-center gap-1 border-b border-dashed border-muted-foreground/50">
-                              {row.revenue.bestAvailableHours > 0 ? (
-                                <>
-                                  <span className={row.revenue.hoursSource === "ESTIMATED" ? "text-muted-foreground" : ""}>
-                                    {row.revenue.bestAvailableHours.toFixed(1)}
-                                  </span>
-                                  {row.revenue.hoursSource === "TIMESHEET" && (
-                                    <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight" data-testid={`badge-hours-source-${row.placementId}`}>T</Badge>
-                                  )}
-                                  {row.revenue.hoursSource === "ESTIMATED" && (
-                                    <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight text-muted-foreground" data-testid={`badge-hours-source-${row.placementId}`}>E</Badge>
-                                  )}
-                                </>
-                              ) : "—"}
-                            </span>
+                            <div className="border-b border-dashed border-muted-foreground/50 inline-flex flex-col items-end">
+                              <span className="inline-flex items-center gap-1">
+                                <span className={row.revenue.hoursSource === "ESTIMATED" ? "text-muted-foreground" : ""}>
+                                  {row.revenue.bestAvailableHours > 0 ? row.revenue.bestAvailableHours.toFixed(1) : "—"}
+                                </span>
+                                {row.revenue.hoursSource === "TIMESHEET" && (
+                                  <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight">T</Badge>
+                                )}
+                                {row.revenue.hoursSource === "ESTIMATED" && (
+                                  <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight text-muted-foreground">E</Badge>
+                                )}
+                              </span>
+                              {row.expectedHours > 0 && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  / {row.expectedHours.toFixed(0)} ({row.utilisation.toFixed(0)}%)
+                                </span>
+                              )}
+                            </div>
                           </td>
-                          <DrillDownCell
+                          <ClickableCell
                             value={row.revenue.amountExGst}
                             display={row.revenue.amountExGst !== 0 ? fmtCurrencyFull(row.revenue.amountExGst) : "—"}
                             onClick={() => setDrillDown({ row, column: "revenue" })}
                             className="font-medium"
                             testId={`cell-revenue-${row.placementId}`}
                           />
-                          <DrillDownCell
-                            value={row.cost.grossEarnings}
-                            display={row.cost.grossEarnings !== 0 ? fmtCurrencyFull(row.cost.grossEarnings) : "—"}
-                            onClick={() => setDrillDown({ row, column: "grossPay" })}
-                            testId={`cell-gross-${row.placementId}`}
-                          />
-                          <DrillDownCell
-                            value={row.cost.superAmount}
-                            display={row.cost.superAmount !== 0 ? fmtCurrencyFull(row.cost.superAmount) : "—"}
-                            onClick={() => setDrillDown({ row, column: "super" })}
-                            testId={`cell-super-${row.placementId}`}
-                          />
-                          <DrillDownCell
+                          <ClickableCell
                             value={row.cost.totalCost}
                             display={row.cost.totalCost !== 0 ? fmtCurrencyFull(row.cost.totalCost) : "—"}
-                            onClick={() => setDrillDown({ row, column: "totalCost" })}
-                            className="font-medium"
-                            testId={`cell-totalcost-${row.placementId}`}
+                            onClick={() => setDrillDown({ row, column: "cost" })}
+                            testId={`cell-cost-${row.placementId}`}
                           />
                           <td
                             className={`px-4 py-3 text-right tabular-nums font-semibold ${profitColor} ${row.profit !== 0 ? "cursor-pointer hover:bg-muted/60 transition-colors" : ""}`}
@@ -435,12 +423,6 @@ export default function ProfitabilityPage() {
                               {row.marginPercent.toFixed(1)}%
                             </Badge>
                           </td>
-                          <DrillDownCell
-                            value={row.cashReceived}
-                            display={row.cashReceived !== 0 ? fmtCurrencyFull(row.cashReceived) : "—"}
-                            onClick={() => setDrillDown({ row, column: "cashIn" })}
-                            testId={`cell-cashin-${row.placementId}`}
-                          />
                         </tr>
                       );
                     })}
@@ -448,9 +430,11 @@ export default function ProfitabilityPage() {
                   {rows.length > 0 && (
                     <tfoot>
                       <tr className="bg-muted/50 font-semibold">
-                        <td className="px-4 py-3" colSpan={4}>Totals</td>
+                        <td className="px-4 py-3" colSpan={5}>Totals</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-xs text-muted-foreground">
+                          {totals.totalActualHours.toFixed(0)}h / {totals.totalExpectedHours.toFixed(0)}h
+                        </td>
                         <td className="px-4 py-3 text-right tabular-nums">{fmtCurrencyFull(totals.totalRevenue)}</td>
-                        <td className="px-4 py-3 text-right tabular-nums" colSpan={2}></td>
                         <td className="px-4 py-3 text-right tabular-nums">{fmtCurrencyFull(totals.totalCost)}</td>
                         <td className={`px-4 py-3 text-right tabular-nums ${totals.totalProfit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                           {fmtCurrencyFull(totals.totalProfit)}
@@ -458,7 +442,6 @@ export default function ProfitabilityPage() {
                         <td className="px-4 py-3 text-right">
                           <Badge variant="secondary" className="text-xs">{totals.avgMargin.toFixed(1)}%</Badge>
                         </td>
-                        <td className="px-4 py-3 text-right tabular-nums">{fmtCurrencyFull(totals.totalCashReceived)}</td>
                       </tr>
                     </tfoot>
                   )}
@@ -497,7 +480,40 @@ export default function ProfitabilityPage() {
   );
 }
 
-function DrillDownCell({
+function KpiCard({
+  icon,
+  label,
+  value,
+  subtitle,
+  valueColor = "",
+  testId,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  subtitle?: string;
+  valueColor?: string;
+  testId: string;
+}) {
+  return (
+    <Card>
+      <CardContent className="pt-4 pb-3 px-4">
+        <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium mb-1">
+          {icon}
+          {label}
+        </div>
+        <div className={`text-xl font-bold ${valueColor}`} data-testid={testId}>
+          {value}
+        </div>
+        {subtitle && (
+          <div className="text-[11px] text-muted-foreground mt-0.5">{subtitle}</div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ClickableCell({
   value,
   display,
   onClick,
@@ -533,11 +549,8 @@ function fmtDate(d: string | null): string {
 
 const COLUMN_LABELS: Record<DrillDownColumn, string> = {
   revenue: "Revenue (ex GST)",
-  hours: "Invoiced Hours",
-  grossPay: "Gross Pay",
-  super: "Superannuation",
-  totalCost: "Total Cost",
-  cashIn: "Cash Received",
+  hours: "Hours & Utilisation",
+  cost: "Employee Cost",
   profit: "Profit Breakdown",
 };
 
@@ -578,8 +591,32 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
     },
   });
 
+  const utilisationPercent = row.expectedHours > 0 ? (row.revenue.bestAvailableHours / row.expectedHours) * 100 : 0;
+  const utilisationColor = utilisationPercent >= 90 ? "bg-green-500" : utilisationPercent >= 70 ? "bg-amber-500" : "bg-red-500";
+
   return (
     <div className="space-y-4">
+      {row.expectedHours > 0 && (
+        <div className="bg-muted/50 rounded-md p-4 space-y-2">
+          <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+            <Activity className="w-3.5 h-3.5" />
+            Utilisation
+          </div>
+          <div className="flex justify-between text-sm mb-1">
+            <span className="text-muted-foreground">
+              {row.revenue.bestAvailableHours.toFixed(1)}h worked / {row.expectedHours.toFixed(1)}h expected
+            </span>
+            <span className="font-semibold">{utilisationPercent.toFixed(1)}%</span>
+          </div>
+          <div className="w-full bg-muted rounded-full h-2.5">
+            <div
+              className={`h-2.5 rounded-full transition-all ${utilisationColor}`}
+              style={{ width: `${Math.min(utilisationPercent, 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="bg-muted/50 rounded-md p-4 space-y-2">
         <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
           <Clock className="w-3.5 h-3.5" />
@@ -602,7 +639,7 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-muted-foreground flex items-center gap-1">
-            Estimated Hours
+            Estimated Hours (ACT)
             <Badge variant="outline" className="text-[9px] px-1 py-0 font-normal leading-tight text-muted-foreground">E</Badge>
           </span>
           <span className="tabular-nums font-medium text-muted-foreground">
@@ -769,19 +806,10 @@ function DrillDownDialog({
           return `Showing ${sourceLabel} hours (${row.revenue.bestAvailableHours.toFixed(1)}h) for ${row.client.name}`;
         return `No hours data — click to add timesheet hours`;
       }
-      case "grossPay":
-      case "super":
-        return row.cost.payRunLines.length > 0
-          ? `${row.cost.payRunLines.length} pay run${row.cost.payRunLines.length !== 1 ? "s" : ""} in ${MONTHS[period.month]} ${period.year}`
-          : "No pay run data";
-      case "totalCost":
+      case "cost":
         if (row.cost.costSource === "CONTRACTOR_SPEND")
           return `${row.cost.contractorTxns.length} bank transaction${row.cost.contractorTxns.length !== 1 ? "s" : ""} to ${row.employee.companyName || "contractor"}`;
         return `${row.cost.payRunLines.length} pay run${row.cost.payRunLines.length !== 1 ? "s" : ""} (gross + super)`;
-      case "cashIn":
-        return row.cashReceivedTxns.length > 0
-          ? `${row.cashReceivedTxns.length} bank receipt${row.cashReceivedTxns.length !== 1 ? "s" : ""} from ${row.client.name}`
-          : "No matching bank receipts";
       case "profit":
         return `Revenue minus cost for ${MONTHS[period.month]} ${period.year}`;
       default:
@@ -794,6 +822,22 @@ function DrillDownDialog({
       case "revenue":
         return (
           <div className="space-y-4">
+            <div className="bg-muted/50 rounded-md p-4 space-y-2">
+              <div className="text-xs font-medium text-muted-foreground mb-1">Rate Economics</div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Charge-out rate</span>
+                <span className="tabular-nums font-medium">${row.chargeOutRate.toFixed(2)}/hr</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">× Hours worked</span>
+                <span className="tabular-nums">{row.revenue.bestAvailableHours.toFixed(1)}h</span>
+              </div>
+              <div className="border-t pt-2 flex justify-between text-sm font-semibold">
+                <span>Revenue</span>
+                <span className="tabular-nums">{fmtCurrencyFull(row.revenue.amountExGst)}</span>
+              </div>
+            </div>
+
             {row.revenue.invoices.length > 0 && (
               <div>
                 <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
@@ -876,100 +920,87 @@ function DrillDownDialog({
           <HoursDrillDown row={row} period={period} />
         );
 
-      case "grossPay":
-      case "super":
-        return (
-          <div>
-            {row.cost.payRunLines.length > 0 ? (
-              <div className="border rounded-md overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="text-xs">
-                      <TableHead>Pay Date</TableHead>
-                      <TableHead className="text-right">Gross Earnings</TableHead>
-                      <TableHead className="text-right">Super</TableHead>
-                      <TableHead className="text-right">Net Pay</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {row.cost.payRunLines.map((pl, idx) => (
-                      <TableRow key={idx} className="text-sm" data-testid={`drilldown-payline-${idx}`}>
-                        <TableCell className="whitespace-nowrap">{fmtDate(pl.payDate)}</TableCell>
-                        <TableCell className={`text-right tabular-nums ${column === "grossPay" ? "font-medium" : ""}`}>{fmtCurrencyFull(pl.grossEarnings)}</TableCell>
-                        <TableCell className={`text-right tabular-nums ${column === "super" ? "font-medium" : ""}`}>{fmtCurrencyFull(pl.superAmount)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.netPay)}</TableCell>
-                      </TableRow>
-                    ))}
-                    <TableRow className="bg-muted/50 font-semibold text-sm">
-                      <TableCell>Totals</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.grossEarnings, 0))}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.superAmount, 0))}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.netPay, 0))}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            ) : (
-              <div className="text-center text-sm text-muted-foreground py-6">No pay run data for this period.</div>
-            )}
-          </div>
-        );
-
-      case "totalCost":
+      case "cost":
         if (row.cost.costSource === "CONTRACTOR_SPEND") {
           return (
-            <div>
-              <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-                <CreditCard className="w-3.5 h-3.5" />
-                Bank payments to {row.employee.companyName || "contractor"}
-              </div>
-              {row.cost.contractorTxns.length > 0 ? (
-                <div className="border rounded-md overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="text-xs">
-                        <TableHead>Date</TableHead>
-                        <TableHead>Contact</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {row.cost.contractorTxns.map((t) => (
-                        <TableRow key={t.id} className="text-sm" data-testid={`drilldown-contractor-${t.id}`}>
-                          <TableCell className="whitespace-nowrap">{fmtDate(t.date)}</TableCell>
-                          <TableCell>{t.contactName || "—"}</TableCell>
-                          <TableCell className="max-w-[200px] truncate text-muted-foreground">{t.description || "—"}</TableCell>
-                          <TableCell className="text-right tabular-nums font-medium">{fmtCurrencyFull(t.amount)}</TableCell>
-                        </TableRow>
-                      ))}
-                      <TableRow className="bg-muted/50 font-semibold text-sm">
-                        <TableCell colSpan={3}>Total contractor spend</TableCell>
-                        <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.contractorTxns.reduce((s, t) => s + t.amount, 0))}</TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
+            <div className="space-y-4">
+              <div className="bg-muted/50 rounded-md p-4 space-y-2">
+                <div className="text-xs font-medium text-muted-foreground mb-1">Contractor Cost</div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Bank payments to {row.employee.companyName || "contractor"}</span>
+                  <span className="tabular-nums font-semibold">{fmtCurrencyFull(row.cost.totalCost)}</span>
                 </div>
-              ) : (
-                <div className="text-center text-sm text-muted-foreground py-6">No contractor transactions found.</div>
+              </div>
+              {row.cost.contractorTxns.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5" />
+                    Bank Transactions ({row.cost.contractorTxns.length})
+                  </div>
+                  <div className="border rounded-md overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="text-xs">
+                          <TableHead>Date</TableHead>
+                          <TableHead>Contact</TableHead>
+                          <TableHead>Description</TableHead>
+                          <TableHead className="text-right">Amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {row.cost.contractorTxns.map((t) => (
+                          <TableRow key={t.id} className="text-sm" data-testid={`drilldown-contractor-${t.id}`}>
+                            <TableCell className="whitespace-nowrap">{fmtDate(t.date)}</TableCell>
+                            <TableCell>{t.contactName || "—"}</TableCell>
+                            <TableCell className="max-w-[200px] truncate text-muted-foreground">{t.description || "—"}</TableCell>
+                            <TableCell className="text-right tabular-nums font-medium">{fmtCurrencyFull(t.amount)}</TableCell>
+                          </TableRow>
+                        ))}
+                        <TableRow className="bg-muted/50 font-semibold text-sm">
+                          <TableCell colSpan={3}>Total contractor spend</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.contractorTxns.reduce((s, t) => s + t.amount, 0))}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
               )}
             </div>
           );
         }
         return (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div className="bg-muted/50 rounded-md p-4 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Gross Earnings</span>
-                <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.grossEarnings)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">+ Superannuation</span>
-                <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.superAmount)}</span>
-              </div>
-              <div className="border-t pt-2 flex justify-between text-sm font-semibold">
-                <span>Total Employee Cost</span>
-                <span className="tabular-nums">{fmtCurrencyFull(row.cost.totalCost)}</span>
+              <div className="text-xs font-medium text-muted-foreground mb-1">Rate Economics</div>
+              {row.payRate > 0 && (
+                <>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Pay rate</span>
+                    <span className="tabular-nums">${row.payRate.toFixed(2)}/hr</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">× Hours worked</span>
+                    <span className="tabular-nums">{row.revenue.bestAvailableHours.toFixed(1)}h</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-muted-foreground">
+                    <span>Estimated gross (rate × hrs)</span>
+                    <span className="tabular-nums">{fmtCurrencyFull(row.payRate * row.revenue.bestAvailableHours)}</span>
+                  </div>
+                </>
+              )}
+              <div className="border-t pt-2 space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Actual Gross Earnings</span>
+                  <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.grossEarnings)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">+ Superannuation</span>
+                  <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.superAmount)}</span>
+                </div>
+                <div className="border-t pt-2 flex justify-between text-sm font-semibold">
+                  <span>Total Employee Cost</span>
+                  <span className="tabular-nums">{fmtCurrencyFull(row.cost.totalCost)}</span>
+                </div>
               </div>
             </div>
             {row.cost.payRunLines.length > 0 && (
@@ -987,13 +1018,19 @@ function DrillDownDialog({
                     </TableHeader>
                     <TableBody>
                       {row.cost.payRunLines.map((pl, idx) => (
-                        <TableRow key={idx} className="text-sm">
+                        <TableRow key={idx} className="text-sm" data-testid={`drilldown-payline-${idx}`}>
                           <TableCell className="whitespace-nowrap">{fmtDate(pl.payDate)}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.grossEarnings)}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.superAmount)}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.netPay)}</TableCell>
                         </TableRow>
                       ))}
+                      <TableRow className="bg-muted/50 font-semibold text-sm">
+                        <TableCell>Totals</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.grossEarnings, 0))}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.superAmount, 0))}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cost.payRunLines.reduce((s, l) => s + l.netPay, 0))}</TableCell>
+                      </TableRow>
                     </TableBody>
                   </Table>
                 </div>
@@ -1002,117 +1039,112 @@ function DrillDownDialog({
           </div>
         );
 
-      case "cashIn":
-        return (
-          <div>
-            {row.cashReceivedTxns.length > 0 ? (
-              <div className="border rounded-md overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="text-xs">
-                      <TableHead>Date</TableHead>
-                      <TableHead>Bank Account</TableHead>
-                      <TableHead>Contact</TableHead>
-                      <TableHead>Reference</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {row.cashReceivedTxns.map((t) => (
-                      <TableRow key={t.id} className="text-sm" data-testid={`drilldown-cashin-${t.id}`}>
-                        <TableCell className="whitespace-nowrap">{fmtDate(t.date)}</TableCell>
-                        <TableCell className="text-muted-foreground">{t.bankAccountName || "—"}</TableCell>
-                        <TableCell>{t.contactName || "—"}</TableCell>
-                        <TableCell className="max-w-[150px] truncate text-muted-foreground text-xs">{t.reference || t.description || "—"}</TableCell>
-                        <TableCell className="text-right tabular-nums font-medium">{fmtCurrencyFull(t.amount)}</TableCell>
-                      </TableRow>
-                    ))}
-                    <TableRow className="bg-muted/50 font-semibold text-sm">
-                      <TableCell colSpan={4}>Total cash received</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cashReceivedTxns.reduce((s, t) => s + t.amount, 0))}</TableCell>
-                    </TableRow>
-                  </TableBody>
-                </Table>
-              </div>
-            ) : (
-              <div className="text-center text-sm text-muted-foreground py-6">No bank receipts matched for this client in this period.</div>
-            )}
-          </div>
-        );
-
       case "profit":
         return (
           <div className="space-y-4">
             <div className="bg-muted/50 rounded-lg p-5 space-y-3">
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-muted-foreground flex items-center gap-2">
-                  <FileText className="w-3.5 h-3.5" />
-                  Revenue (ex GST)
-                </span>
-                <span className="tabular-nums font-medium text-foreground">{fmtCurrencyFull(row.revenue.amountExGst)}</span>
-              </div>
-              {row.revenue.invoices.length > 0 && (
-                <div className="pl-6 text-xs text-muted-foreground space-y-0.5">
-                  {row.revenue.invoices.map(inv => (
-                    <div key={inv.id} className="flex justify-between">
-                      <span>INV {inv.invoiceNumber || "—"} · {inv.contactName}</span>
-                      <span className="tabular-nums">{fmtCurrencyFull(inv.amountExclGst)}</span>
-                    </div>
-                  ))}
+              <div className="text-xs font-medium text-muted-foreground mb-2">Hourly Economics</div>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="bg-background rounded-md p-3">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Charge Rate</div>
+                  <div className="text-lg font-bold tabular-nums">${row.chargeOutRate.toFixed(0)}</div>
+                  <div className="text-[10px] text-muted-foreground">per hour</div>
                 </div>
-              )}
-              {row.revenue.rctis.length > 0 && (
-                <div className="pl-6 text-xs text-muted-foreground space-y-0.5">
-                  {row.revenue.rctis.map(r => (
-                    <div key={r.id} className="flex justify-between">
-                      <span>RCTI · {r.clientName}</span>
-                      <span className="tabular-nums">{fmtCurrencyFull(r.amountExclGst)}</span>
-                    </div>
-                  ))}
+                <div className="bg-background rounded-md p-3">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Pay Rate</div>
+                  <div className="text-lg font-bold tabular-nums">{row.payRate > 0 ? `$${row.payRate.toFixed(0)}` : "—"}</div>
+                  <div className="text-[10px] text-muted-foreground">per hour</div>
                 </div>
-              )}
-              <div className="border-t pt-3 flex justify-between items-center text-sm">
-                <span className="text-muted-foreground flex items-center gap-2">
-                  <Users className="w-3.5 h-3.5" />
-                  Total Employee Cost
-                  {row.cost.costSource === "CONTRACTOR_SPEND" && (
-                    <Badge variant="outline" className="text-[10px]">Contractor</Badge>
-                  )}
-                </span>
-                <span className="tabular-nums font-medium text-foreground">-{fmtCurrencyFull(row.cost.totalCost)}</span>
-              </div>
-              {row.cost.costSource === "PAYROLL" && row.cost.payRunLines.length > 0 && (
-                <div className="pl-6 text-xs text-muted-foreground space-y-0.5">
-                  <div className="flex justify-between">
-                    <span>Gross earnings</span>
-                    <span className="tabular-nums">{fmtCurrencyFull(row.cost.grossEarnings)}</span>
+                <div className="bg-background rounded-md p-3">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Spread</div>
+                  <div className={`text-lg font-bold tabular-nums ${row.rateSpread >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                    ${row.rateSpread.toFixed(0)}
                   </div>
-                  <div className="flex justify-between">
-                    <span>Superannuation</span>
-                    <span className="tabular-nums">{fmtCurrencyFull(row.cost.superAmount)}</span>
+                  <div className="text-[10px] text-muted-foreground">per hour</div>
+                </div>
+              </div>
+
+              <div className="border-t pt-3 space-y-2">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground flex items-center gap-2">
+                    <FileText className="w-3.5 h-3.5" />
+                    Revenue (ex GST)
+                  </span>
+                  <span className="tabular-nums font-medium text-foreground">{fmtCurrencyFull(row.revenue.amountExGst)}</span>
+                </div>
+                {row.revenue.invoices.length > 0 && (
+                  <div className="pl-6 text-xs text-muted-foreground space-y-0.5">
+                    {row.revenue.invoices.map(inv => (
+                      <div key={inv.id} className="flex justify-between">
+                        <span>INV {inv.invoiceNumber || "—"} · {inv.contactName}</span>
+                        <span className="tabular-nums">{fmtCurrencyFull(inv.amountExclGst)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {row.revenue.rctis.length > 0 && (
+                  <div className="pl-6 text-xs text-muted-foreground space-y-0.5">
+                    {row.revenue.rctis.map(r => (
+                      <div key={r.id} className="flex justify-between">
+                        <span>RCTI · {r.clientName}</span>
+                        <span className="tabular-nums">{fmtCurrencyFull(r.amountExclGst)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground flex items-center gap-2">
+                    <Users className="w-3.5 h-3.5" />
+                    Employee Cost
+                    {row.cost.costSource === "CONTRACTOR_SPEND" && (
+                      <Badge variant="outline" className="text-[10px]">Contractor</Badge>
+                    )}
+                  </span>
+                  <span className="tabular-nums font-medium text-foreground">-{fmtCurrencyFull(row.cost.totalCost)}</span>
+                </div>
+                {row.cost.costSource === "PAYROLL" && row.cost.payRunLines.length > 0 && (
+                  <div className="pl-6 text-xs text-muted-foreground space-y-0.5">
+                    <div className="flex justify-between">
+                      <span>Gross earnings</span>
+                      <span className="tabular-nums">{fmtCurrencyFull(row.cost.grossEarnings)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Superannuation</span>
+                      <span className="tabular-nums">{fmtCurrencyFull(row.cost.superAmount)}</span>
+                    </div>
+                  </div>
+                )}
+                {row.cost.costSource === "CONTRACTOR_SPEND" && (
+                  <div className="pl-6 text-xs text-muted-foreground">
+                    <span>{row.cost.contractorSpendTxnCount} payment{row.cost.contractorSpendTxnCount !== 1 ? "s" : ""} to {row.employee.companyName}</span>
+                  </div>
+                )}
+
+                <div className="border-t border-dashed pt-3 flex justify-between items-center font-semibold">
+                  <span className="flex items-center gap-2">
+                    <Calculator className="w-3.5 h-3.5" />
+                    Profit
+                  </span>
+                  <span className={`tabular-nums ${row.profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                    {fmtCurrencyFull(row.profit)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground">Margin</span>
+                  <Badge variant="secondary" className="text-xs">
+                    {row.marginPercent.toFixed(1)}%
+                  </Badge>
+                </div>
+              </div>
+
+              {row.rateSpread !== 0 && row.revenue.bestAvailableHours > 0 && (
+                <div className="border-t pt-3">
+                  <div className="text-xs text-muted-foreground">
+                    Quick check: ${row.rateSpread.toFixed(2)} spread × {row.revenue.bestAvailableHours.toFixed(1)}h = {fmtCurrencyFull(row.rateSpread * row.revenue.bestAvailableHours)} (before super)
                   </div>
                 </div>
               )}
-              {row.cost.costSource === "CONTRACTOR_SPEND" && (
-                <div className="pl-6 text-xs text-muted-foreground">
-                  <span>{row.cost.contractorSpendTxnCount} payment{row.cost.contractorSpendTxnCount !== 1 ? "s" : ""} to {row.employee.companyName}</span>
-                </div>
-              )}
-              <div className="border-t border-dashed pt-3 flex justify-between items-center font-semibold">
-                <span className="flex items-center gap-2">
-                  <Calculator className="w-3.5 h-3.5" />
-                  Profit
-                </span>
-                <span className={`tabular-nums ${row.profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                  {fmtCurrencyFull(row.profit)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-muted-foreground">Margin</span>
-                <Badge variant="secondary" className="text-xs">
-                  {row.marginPercent.toFixed(1)}%
-                </Badge>
-              </div>
             </div>
           </div>
         );
