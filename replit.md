@@ -63,7 +63,21 @@ The system includes an ACT (Australian Capital Territory) working days calculato
 Used for:
 - Populating `monthly_expected_hours` baseline data for profitability estimates
 - Settings > Data tab shows working days calendar by year
-- API: `GET /api/act-working-days?year=YYYY` and `POST /api/generate-expected-hours` (accepts `tenantId`, `startYear`, `endYear`)
+- API: `GET /api/act-working-days?year=YYYY` and `POST /api/generate-expected-hours` (accepts `startYear`, `endYear`)
+
+## Pay Rate Derivation
+
+The system derives employee hourly pay rates from payslip data when Xero returns $0 for rate_per_hour (common with salaried/monthly contract employees).
+
+**Formula:** `pay_rate = (net_pay + super_amount) / hours`
+- Hours sourced from timesheets first, then invoices as fallback
+- Falls back to gross_earnings if net_pay + super unavailable
+- Creates `rate_history` records with source "PAYROLL_SYNC"
+- Updates each employee's `hourly_rate` to their latest derived rate
+- Skips rates outside $0-$1000/hr range as invalid
+
+**API:** `POST /api/employees/derive-pay-rates` — uses current active tenant from session settings
+**UI:** Settings > Data tab has a "Derive Pay Rates from Payslips" button
 
 ## Timesheet Auto-Population
 

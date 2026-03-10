@@ -3076,6 +3076,179 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/employees/derive-pay-rates", async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const {
+        employees: empTable,
+        payRunLines: prlTable,
+        payRuns: prTable,
+        timesheets: tsTable,
+        invoices: invTable,
+        rateHistory: rhTable,
+      } = await import("@shared/schema");
+      const { eq, and, desc } = await import("drizzle-orm");
+
+      const setting = await storage.getSetting("xero.tenantId");
+      const tenantId = setting?.value;
+      if (!tenantId) {
+        return res.status(400).json({ message: "No tenant selected. Switch to an organisation first." });
+      }
+
+      const allEmployees = await db.select().from(empTable).where(eq(empTable.tenantId, tenantId));
+      const allPayRuns = await db.select().from(prTable).where(eq(prTable.tenantId, tenantId));
+      const allTimesheets = await db.select().from(tsTable).where(eq(tsTable.tenantId, tenantId));
+      const allInvoices = await db.select().from(invTable).where(eq(invTable.tenantId, tenantId));
+
+      let ratesCreated = 0;
+      let employeesUpdated = 0;
+      let processed = 0;
+
+      for (const emp of allEmployees) {
+        const empPayRunLines = await db.select().from(prlTable).where(eq(prlTable.employeeId, emp.id));
+        if (empPayRunLines.length === 0) continue;
+
+        const existingRates = await db.select().from(rhTable)
+          .where(and(eq(rhTable.employeeId, emp.id)))
+          .orderBy(desc(rhTable.effectiveDate));
+
+        let latestDerivedRate: number | null = null;
+        let latestDerivedDate: string | null = null;
+
+        const payRunMap = new Map(allPayRuns.map(pr => [pr.id, pr]));
+
+        const linesByPeriod: Map<string, { lines: typeof empPayRunLines; payRun: typeof allPayRuns[0] }> = new Map();
+        for (const line of empPayRunLines) {
+          const pr = payRunMap.get(line.payRunId);
+          if (!pr) continue;
+          const key = `${pr.year}-${pr.month}`;
+          if (!linesByPeriod.has(key)) {
+            linesByPeriod.set(key, { lines: [], payRun: pr });
+          }
+          linesByPeriod.get(key)!.lines.push(line);
+        }
+
+        for (const [, { lines, payRun }] of linesByPeriod) {
+          const month = payRun.month;
+          const year = payRun.year;
+          if (!month || !year) continue;
+
+          let totalNetPay = 0;
+          let totalSuper = 0;
+          let totalGross = 0;
+          for (const line of lines) {
+            const net = parseFloat(line.netPay || "0");
+            const sup = parseFloat(line.superAmount || "0");
+            const gross = parseFloat(line.grossEarnings || "0");
+            totalNetPay += net;
+            totalSuper += sup;
+            totalGross += gross;
+          }
+
+          let derivedGross = 0;
+          if (totalNetPay > 0 && totalSuper > 0) {
+            derivedGross = totalNetPay + totalSuper;
+          } else if (totalGross > 0) {
+            derivedGross = totalGross;
+          }
+          if (derivedGross <= 0) continue;
+
+          let hours = 0;
+          const empTs = allTimesheets.filter(t =>
+            t.employeeId === emp.id && t.month === month && t.year === year
+          );
+          if (empTs.length > 0) {
+            hours = empTs.reduce((s, t) => s + parseFloat(t.totalHours || "0"), 0);
+          }
+
+          if (hours <= 0) {
+            const empInv = allInvoices.filter(i =>
+              i.employeeId === emp.id && i.month === month && i.year === year
+            );
+            if (empInv.length > 0) {
+              hours = empInv.reduce((s, i) => s + parseFloat(i.hours || "0"), 0);
+            }
+          }
+
+          if (hours <= 0) continue;
+
+          const payRate = Math.round((derivedGross / hours) * 100) / 100;
+          if (payRate <= 0 || payRate > 1000) continue;
+
+          processed++;
+
+          const effectiveDate = payRun.periodStart || `${year}-${String(month).padStart(2, "0")}-01`;
+          const lastRate = existingRates.length > 0 ? parseFloat(existingRates[0].payRate) : null;
+          const alreadyRecorded = existingRates.some(r => {
+            const rPay = parseFloat(r.payRate);
+            return r.effectiveDate === effectiveDate && Math.abs(rPay - payRate) < 0.01;
+          });
+
+          if (!alreadyRecorded) {
+            const dateObj = new Date(effectiveDate);
+            const superPercent = getSuperRate(dateObj);
+            const chargeOut = emp.chargeOutRate
+              ? parseFloat(emp.chargeOutRate)
+              : calculateChargeOutFromPayRate(payRate, superPercent);
+
+            const shouldCreate = lastRate === null || Math.abs(payRate - lastRate) >= 0.01;
+            if (shouldCreate) {
+              await db.insert(rhTable).values({
+                employeeId: emp.id,
+                effectiveDate,
+                payRate: String(payRate),
+                chargeOutRate: String(Math.round(chargeOut * 100) / 100),
+                superPercent: String(superPercent),
+                source: "PAYROLL_SYNC",
+                payRunId: payRun.id,
+                tenantId,
+              });
+              ratesCreated++;
+              existingRates.unshift({
+                id: "",
+                employeeId: emp.id,
+                effectiveDate,
+                payRate: String(payRate),
+                chargeOutRate: String(chargeOut),
+                superPercent: String(superPercent),
+                source: "PAYROLL_SYNC",
+                payRunId: payRun.id,
+                notes: null,
+                tenantId,
+                createdAt: new Date(),
+              });
+            }
+          }
+
+          if (!latestDerivedDate || effectiveDate > latestDerivedDate) {
+            latestDerivedRate = payRate;
+            latestDerivedDate = effectiveDate;
+          }
+        }
+
+        if (latestDerivedRate !== null && latestDerivedRate > 0) {
+          const currentRate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : null;
+          if (currentRate === null || Math.abs(currentRate - latestDerivedRate) >= 0.01) {
+            await db.update(empTable)
+              .set({ hourlyRate: String(latestDerivedRate) })
+              .where(eq(empTable.id, emp.id));
+            employeesUpdated++;
+          }
+        }
+      }
+
+      res.json({
+        message: `Derived pay rates: ${ratesCreated} rate history records created, ${employeesUpdated} employees updated.`,
+        processed,
+        ratesCreated,
+        employeesUpdated,
+        totalEmployees: allEmployees.length,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to derive pay rates" });
+    }
+  });
+
   app.get("/api/bank-transactions/linkage", async (req, res) => {
     try {
       const month = parseInt(req.query.month as string);

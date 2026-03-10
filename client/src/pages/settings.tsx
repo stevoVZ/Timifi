@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff, Calculator, CalendarDays } from "lucide-react";
+import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff, Calculator, CalendarDays, DollarSign } from "lucide-react";
 import type { Setting } from "@shared/schema";
 
 function useSettings() {
@@ -1213,6 +1213,21 @@ function DataTab() {
     },
   });
 
+  const deriveRatesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/employees/derive-pay-rates", {});
+      return res.json();
+    },
+    onSuccess: (data: { message: string; ratesCreated: number; employeesUpdated: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/profitability"] });
+      toast({ title: "Pay Rates Derived", description: data.message });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to derive pay rates", description: err.message, variant: "destructive" });
+    },
+  });
+
   const months = workingDaysQuery.data || [];
   const totalWorkingDays = months.reduce((s, m) => s + m.workingDays, 0);
   const totalHours = months.reduce((s, m) => s + m.expectedHours, 0);
@@ -1327,6 +1342,27 @@ function DataTab() {
             <Calculator className="w-4 h-4" />
           )}
           {generateMutation.isPending ? "Generating..." : "Generate Expected Hours"}
+        </Button>
+      </div>
+
+      <div className="border-t pt-6">
+        <h3 className="text-sm font-semibold mb-1" data-testid="heading-derive-pay-rates">Derive Pay Rates from Payslips</h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Calculate employee hourly pay rates from payslip data ((net pay + super) ÷ hours worked).
+          Creates rate history records and updates each employee's current hourly rate.
+          Uses timesheet or invoice hours to derive rates from each pay period.
+        </p>
+        <Button
+          onClick={() => deriveRatesMutation.mutate()}
+          disabled={deriveRatesMutation.isPending}
+          data-testid="button-derive-pay-rates"
+        >
+          {deriveRatesMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <DollarSign className="w-4 h-4" />
+          )}
+          {deriveRatesMutation.isPending ? "Deriving Rates..." : "Derive Pay Rates"}
         </Button>
       </div>
     </div>
