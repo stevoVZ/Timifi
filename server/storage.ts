@@ -172,6 +172,7 @@ export interface IStorage {
   deletePayslipLinesByPayRunLine(payRunLineId: string): Promise<void>;
 
   getRateHistory(employeeId: string): Promise<RateHistory[]>;
+  getAllRateHistory(): Promise<RateHistory[]>;
   getLatestRateHistory(employeeId: string): Promise<RateHistory | undefined>;
   createRateHistory(data: InsertRateHistory): Promise<RateHistory>;
 
@@ -942,6 +943,12 @@ export class DatabaseStorage implements IStorage {
     const conds = [eq(rateHistory.employeeId, employeeId)];
     if (t) conds.push(eq(rateHistory.tenantId, t));
     return db.select().from(rateHistory).where(and(...conds)).orderBy(desc(rateHistory.effectiveDate));
+  }
+
+  async getAllRateHistory(): Promise<RateHistory[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(rateHistory).where(eq(rateHistory.tenantId, t)).orderBy(desc(rateHistory.effectiveDate));
+    return db.select().from(rateHistory).orderBy(desc(rateHistory.effectiveDate));
   }
 
   async getLatestRateHistory(employeeId: string): Promise<RateHistory | undefined> {

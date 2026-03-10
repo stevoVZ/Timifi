@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema, employees, timesheets, invoices, invoiceEmployees, payRunLines, documents, notifications, messages, leaveRequests, taxDeclarations, bankAccounts, superMemberships, placements, rateHistory, timesheetAuditLog, monthlyExpectedHours, rctis } from "@shared/schema";
+import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema, employees, timesheets, invoices, invoiceEmployees, payRunLines, documents, notifications, messages, leaveRequests, taxDeclarations, bankAccounts, superMemberships, placements, rateHistory, timesheetAuditLog, monthlyExpectedHours, rctis, type RateHistory } from "@shared/schema";
 import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
@@ -22,6 +22,44 @@ function normalizeCompanyName(name: string): string {
     .replace(/\b(pty\.?\s*ltd\.?|limited|ltd\.?|inc\.?|incorporated)\b/gi, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+type RateHistoryIndex = Record<string, RateHistory[]>;
+
+function buildRateHistoryIndex(allRates: RateHistory[]): RateHistoryIndex {
+  const idx: RateHistoryIndex = {};
+  for (const r of allRates) {
+    if (!idx[r.employeeId]) idx[r.employeeId] = [];
+    idx[r.employeeId].push(r);
+  }
+  return idx;
+}
+
+function getEffectiveRate(
+  rateIndex: RateHistoryIndex,
+  employeeId: string,
+  month: number,
+  year: number,
+  fallbackPayRate: string | null,
+  fallbackChargeOutRate: string | null,
+): { payRate: number; chargeOutRate: number } {
+  const periodEnd = new Date(year, month, 0);
+  const rates = rateIndex[employeeId];
+  if (rates && rates.length > 0) {
+    for (const r of rates) {
+      const effDate = new Date(r.effectiveDate);
+      if (effDate <= periodEnd) {
+        return {
+          payRate: parseFloat(r.payRate || "0"),
+          chargeOutRate: r.chargeOutRate ? parseFloat(r.chargeOutRate) : (fallbackChargeOutRate ? parseFloat(fallbackChargeOutRate) : 0),
+        };
+      }
+    }
+  }
+  return {
+    payRate: fallbackPayRate ? parseFloat(fallbackPayRate) : 0,
+    chargeOutRate: fallbackChargeOutRate ? parseFloat(fallbackChargeOutRate) : 0,
+  };
 }
 
 export async function registerRoutes(
@@ -896,14 +934,17 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid month or year" });
       }
 
-      const [allEmployees, allTimesheets, allInvoices, allPayRuns, allBankTxns, allInvEmpLinks] = await Promise.all([
+      const [allEmployees, allTimesheets, allInvoices, allPayRuns, allBankTxns, allInvEmpLinks, allRateHistory] = await Promise.all([
         storage.getEmployees(),
         storage.getTimesheets(),
         storage.getInvoices(),
         storage.getPayRuns(),
         storage.getBankTransactions(),
         storage.getAllInvoiceEmployees(),
+        storage.getAllRateHistory(),
       ]);
+
+      const rateIndex = buildRateHistoryIndex(allRateHistory);
 
       const invEmpMap: Record<string, string[]> = {};
       for (const link of allInvEmpLinks) {
@@ -972,8 +1013,9 @@ export async function registerRoutes(
           ? empTimesheets.reduce((best, t) => (tsPriority[t.status] || 0) > (tsPriority[best] || 0) ? t.status : best, empTimesheets[0].status)
           : null;
 
-        const chargeOutRate = emp.chargeOutRate ? parseFloat(emp.chargeOutRate) : 0;
-        const payRate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
+        const effRates = getEffectiveRate(rateIndex, emp.id, month, year, emp.hourlyRate, emp.chargeOutRate);
+        const chargeOutRate = effRates.chargeOutRate;
+        const payRate = effRates.payRate;
 
         const invoiceTotalExGst = empInvoices.reduce((sum, i) => sum + parseFloat(i.amountExclGst || "0"), 0);
         const invoiceTotalInclGst = empInvoices.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
@@ -1024,8 +1066,8 @@ export async function registerRoutes(
             firstName: emp.firstName,
             lastName: emp.lastName,
             clientName: emp.clientName,
-            hourlyRate: emp.hourlyRate,
-            chargeOutRate: emp.chargeOutRate,
+            hourlyRate: String(payRate),
+            chargeOutRate: String(chargeOutRate),
             paymentMethod: emp.paymentMethod,
             payrollFeePercent: emp.payrollFeePercent,
             companyName: emp.companyName,
@@ -2633,7 +2675,7 @@ export async function registerRoutes(
       const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
 
-      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates] = await Promise.all([
+      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates, allRateHistory] = await Promise.all([
         storage.getEmployees(),
         storage.getAllPlacements(),
         storage.getInvoices(),
@@ -2644,7 +2686,10 @@ export async function registerRoutes(
         storage.getTimesheets(),
         storage.getMonthlyExpectedHours({ month, year }),
         storage.getPayrollTaxRates(),
+        storage.getAllRateHistory(),
       ]);
+
+      const rateIndex = buildRateHistoryIndex(allRateHistory);
 
       const financialYear = month >= 7 ? year : year - 1;
       const ptRatesByState: Record<string, number> = {};
@@ -2697,8 +2742,9 @@ export async function registerRoutes(
         const client = allClients.find(c => c.id === placement.clientId);
         const clientName = placement.clientName || client?.name || "Unknown";
 
-        const chargeOutRate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
-        const payRate = parseFloat(employee.hourlyRate || "0");
+        const effectiveRates = getEffectiveRate(rateIndex, employee.id, month, year, employee.hourlyRate, placement.chargeOutRate || employee.chargeOutRate);
+        const chargeOutRate = parseFloat(placement.chargeOutRate || "0") || effectiveRates.chargeOutRate;
+        const payRate = effectiveRates.payRate;
         const rateSpread = chargeOutRate - payRate;
 
         const empInvoices = periodInvoices.filter(inv => {
@@ -2976,7 +3022,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid parameters" });
       }
 
-      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates] = await Promise.all([
+      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates, allRateHistory] = await Promise.all([
         storage.getEmployees(),
         storage.getAllPlacements(),
         storage.getInvoices(),
@@ -2987,7 +3033,10 @@ export async function registerRoutes(
         storage.getTimesheets(),
         storage.getMonthlyExpectedHours({ month, year }),
         storage.getPayrollTaxRates(),
+        storage.getAllRateHistory(),
       ]);
+
+      const rateIndex = buildRateHistoryIndex(allRateHistory);
 
       const employee = allEmployees.find(e => e.id === employeeId);
       if (!employee) {
@@ -3060,11 +3109,13 @@ export async function registerRoutes(
       const periodRctis = allRctis.filter(r => r.month === month && r.year === year);
       const claimedInvoiceIds = new Set<string>();
 
+      const effectiveRates = getEffectiveRate(rateIndex, employee.id, month, year, employee.hourlyRate, employee.chargeOutRate);
+
       const placementResults = empPlacements.map(placement => {
         const client = allClients.find(c => c.id === placement.clientId);
         const clientName = placement.clientName || client?.name || "Unknown";
-        const chargeOutRate = parseFloat(placement.chargeOutRate || employee.chargeOutRate || "0");
-        const payRate = parseFloat(employee.hourlyRate || "0");
+        const chargeOutRate = parseFloat(placement.chargeOutRate || "0") || effectiveRates.chargeOutRate;
+        const payRate = effectiveRates.payRate;
 
         const empInvoices = periodInvoices.filter(inv => {
           if (claimedInvoiceIds.has(inv.id)) return false;
@@ -3189,8 +3240,8 @@ export async function registerRoutes(
 
       const primaryPlacement = empPlacements[0];
       const primaryClient = primaryPlacement ? allClients.find(c => c.id === primaryPlacement.clientId) : null;
-      const chargeOutRate = primaryPlacement ? parseFloat(primaryPlacement.chargeOutRate || employee.chargeOutRate || "0") : 0;
-      const payRate = parseFloat(employee.hourlyRate || "0");
+      const chargeOutRate = primaryPlacement ? (parseFloat(primaryPlacement.chargeOutRate || "0") || effectiveRates.chargeOutRate) : effectiveRates.chargeOutRate;
+      const payRate = effectiveRates.payRate;
 
       res.json({
         employee: {
