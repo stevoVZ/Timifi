@@ -4099,17 +4099,55 @@ export async function registerRoutes(
       }
 
       const linkage: Record<string, {
-        status: "linked_invoice" | "linked_rcti" | "matched_contact" | "unlinked";
+        status: "linked_invoice" | "linked_rcti" | "matched_contact" | "confirmed" | "manual" | "suggested" | "rejected" | "unlinked";
         invoiceId?: string;
         invoiceNumber?: string;
         rctiId?: string;
         contactName?: string;
         isRctiClient?: boolean;
+        employeeId?: string;
+        employeeName?: string;
+        notes?: string;
         employees?: { id: string; name: string; placementId: string }[];
       }> = {};
 
+      const allEmployees = await storage.getEmployees();
+      const employeeMap = new Map(allEmployees.map(e => [e.id, e]));
+
       for (const txn of bankTxns) {
         const txnId = txn.id;
+
+        if (txn.linkStatus === "confirmed" || txn.linkStatus === "manual") {
+          const inv = txn.linkedInvoiceId ? allInvoices.find(i => i.id === txn.linkedInvoiceId) : null;
+          const emp = txn.linkedEmployeeId ? employeeMap.get(txn.linkedEmployeeId) : null;
+          linkage[txnId] = {
+            status: txn.linkStatus as "confirmed" | "manual",
+            invoiceId: txn.linkedInvoiceId || undefined,
+            invoiceNumber: inv?.invoiceNumber || undefined,
+            employeeId: txn.linkedEmployeeId || undefined,
+            employeeName: emp ? `${emp.firstName} ${emp.lastName}` : undefined,
+            notes: txn.linkedNotes || undefined,
+          };
+          continue;
+        }
+
+        if (txn.linkStatus === "suggested") {
+          const inv = txn.suggestedInvoiceId ? allInvoices.find(i => i.id === txn.suggestedInvoiceId) : null;
+          const emp = txn.suggestedEmployeeId ? employeeMap.get(txn.suggestedEmployeeId) : null;
+          linkage[txnId] = {
+            status: "suggested",
+            invoiceId: txn.suggestedInvoiceId || undefined,
+            invoiceNumber: inv?.invoiceNumber || undefined,
+            employeeId: txn.suggestedEmployeeId || undefined,
+            employeeName: emp ? `${emp.firstName} ${emp.lastName}` : undefined,
+          };
+          continue;
+        }
+
+        if (txn.linkStatus === "rejected") {
+          linkage[txnId] = { status: "rejected", isRctiClient: false };
+          continue;
+        }
 
         if (rctiBankTxnIds.has(txnId)) {
           const rcti = allRctis.find(r => r.bankTransactionId === txnId);
@@ -4172,6 +4210,188 @@ export async function registerRoutes(
       res.json(linkage);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to compute linkage" });
+    }
+  });
+
+  // ─── Auto-Suggest Bank Transaction Links ──────────────────────────
+  app.post("/api/bank-transactions/auto-suggest", async (req, res) => {
+    try {
+      const month = parseInt(req.query.month as string || req.body.month);
+      const year = parseInt(req.query.year as string || req.body.year);
+      if (!month || !year) return res.status(400).json({ message: "month and year required" });
+
+      const allBankTxns = await storage.getBankTransactions();
+      const bankTxns = allBankTxns.filter(t => {
+        const d = new Date(t.date);
+        return d.getMonth() + 1 === month && d.getFullYear() === year;
+      });
+
+      const allInvoices = await storage.getInvoices();
+      const allRctis = await storage.getRctis();
+      const allClients = await storage.getClients();
+      const allInvoicePayments = await storage.getAllInvoicePayments();
+      const allPlacements = await storage.getAllPlacements();
+      const allEmployees = await storage.getEmployees();
+
+      const rctiClientNames = new Set(allClients.filter(c => c.isRcti).map(c => c.name.toLowerCase().trim()));
+      const rctiBankTxnIds = new Set(allRctis.filter(r => r.bankTransactionId).map(r => r.bankTransactionId!));
+
+      const invoicePaymentsByKey = new Map<string, { invoiceId: string }>();
+      for (const ip of allInvoicePayments) {
+        const inv = allInvoices.find(i => i.id === ip.invoiceId);
+        if (!inv) continue;
+        const key = `${ip.bankAccountId || ""}__${ip.paymentDate || ""}__${parseFloat(String(ip.amount)).toFixed(2)}`;
+        invoicePaymentsByKey.set(key, { invoiceId: inv.id });
+      }
+
+      const invoicesByContact = new Map<string, typeof allInvoices>();
+      for (const inv of allInvoices) {
+        if (!inv.contactName) continue;
+        if (inv.invoiceType && inv.invoiceType !== "ACCREC") continue;
+        if (inv.status === "VOIDED") continue;
+        const key = inv.contactName.toLowerCase().trim();
+        if (!invoicesByContact.has(key)) invoicesByContact.set(key, []);
+        invoicesByContact.get(key)!.push(inv);
+      }
+
+      let suggestedCount = 0;
+
+      for (const txn of bankTxns) {
+        if (txn.linkStatus === "confirmed" || txn.linkStatus === "manual" || txn.linkStatus === "rejected" || txn.linkStatus === "suggested") {
+          continue;
+        }
+
+        if (rctiBankTxnIds.has(txn.id)) continue;
+
+        const paymentKey = `${txn.bankAccountId || ""}__${txn.date || ""}__${Math.abs(parseFloat(String(txn.amount))).toFixed(2)}`;
+        const paymentMatch = invoicePaymentsByKey.get(paymentKey);
+        if (paymentMatch) {
+          await storage.updateBankTransactionLink(txn.id, {
+            suggestedInvoiceId: paymentMatch.invoiceId,
+            linkStatus: "suggested",
+          });
+          suggestedCount++;
+          continue;
+        }
+
+        const contactNorm = (txn.contactName || "").toLowerCase().trim();
+        const contactInvoices = invoicesByContact.get(contactNorm) || [];
+        const amountMatch = contactInvoices.find(inv => {
+          const invAmt = Math.abs(parseFloat(inv.amountInclGst || "0"));
+          const txnAmt = Math.abs(parseFloat(String(txn.amount)));
+          return Math.abs(invAmt - txnAmt) < 0.02;
+        });
+
+        if (amountMatch) {
+          await storage.updateBankTransactionLink(txn.id, {
+            suggestedInvoiceId: amountMatch.id,
+            linkStatus: "suggested",
+          });
+          suggestedCount++;
+          continue;
+        }
+
+        if (txn.type === "SPEND" && contactNorm) {
+          const matchedEmp = allEmployees.find(e => {
+            const empName = `${e.firstName} ${e.lastName}`.toLowerCase().trim();
+            return contactNorm.includes(empName) || empName.includes(contactNorm);
+          });
+          if (matchedEmp) {
+            await storage.updateBankTransactionLink(txn.id, {
+              suggestedEmployeeId: matchedEmp.id,
+              linkStatus: "suggested",
+            });
+            suggestedCount++;
+            continue;
+          }
+        }
+      }
+
+      res.json({ suggestedCount, totalTransactions: bankTxns.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to auto-suggest links" });
+    }
+  });
+
+  // ─── Manual Link / Confirm / Reject Bank Transaction ─────────────
+  app.patch("/api/bank-transactions/:id/link", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { action, invoiceId, employeeId, notes } = req.body;
+
+      if (!action || !["confirm", "manual", "reject"].includes(action)) {
+        return res.status(400).json({ message: "action must be 'confirm', 'manual', or 'reject'" });
+      }
+
+      const allBankTxns = await storage.getBankTransactions();
+      const txn = allBankTxns.find(t => t.id === id);
+      if (!txn) return res.status(404).json({ message: "Bank transaction not found" });
+
+      if (action === "confirm") {
+        if (!txn.suggestedInvoiceId && !txn.suggestedEmployeeId) {
+          return res.status(400).json({ message: "No suggestion to confirm" });
+        }
+        await storage.updateBankTransactionLink(id, {
+          linkedInvoiceId: txn.suggestedInvoiceId || null,
+          linkedEmployeeId: txn.suggestedEmployeeId || null,
+          linkedNotes: notes || null,
+          linkStatus: "confirmed",
+        });
+      } else if (action === "manual") {
+        if (!invoiceId && !employeeId) {
+          return res.status(400).json({ message: "invoiceId or employeeId required for manual link" });
+        }
+        if (invoiceId) {
+          const allInvoices = await storage.getInvoices();
+          if (!allInvoices.find(i => i.id === invoiceId)) {
+            return res.status(404).json({ message: "Invoice not found" });
+          }
+        }
+        if (employeeId) {
+          const emp = await storage.getEmployee(employeeId);
+          if (!emp) {
+            return res.status(404).json({ message: "Employee not found" });
+          }
+        }
+        await storage.updateBankTransactionLink(id, {
+          linkedInvoiceId: invoiceId || null,
+          linkedEmployeeId: employeeId || null,
+          linkedNotes: notes || null,
+          linkStatus: "manual",
+          suggestedInvoiceId: null,
+          suggestedEmployeeId: null,
+        });
+      } else if (action === "reject") {
+        await storage.updateBankTransactionLink(id, {
+          linkStatus: "rejected",
+          suggestedInvoiceId: null,
+          suggestedEmployeeId: null,
+          linkedInvoiceId: null,
+          linkedEmployeeId: null,
+          linkedNotes: null,
+        });
+      }
+
+      const updated = await storage.getBankTransactions();
+      const result = updated.find(t => t.id === id);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update link" });
+    }
+  });
+
+  // ─── Unlink (Reset) Bank Transaction ──────────────────────────────
+  app.delete("/api/bank-transactions/:id/link", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const allBankTxns = await storage.getBankTransactions();
+      const txn = allBankTxns.find(t => t.id === id);
+      if (!txn) return res.status(404).json({ message: "Bank transaction not found" });
+      const result = await storage.clearBankTransactionLink(id);
+      if (!result) return res.status(404).json({ message: "Bank transaction not found" });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to unlink" });
     }
   });
 

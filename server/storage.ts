@@ -166,6 +166,8 @@ export interface IStorage {
   getBankTransactionByXeroId(xeroId: string): Promise<BankTransaction | undefined>;
   createBankTransaction(data: InsertBankTransaction): Promise<BankTransaction>;
   updateBankTransaction(id: string, data: Partial<InsertBankTransaction>): Promise<BankTransaction | undefined>;
+  updateBankTransactionLink(id: string, fields: { linkedInvoiceId?: string | null; linkedEmployeeId?: string | null; linkedNotes?: string | null; linkStatus?: string | null; suggestedInvoiceId?: string | null; suggestedEmployeeId?: string | null }): Promise<BankTransaction | undefined>;
+  clearBankTransactionLink(id: string): Promise<BankTransaction | undefined>;
 
   getPayslipLines(payRunLineId: string): Promise<PayslipLine[]>;
   createPayslipLines(data: InsertPayslipLine[]): Promise<PayslipLine[]>;
@@ -917,6 +919,23 @@ export class DatabaseStorage implements IStorage {
 
   async updateBankTransaction(id: string, data: Partial<InsertBankTransaction>): Promise<BankTransaction | undefined> {
     const [txn] = await db.update(bankTransactions).set(data).where(eq(bankTransactions.id, id)).returning();
+    return txn;
+  }
+
+  async updateBankTransactionLink(id: string, fields: { linkedInvoiceId?: string | null; linkedEmployeeId?: string | null; linkedNotes?: string | null; linkStatus?: string | null; suggestedInvoiceId?: string | null; suggestedEmployeeId?: string | null }): Promise<BankTransaction | undefined> {
+    const [txn] = await db.update(bankTransactions).set(fields).where(eq(bankTransactions.id, id)).returning();
+    return txn;
+  }
+
+  async clearBankTransactionLink(id: string): Promise<BankTransaction | undefined> {
+    const [txn] = await db.update(bankTransactions).set({
+      linkedInvoiceId: null,
+      linkedEmployeeId: null,
+      linkedNotes: null,
+      linkStatus: null,
+      suggestedInvoiceId: null,
+      suggestedEmployeeId: null,
+    }).where(eq(bankTransactions.id, id)).returning();
     return txn;
   }
 

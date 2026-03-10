@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,21 +8,43 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown,
   Search, CheckCircle, XCircle, ChevronDown, ChevronUp, Wallet,
   Landmark, CreditCard, Link2, Unlink, FileText, Receipt,
+  Wand2, Check, X, Edit3, User, RotateCcw,
 } from "lucide-react";
 import type { BankTransaction } from "@shared/schema";
 
 interface LinkageInfo {
-  status: "linked_invoice" | "linked_rcti" | "matched_contact" | "unlinked";
+  status: "linked_invoice" | "linked_rcti" | "matched_contact" | "confirmed" | "manual" | "suggested" | "rejected" | "unlinked";
   invoiceId?: string;
   invoiceNumber?: string;
   rctiId?: string;
   contactName?: string;
   isRctiClient?: boolean;
+  employeeId?: string;
+  employeeName?: string;
+  notes?: string;
   employees?: { id: string; name: string; placementId: string }[];
+}
+
+interface InvoiceOption {
+  id: string;
+  invoiceNumber: string | null;
+  contactName: string | null;
+  amountInclGst: string | null;
+  date: string | null;
+}
+
+interface EmployeeOption {
+  id: string;
+  firstName: string;
+  lastName: string;
 }
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -69,6 +91,13 @@ export default function BankStatementsPage() {
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [initialPeriodSet, setInitialPeriodSet] = useState(false);
+  const [linkDialogTxn, setLinkDialogTxn] = useState<BankTransaction | null>(null);
+  const [linkInvoiceId, setLinkInvoiceId] = useState("");
+  const [linkEmployeeId, setLinkEmployeeId] = useState("");
+  const [linkNotes, setLinkNotes] = useState("");
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const { toast } = useToast();
 
   const { data: latestPeriod } = useQuery<{ month: number; year: number }>({
     queryKey: ["/api/bank-transactions/latest-period"],
@@ -102,6 +131,72 @@ export default function BankStatementsPage() {
       const res = await fetch(`/api/bank-transactions/linkage?month=${month}&year=${year}`, { credentials: "include" });
       if (!res.ok) return {};
       return res.json();
+    },
+  });
+
+  const { data: invoicesData } = useQuery<InvoiceOption[]>({
+    queryKey: ["/api/invoices"],
+    queryFn: async () => {
+      const res = await fetch("/api/invoices", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const { data: employeesData } = useQuery<EmployeeOption[]>({
+    queryKey: ["/api/employees"],
+    queryFn: async () => {
+      const res = await fetch("/api/employees", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const invalidateLinkage = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/bank-transactions/linkage", month, year] });
+    queryClient.invalidateQueries({ queryKey: ["/api/bank-transactions", month, year] });
+  };
+
+  const autoSuggestMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/bank-transactions/auto-suggest?month=${month}&year=${year}`);
+      return res.json();
+    },
+    onSuccess: (data: { suggestedCount: number; totalTransactions: number }) => {
+      invalidateLinkage();
+      toast({
+        title: "Auto-Suggest Complete",
+        description: data.suggestedCount > 0
+          ? `Found ${data.suggestedCount} suggested links out of ${data.totalTransactions} transactions. Review and confirm below.`
+          : `No new suggestions found for ${data.totalTransactions} transactions.`,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Auto-Suggest Failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: async ({ id, action, invoiceId, employeeId, notes }: { id: string; action: string; invoiceId?: string; employeeId?: string; notes?: string }) => {
+      await apiRequest("PATCH", `/api/bank-transactions/${id}/link`, { action, invoiceId, employeeId, notes });
+    },
+    onSuccess: () => {
+      invalidateLinkage();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Link Failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/bank-transactions/${id}/link`);
+    },
+    onSuccess: () => {
+      invalidateLinkage();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Unlink Failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -156,7 +251,7 @@ export default function BankStatementsPage() {
     if (linkageFilter === "all" || !linkageData) return amountFiltered;
     return amountFiltered.filter(t => {
       const info = linkageData[t.id];
-      const isLinked = info && (info.status === "linked_invoice" || info.status === "linked_rcti" || info.status === "matched_contact");
+      const isLinked = info && (info.status === "linked_invoice" || info.status === "linked_rcti" || info.status === "matched_contact" || info.status === "confirmed" || info.status === "manual");
       return linkageFilter === "linked" ? isLinked : !isLinked;
     });
   }, [amountFiltered, linkageFilter, linkageData]);
@@ -219,6 +314,48 @@ export default function BankStatementsPage() {
     return <Landmark className="w-4 h-4" />;
   };
 
+  const openLinkDialog = (txn: BankTransaction) => {
+    setLinkDialogTxn(txn);
+    setLinkInvoiceId("");
+    setLinkEmployeeId("");
+    setLinkNotes("");
+    setInvoiceSearch("");
+    setEmployeeSearch("");
+  };
+
+  const handleManualLink = () => {
+    if (!linkDialogTxn) return;
+    if (!linkInvoiceId && !linkEmployeeId) {
+      toast({ title: "Select an invoice or employee", variant: "destructive" });
+      return;
+    }
+    linkMutation.mutate({
+      id: linkDialogTxn.id,
+      action: "manual",
+      invoiceId: linkInvoiceId || undefined,
+      employeeId: linkEmployeeId || undefined,
+      notes: linkNotes || undefined,
+    });
+    setLinkDialogTxn(null);
+  };
+
+  const handleConfirm = (txnId: string) => {
+    linkMutation.mutate({ id: txnId, action: "confirm" });
+  };
+
+  const handleReject = (txnId: string) => {
+    linkMutation.mutate({ id: txnId, action: "reject" });
+  };
+
+  const handleUnlink = (txnId: string) => {
+    unlinkMutation.mutate(txnId);
+  };
+
+  const suggestedCount = useMemo(() => {
+    if (!linkageData) return 0;
+    return Object.values(linkageData).filter(l => l.status === "suggested").length;
+  }, [linkageData]);
+
   return (
     <div className="flex flex-col h-full">
       <TopBar
@@ -257,6 +394,22 @@ export default function BankStatementsPage() {
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={nextMonth} data-testid="button-next-month">
                 <ChevronRight className="w-4 h-4" />
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs ml-2"
+                onClick={() => autoSuggestMutation.mutate()}
+                disabled={autoSuggestMutation.isPending}
+                data-testid="button-auto-suggest"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                {autoSuggestMutation.isPending ? "Suggesting..." : "Auto-Suggest Links"}
+              </Button>
+              {suggestedCount > 0 && (
+                <Badge className="text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300" data-testid="badge-pending-suggestions">
+                  {suggestedCount} pending
+                </Badge>
+              )}
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
@@ -314,7 +467,7 @@ export default function BankStatementsPage() {
                   onChange={(e) => setAmountMin(e.target.value)}
                   data-testid="input-amount-min"
                 />
-                <span className="text-xs text-muted-foreground">–</span>
+                <span className="text-xs text-muted-foreground">-</span>
                 <Input
                   type="number"
                   placeholder="Max $"
@@ -478,25 +631,42 @@ export default function BankStatementsPage() {
                               <div className="border-t">
                                 <table className="w-full text-sm">
                                   <tbody>
-                                    {group.transactions.map((t) => (
-                                      <tr key={t.id} className="border-b last:border-0 border-border/50">
-                                        <td className="py-2 px-3 text-xs text-muted-foreground w-[90px]">{fmtDate(t.date)}</td>
-                                        <td className="py-2 px-3 text-xs truncate max-w-[200px]">{t.description || t.reference || "—"}</td>
-                                        <td className="py-2 px-3 text-xs text-muted-foreground truncate max-w-[120px] hidden md:table-cell">{t.bankAccountName || "—"}</td>
-                                        <td className="py-2 px-3 text-right">
-                                          <span className="font-mono text-xs font-semibold text-red-600 dark:text-red-400">
-                                            {fmtCurrency(safeAmount(t.amount))}
-                                          </span>
-                                        </td>
-                                        <td className="py-2 px-3 w-[30px]">
-                                          {t.isReconciled ? (
-                                            <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-                                          ) : (
-                                            <XCircle className="w-3.5 h-3.5 text-muted-foreground/40" />
-                                          )}
-                                        </td>
-                                      </tr>
-                                    ))}
+                                    {group.transactions.map((t) => {
+                                      const info = linkageData?.[t.id];
+                                      return (
+                                        <tr key={t.id} className="border-b last:border-0 border-border/50">
+                                          <td className="py-2 px-3 text-xs text-muted-foreground w-[90px]">{fmtDate(t.date)}</td>
+                                          <td className="py-2 px-3 text-xs truncate max-w-[200px]">{t.description || t.reference || "—"}</td>
+                                          <td className="py-2 px-3 text-xs text-muted-foreground truncate max-w-[120px] hidden md:table-cell">{t.bankAccountName || "—"}</td>
+                                          <td className="py-2 px-3 text-right">
+                                            <span className="font-mono text-xs font-semibold text-red-600 dark:text-red-400">
+                                              {fmtCurrency(safeAmount(t.amount))}
+                                            </span>
+                                          </td>
+                                          <td className="py-2 px-3">
+                                            <LinkageBadge info={info} />
+                                          </td>
+                                          <td className="py-2 px-3 w-[120px]">
+                                            <LinkActions
+                                              info={info}
+                                              txn={t}
+                                              onLink={() => openLinkDialog(t)}
+                                              onConfirm={() => handleConfirm(t.id)}
+                                              onReject={() => handleReject(t.id)}
+                                              onUnlink={() => handleUnlink(t.id)}
+                                              isPending={linkMutation.isPending || unlinkMutation.isPending}
+                                            />
+                                          </td>
+                                          <td className="py-2 px-3 w-[30px]">
+                                            {t.isReconciled ? (
+                                              <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                                            ) : (
+                                              <XCircle className="w-3.5 h-3.5 text-muted-foreground/40" />
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                               </div>
@@ -514,22 +684,256 @@ export default function BankStatementsPage() {
               </TabsContent>
 
               <TabsContent value="all" className="mt-4">
-                <TransactionTable transactions={filtered} title={`All Transactions — ${MONTHS[month]} ${year}`} linkage={linkageData} />
+                <TransactionTable
+                  transactions={filtered}
+                  title={`All Transactions — ${MONTHS[month]} ${year}`}
+                  linkage={linkageData}
+                  onLink={openLinkDialog}
+                  onConfirm={handleConfirm}
+                  onReject={handleReject}
+                  onUnlink={handleUnlink}
+                  isPending={linkMutation.isPending || unlinkMutation.isPending}
+                />
               </TabsContent>
 
               <TabsContent value="income" className="mt-4">
-                <TransactionTable transactions={income} title={`Income — ${MONTHS[month]} ${year}`} linkage={linkageData} />
+                <TransactionTable
+                  transactions={income}
+                  title={`Income — ${MONTHS[month]} ${year}`}
+                  linkage={linkageData}
+                  onLink={openLinkDialog}
+                  onConfirm={handleConfirm}
+                  onReject={handleReject}
+                  onUnlink={handleUnlink}
+                  isPending={linkMutation.isPending || unlinkMutation.isPending}
+                />
               </TabsContent>
             </Tabs>
           )}
         </div>
       </main>
+
+      <Dialog open={!!linkDialogTxn} onOpenChange={(open) => { if (!open) setLinkDialogTxn(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Link Transaction</DialogTitle>
+            <DialogDescription>
+              {linkDialogTxn && (
+                <span>
+                  {fmtDate(linkDialogTxn.date)} — {linkDialogTxn.contactName || "Unknown"} — {linkDialogTxn.type === "RECEIVE" ? "+" : "-"}{fmtCurrency(safeAmount(linkDialogTxn.amount))}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Link to Invoice</label>
+              <Input
+                placeholder="Search invoices..."
+                className="h-8 text-sm mb-2"
+                value={invoiceSearch}
+                onChange={(e) => setInvoiceSearch(e.target.value)}
+                data-testid="input-search-invoice"
+              />
+              <div className="max-h-[160px] overflow-y-auto border rounded-md">
+                {(invoicesData || [])
+                  .filter(inv => {
+                    if (!invoiceSearch.trim()) return true;
+                    const s = invoiceSearch.toLowerCase();
+                    return (inv.invoiceNumber || "").toLowerCase().includes(s) ||
+                      (inv.contactName || "").toLowerCase().includes(s);
+                  })
+                  .slice(0, 50)
+                  .map(inv => (
+                    <button
+                      key={inv.id}
+                      className={`w-full text-left px-3 py-2 text-xs hover:bg-muted/60 transition-colors border-b last:border-0 flex items-center justify-between ${linkInvoiceId === inv.id ? "bg-primary/10 border-primary" : ""}`}
+                      onClick={() => { setLinkInvoiceId(linkInvoiceId === inv.id ? "" : inv.id); setLinkEmployeeId(""); }}
+                      data-testid={`option-invoice-${inv.id}`}
+                    >
+                      <div>
+                        <span className="font-medium">{inv.invoiceNumber || "—"}</span>
+                        <span className="text-muted-foreground ml-2">{inv.contactName}</span>
+                      </div>
+                      <span className="font-mono">{fmtCurrency(safeAmount(inv.amountInclGst))}</span>
+                    </button>
+                  ))}
+                {(invoicesData || []).length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-4">No invoices loaded</p>
+                )}
+              </div>
+            </div>
+
+            <div className="relative flex items-center gap-3">
+              <div className="flex-1 border-t" />
+              <span className="text-[10px] text-muted-foreground uppercase">or</span>
+              <div className="flex-1 border-t" />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Link to Employee</label>
+              <Input
+                placeholder="Search employees..."
+                className="h-8 text-sm mb-2"
+                value={employeeSearch}
+                onChange={(e) => setEmployeeSearch(e.target.value)}
+                data-testid="input-search-employee"
+              />
+              <div className="max-h-[120px] overflow-y-auto border rounded-md">
+                {(employeesData || [])
+                  .filter(emp => {
+                    if (!employeeSearch.trim()) return true;
+                    const s = employeeSearch.toLowerCase();
+                    return `${emp.firstName} ${emp.lastName}`.toLowerCase().includes(s);
+                  })
+                  .slice(0, 30)
+                  .map(emp => (
+                    <button
+                      key={emp.id}
+                      className={`w-full text-left px-3 py-2 text-xs hover:bg-muted/60 transition-colors border-b last:border-0 flex items-center gap-2 ${linkEmployeeId === emp.id ? "bg-primary/10 border-primary" : ""}`}
+                      onClick={() => { setLinkEmployeeId(linkEmployeeId === emp.id ? "" : emp.id); setLinkInvoiceId(""); }}
+                      data-testid={`option-employee-${emp.id}`}
+                    >
+                      <User className="w-3 h-3 text-muted-foreground" />
+                      <span className="font-medium">{emp.firstName} {emp.lastName}</span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Notes (optional)</label>
+              <Textarea
+                placeholder="Add a note about this link..."
+                className="text-sm h-16 resize-none"
+                value={linkNotes}
+                onChange={(e) => setLinkNotes(e.target.value)}
+                data-testid="input-link-notes"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setLinkDialogTxn(null)} data-testid="button-cancel-link">
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleManualLink}
+              disabled={!linkInvoiceId && !linkEmployeeId}
+              data-testid="button-save-link"
+            >
+              <Link2 className="w-3.5 h-3.5 mr-1" />
+              Link
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
+function LinkActions({ info, txn, onLink, onConfirm, onReject, onUnlink, isPending }: {
+  info?: LinkageInfo;
+  txn: BankTransaction;
+  onLink: () => void;
+  onConfirm: () => void;
+  onReject: () => void;
+  onUnlink: () => void;
+  isPending: boolean;
+}) {
+  if (!info || info.status === "unlinked") {
+    return (
+      <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2 gap-1" onClick={onLink} disabled={isPending} data-testid={`button-link-${txn.id}`}>
+        <Edit3 className="w-3 h-3" />
+        Link
+      </Button>
+    );
+  }
+
+  if (info.status === "suggested") {
+    return (
+      <div className="flex items-center gap-0.5">
+        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50" onClick={onConfirm} disabled={isPending} data-testid={`button-confirm-${txn.id}`}>
+          <Check className="w-3.5 h-3.5" />
+        </Button>
+        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:text-red-600 hover:bg-red-50" onClick={onReject} disabled={isPending} data-testid={`button-reject-${txn.id}`}>
+          <X className="w-3.5 h-3.5" />
+        </Button>
+        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground" onClick={onLink} disabled={isPending} data-testid={`button-edit-link-${txn.id}`}>
+          <Edit3 className="w-3 h-3" />
+        </Button>
+      </div>
+    );
+  }
+
+  if (info.status === "rejected") {
+    return (
+      <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2 gap-1 text-muted-foreground" onClick={onLink} disabled={isPending} data-testid={`button-relink-${txn.id}`}>
+        <RotateCcw className="w-3 h-3" />
+        Re-link
+      </Button>
+    );
+  }
+
+  if (info.status === "confirmed" || info.status === "manual") {
+    return (
+      <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2 gap-1 text-muted-foreground hover:text-red-600" onClick={onUnlink} disabled={isPending} data-testid={`button-unlink-${txn.id}`}>
+        <Unlink className="w-3 h-3" />
+        Unlink
+      </Button>
+    );
+  }
+
+  if (info.status === "linked_invoice" || info.status === "linked_rcti" || info.status === "matched_contact") {
+    return (
+      <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2 gap-1 text-muted-foreground" onClick={onLink} disabled={isPending} data-testid={`button-override-${txn.id}`}>
+        <Edit3 className="w-3 h-3" />
+        Override
+      </Button>
+    );
+  }
+
+  return null;
+}
+
 function LinkageBadge({ info }: { info?: LinkageInfo }) {
   if (!info) return <span className="text-muted-foreground/30 text-[10px]">—</span>;
+
+  if (info.status === "confirmed") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 gap-0.5" data-testid="badge-confirmed">
+        <CheckCircle className="w-2.5 h-2.5" />
+        {info.invoiceNumber || info.employeeName || "Confirmed"}
+      </Badge>
+    );
+  }
+
+  if (info.status === "manual") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300 gap-0.5" data-testid="badge-manual">
+        <Link2 className="w-2.5 h-2.5" />
+        {info.invoiceNumber || info.employeeName || "Manual"}
+      </Badge>
+    );
+  }
+
+  if (info.status === "suggested") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 gap-0.5" data-testid="badge-suggested">
+        <Wand2 className="w-2.5 h-2.5" />
+        {info.invoiceNumber || info.employeeName || "Suggested"}
+      </Badge>
+    );
+  }
+
+  if (info.status === "rejected") {
+    return (
+      <Badge className="text-[10px] px-1.5 py-0 bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 gap-0.5" data-testid="badge-rejected">
+        <X className="w-2.5 h-2.5" />
+        Rejected
+      </Badge>
+    );
+  }
 
   if (info.status === "linked_invoice") {
     return (
@@ -570,7 +974,16 @@ function LinkageBadge({ info }: { info?: LinkageInfo }) {
   return <span className="text-muted-foreground/30 text-[10px]">—</span>;
 }
 
-function TransactionTable({ transactions, title, linkage }: { transactions: BankTransaction[]; title: string; linkage?: Record<string, LinkageInfo> }) {
+function TransactionTable({ transactions, title, linkage, onLink, onConfirm, onReject, onUnlink, isPending }: {
+  transactions: BankTransaction[];
+  title: string;
+  linkage?: Record<string, LinkageInfo>;
+  onLink: (txn: BankTransaction) => void;
+  onConfirm: (txnId: string) => void;
+  onReject: (txnId: string) => void;
+  onUnlink: (txnId: string) => void;
+  isPending: boolean;
+}) {
   const [sortField, setSortField] = useState<"date" | "amount" | "contact">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -621,41 +1034,56 @@ function TransactionTable({ transactions, title, linkage }: { transactions: Bank
                     <div className="flex items-center justify-end gap-1">Amount {sortField === "amount" && (sortDir === "asc" ? "↑" : "↓")}</div>
                   </th>
                   <th className="text-center py-2.5 px-2 text-xs font-semibold text-muted-foreground">Linked</th>
+                  <th className="text-center py-2.5 px-2 text-xs font-semibold text-muted-foreground">Actions</th>
                   <th className="text-center py-2.5 px-2 text-xs font-semibold text-muted-foreground w-[40px]">Rec</th>
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((t) => (
-                  <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors" data-testid={`row-txn-${t.id}`}>
-                    <td className="py-2.5 px-2 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(t.date)}</td>
-                    <td className="py-2.5 px-2">
-                      <Badge
-                        className={`text-[10px] px-1.5 py-0 ${t.type === "RECEIVE" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300" : "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"}`}
-                      >
-                        {t.type === "RECEIVE" ? "IN" : "OUT"}
-                      </Badge>
-                    </td>
-                    <td className="py-2.5 px-2 text-sm font-medium truncate max-w-[180px]">{t.contactName || "—"}</td>
-                    <td className="py-2.5 px-2 text-xs text-muted-foreground truncate max-w-[200px] hidden md:table-cell">{t.description || "—"}</td>
-                    <td className="py-2.5 px-2 text-xs text-muted-foreground truncate max-w-[120px] hidden lg:table-cell">{t.reference || "—"}</td>
-                    <td className="py-2.5 px-2 text-xs text-muted-foreground truncate max-w-[120px] hidden lg:table-cell">{t.bankAccountName || "—"}</td>
-                    <td className="py-2.5 px-2 text-right">
-                      <span className={`font-mono text-xs font-semibold ${t.type === "RECEIVE" ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                        {t.type === "RECEIVE" ? "+" : "-"}{fmtCurrency(safeAmount(t.amount))}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-2 text-center">
-                      <LinkageBadge info={linkage?.[t.id]} />
-                    </td>
-                    <td className="py-2.5 px-2 text-center">
-                      {t.isReconciled ? (
-                        <CheckCircle className="w-3.5 h-3.5 text-green-500 mx-auto" />
-                      ) : (
-                        <XCircle className="w-3.5 h-3.5 text-muted-foreground/40 mx-auto" />
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {sorted.map((t) => {
+                  const info = linkage?.[t.id];
+                  return (
+                    <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors" data-testid={`row-txn-${t.id}`}>
+                      <td className="py-2.5 px-2 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(t.date)}</td>
+                      <td className="py-2.5 px-2">
+                        <Badge
+                          className={`text-[10px] px-1.5 py-0 ${t.type === "RECEIVE" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300" : "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"}`}
+                        >
+                          {t.type === "RECEIVE" ? "IN" : "OUT"}
+                        </Badge>
+                      </td>
+                      <td className="py-2.5 px-2 text-sm font-medium truncate max-w-[180px]">{t.contactName || "—"}</td>
+                      <td className="py-2.5 px-2 text-xs text-muted-foreground truncate max-w-[200px] hidden md:table-cell">{t.description || "—"}</td>
+                      <td className="py-2.5 px-2 text-xs text-muted-foreground truncate max-w-[120px] hidden lg:table-cell">{t.reference || "—"}</td>
+                      <td className="py-2.5 px-2 text-xs text-muted-foreground truncate max-w-[120px] hidden lg:table-cell">{t.bankAccountName || "—"}</td>
+                      <td className="py-2.5 px-2 text-right">
+                        <span className={`font-mono text-xs font-semibold ${t.type === "RECEIVE" ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                          {t.type === "RECEIVE" ? "+" : "-"}{fmtCurrency(safeAmount(t.amount))}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        <LinkageBadge info={info} />
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        <LinkActions
+                          info={info}
+                          txn={t}
+                          onLink={() => onLink(t)}
+                          onConfirm={() => onConfirm(t.id)}
+                          onReject={() => onReject(t.id)}
+                          onUnlink={() => onUnlink(t.id)}
+                          isPending={isPending}
+                        />
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        {t.isReconciled ? (
+                          <CheckCircle className="w-3.5 h-3.5 text-green-500 mx-auto" />
+                        ) : (
+                          <XCircle className="w-3.5 h-3.5 text-muted-foreground/40 mx-auto" />
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

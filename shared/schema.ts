@@ -330,6 +330,12 @@ export const bankTransactions = pgTable("bank_transactions", {
   isReconciled: boolean("is_reconciled").notNull().default(false),
   month: smallint("month").notNull(),
   year: smallint("year").notNull(),
+  linkedInvoiceId: varchar("linked_invoice_id"),
+  linkedEmployeeId: varchar("linked_employee_id"),
+  linkedNotes: text("linked_notes"),
+  linkStatus: text("link_status"),
+  suggestedInvoiceId: varchar("suggested_invoice_id"),
+  suggestedEmployeeId: varchar("suggested_employee_id"),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
