@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff, Calculator, CalendarDays, DollarSign } from "lucide-react";
+import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff, Calculator, CalendarDays, DollarSign, ArrowRightLeft, AlertTriangle } from "lucide-react";
 import type { Setting } from "@shared/schema";
 
 function useSettings() {
@@ -1645,6 +1645,256 @@ function PayrollTaxTab() {
   );
 }
 
+interface MergeEmployee {
+  id: string;
+  firstName: string;
+  lastName: string;
+  status: string;
+  xeroEmployeeId: string | null;
+  email: string | null;
+}
+
+interface MergePreview {
+  employeeId: string;
+  name: string;
+  counts: Record<string, number>;
+}
+
+const mergeTableLabels: Record<string, string> = {
+  timesheets: "Timesheets",
+  invoices: "Invoices",
+  invoiceEmployees: "Invoice Links",
+  payRunLines: "Pay Run Lines",
+  documents: "Documents",
+  notifications: "Notifications",
+  messages: "Messages",
+  leaveRequests: "Leave Requests",
+  taxDeclarations: "Tax Declarations",
+  bankAccounts: "Bank Accounts",
+  superMemberships: "Super Memberships",
+  placements: "Placements",
+  rateHistory: "Rate History",
+  timesheetAuditLog: "Audit Logs",
+  monthlyExpectedHours: "Expected Hours",
+  rctis: "RCTIs",
+};
+
+function EmployeeMergeTab() {
+  const { toast } = useToast();
+  const [sourceId, setSourceId] = useState("");
+  const [targetId, setTargetId] = useState("");
+  const [deleteSource, setDeleteSource] = useState(true);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [searchSource, setSearchSource] = useState("");
+  const [searchTarget, setSearchTarget] = useState("");
+
+  const { data: employeeList } = useQuery<MergeEmployee[]>({
+    queryKey: ["/api/employees"],
+  });
+
+  const { data: preview, isLoading: previewLoading } = useQuery<MergePreview>({
+    queryKey: ["/api/employees", sourceId, "merge-preview"],
+    enabled: !!sourceId,
+  });
+
+  const mergeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/employees/merge", {
+        sourceEmployeeId: sourceId,
+        targetEmployeeId: targetId,
+        deleteSource,
+      });
+      return res.json();
+    },
+    onSuccess: (data: { message: string; transferred: Record<string, number> }) => {
+      toast({ title: "Merge Complete", description: data.message });
+      setSourceId("");
+      setTargetId("");
+      setConfirmOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Merge Failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const allEmps = employeeList || [];
+  const filteredSource = allEmps.filter(e => {
+    if (!searchSource) return true;
+    const q = searchSource.toLowerCase();
+    return `${e.firstName} ${e.lastName}`.toLowerCase().includes(q) || (e.email || "").toLowerCase().includes(q);
+  });
+  const filteredTarget = allEmps.filter(e => {
+    if (e.id === sourceId) return false;
+    if (!searchTarget) return true;
+    const q = searchTarget.toLowerCase();
+    return `${e.firstName} ${e.lastName}`.toLowerCase().includes(q) || (e.email || "").toLowerCase().includes(q);
+  });
+
+  const sourceEmp = allEmps.find(e => e.id === sourceId);
+  const targetEmp = allEmps.find(e => e.id === targetId);
+  const totalRecords = preview ? Object.values(preview.counts).reduce((a, b) => a + b, 0) : 0;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold flex items-center gap-2">
+          <ArrowRightLeft className="w-5 h-5" />
+          Employee Merge / Transfer
+        </h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Transfer all records from one employee account to another. Use this when an employee was created manually and a new account has since been synced from Xero.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Source (old account to merge FROM)</Label>
+          <Input
+            placeholder="Search employees..."
+            value={searchSource}
+            onChange={e => setSearchSource(e.target.value)}
+            data-testid="input-merge-search-source"
+          />
+          <Select value={sourceId} onValueChange={(v) => { setSourceId(v); if (v === targetId) setTargetId(""); }}>
+            <SelectTrigger data-testid="select-merge-source">
+              <SelectValue placeholder="Select source employee" />
+            </SelectTrigger>
+            <SelectContent>
+              {filteredSource.map(e => (
+                <SelectItem key={e.id} value={e.id} data-testid={`option-source-${e.id}`}>
+                  {e.firstName} {e.lastName} — {e.xeroEmployeeId ? "Xero" : "Manual"} ({e.status})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {sourceEmp && (
+            <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
+              <span className="font-medium">{sourceEmp.firstName} {sourceEmp.lastName}</span>
+              {sourceEmp.email && <span className="ml-1">({sourceEmp.email})</span>}
+              <span className={`ml-2 ${sourceEmp.xeroEmployeeId ? "text-emerald-600" : "text-amber-600"}`}>
+                {sourceEmp.xeroEmployeeId ? "Xero-synced" : "Manual"}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Target (new account to merge INTO)</Label>
+          <Input
+            placeholder="Search employees..."
+            value={searchTarget}
+            onChange={e => setSearchTarget(e.target.value)}
+            data-testid="input-merge-search-target"
+          />
+          <Select value={targetId} onValueChange={setTargetId} disabled={!sourceId}>
+            <SelectTrigger data-testid="select-merge-target">
+              <SelectValue placeholder="Select target employee" />
+            </SelectTrigger>
+            <SelectContent>
+              {filteredTarget.map(e => (
+                <SelectItem key={e.id} value={e.id} data-testid={`option-target-${e.id}`}>
+                  {e.firstName} {e.lastName} — {e.xeroEmployeeId ? "Xero" : "Manual"} ({e.status})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {targetEmp && (
+            <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
+              <span className="font-medium">{targetEmp.firstName} {targetEmp.lastName}</span>
+              {targetEmp.email && <span className="ml-1">({targetEmp.email})</span>}
+              <span className={`ml-2 ${targetEmp.xeroEmployeeId ? "text-emerald-600" : "text-amber-600"}`}>
+                {targetEmp.xeroEmployeeId ? "Xero-synced" : "Manual"}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {sourceId && (
+        <div className="border rounded-lg p-4 space-y-3">
+          <h4 className="text-sm font-semibold">Records to Transfer</h4>
+          {previewLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading preview...
+            </div>
+          ) : preview ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {Object.entries(preview.counts)
+                .filter(([, count]) => count > 0)
+                .map(([key, count]) => (
+                  <div key={key} className="flex justify-between text-sm bg-muted/50 px-3 py-1.5 rounded" data-testid={`merge-count-${key}`}>
+                    <span>{mergeTableLabels[key] || key}</span>
+                    <span className="font-medium">{count}</span>
+                  </div>
+                ))}
+              {totalRecords === 0 && (
+                <p className="text-sm text-muted-foreground col-span-full">No records found for this employee.</p>
+              )}
+            </div>
+          ) : null}
+          {totalRecords > 0 && (
+            <div className="text-sm font-medium pt-1 border-t">
+              Total: {totalRecords} records will be transferred
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <Switch checked={deleteSource} onCheckedChange={setDeleteSource} id="delete-source" data-testid="switch-delete-source" />
+        <Label htmlFor="delete-source" className="text-sm cursor-pointer">
+          Delete source employee after merge {!deleteSource && <span className="text-muted-foreground">(will be marked as Offboarded instead)</span>}
+        </Label>
+      </div>
+
+      <Button
+        onClick={() => setConfirmOpen(true)}
+        disabled={!sourceId || !targetId || mergeMutation.isPending}
+        className="w-full"
+        data-testid="button-merge-employees"
+      >
+        {mergeMutation.isPending ? (
+          <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Merging...</>
+        ) : (
+          <><ArrowRightLeft className="w-4 h-4 mr-2" /> Merge Employees</>
+        )}
+      </Button>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Confirm Employee Merge
+            </DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. All records from <strong>{sourceEmp ? `${sourceEmp.firstName} ${sourceEmp.lastName}` : "source"}</strong> will be transferred to <strong>{targetEmp ? `${targetEmp.firstName} ${targetEmp.lastName}` : "target"}</strong>.
+              {deleteSource
+                ? " The source employee account will be permanently deleted."
+                : " The source employee will be marked as Offboarded."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} data-testid="button-cancel-merge">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => mergeMutation.mutate()}
+              disabled={mergeMutation.isPending}
+              data-testid="button-confirm-merge"
+            >
+              {mergeMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Yes, Merge
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 const tabs = [
   { id: "branding", label: "Branding", icon: Palette },
   { id: "company", label: "Company", icon: Building2 },
@@ -1654,6 +1904,7 @@ const tabs = [
   { id: "portal", label: "Portal", icon: Globe },
   { id: "users", label: "Users", icon: UserCog },
   { id: "data", label: "Data", icon: CalendarDays },
+  { id: "merge", label: "Merge", icon: ArrowRightLeft },
 ];
 
 export default function SettingsPage() {
@@ -1715,6 +1966,9 @@ export default function SettingsPage() {
                 </TabsContent>
                 <TabsContent value="data" className="mt-0">
                   <DataTab />
+                </TabsContent>
+                <TabsContent value="merge" className="mt-0">
+                  <EmployeeMergeTab />
                 </TabsContent>
               </CardContent>
             </Card>

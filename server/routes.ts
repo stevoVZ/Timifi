@@ -2,7 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema } from "@shared/schema";
+import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema, employees, timesheets, invoices, invoiceEmployees, payRunLines, documents, notifications, messages, leaveRequests, taxDeclarations, bankAccounts, superMemberships, placements, rateHistory, timesheetAuditLog, monthlyExpectedHours, rctis } from "@shared/schema";
+import { db } from "./db";
+import { eq, sql } from "drizzle-orm";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, pushInvoiceToXero } from "./xero";
@@ -4059,6 +4061,109 @@ export async function registerRoutes(
       res.json(linkage);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to compute linkage" });
+    }
+  });
+
+  // ─── Employee Merge ───────────────────────────────────────────────
+  const mergeTables = [
+    { table: timesheets, name: "timesheets" },
+    { table: invoices, name: "invoices" },
+    { table: invoiceEmployees, name: "invoiceEmployees" },
+    { table: payRunLines, name: "payRunLines" },
+    { table: documents, name: "documents" },
+    { table: notifications, name: "notifications" },
+    { table: messages, name: "messages" },
+    { table: leaveRequests, name: "leaveRequests" },
+    { table: taxDeclarations, name: "taxDeclarations" },
+    { table: bankAccounts, name: "bankAccounts" },
+    { table: superMemberships, name: "superMemberships" },
+    { table: placements, name: "placements" },
+    { table: rateHistory, name: "rateHistory" },
+    { table: timesheetAuditLog, name: "timesheetAuditLog" },
+    { table: monthlyExpectedHours, name: "monthlyExpectedHours" },
+    { table: rctis, name: "rctis" },
+  ];
+
+  app.get("/api/employees/:id/merge-preview", requireAuth, async (req, res) => {
+    try {
+      const empId = req.params.id;
+      const emp = await storage.getEmployee(empId);
+      if (!emp) return res.status(404).json({ message: "Employee not found" });
+
+      const counts: Record<string, number> = {};
+      for (const { table, name } of mergeTables) {
+        const col = (table as any).employeeId;
+        if (!col) continue;
+        const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(table).where(eq(col, empId));
+        counts[name] = row?.count || 0;
+      }
+      res.json({ employeeId: empId, name: `${emp.firstName} ${emp.lastName}`, counts });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to generate merge preview" });
+    }
+  });
+
+  app.post("/api/employees/merge", requireAuth, async (req, res) => {
+    try {
+      const { sourceEmployeeId, targetEmployeeId } = req.body;
+      const deleteSource = req.body.deleteSource === true;
+      if (!sourceEmployeeId || !targetEmployeeId || typeof sourceEmployeeId !== "string" || typeof targetEmployeeId !== "string") {
+        return res.status(400).json({ message: "sourceEmployeeId and targetEmployeeId are required strings" });
+      }
+      if (sourceEmployeeId === targetEmployeeId) {
+        return res.status(400).json({ message: "Source and target must be different employees" });
+      }
+
+      const source = await storage.getEmployee(sourceEmployeeId);
+      const target = await storage.getEmployee(targetEmployeeId);
+      if (!source) return res.status(404).json({ message: "Source employee not found" });
+      if (!target) return res.status(404).json({ message: "Target employee not found" });
+
+      const transferred: Record<string, number> = {};
+
+      await db.transaction(async (tx) => {
+        for (const { table, name } of mergeTables) {
+          const col = (table as any).employeeId;
+          if (!col) continue;
+
+          if (name === "invoiceEmployees") {
+            const existingTarget = await tx.select().from(invoiceEmployees).where(eq(col, targetEmployeeId));
+            const targetInvoiceIds = new Set(existingTarget.map((r: any) => r.invoiceId));
+            const sourceRows = await tx.select().from(invoiceEmployees).where(eq(col, sourceEmployeeId));
+            let moved = 0;
+            for (const row of sourceRows) {
+              if (targetInvoiceIds.has((row as any).invoiceId)) {
+                await tx.delete(invoiceEmployees).where(eq((invoiceEmployees as any).id, (row as any).id));
+              } else {
+                await tx.update(invoiceEmployees).set({ employeeId: targetEmployeeId }).where(eq((invoiceEmployees as any).id, (row as any).id));
+                moved++;
+              }
+            }
+            transferred[name] = moved;
+            continue;
+          }
+
+          const result = await tx.update(table)
+            .set({ employeeId: targetEmployeeId })
+            .where(eq(col, sourceEmployeeId));
+          transferred[name] = (result as any).rowCount || 0;
+        }
+
+        if (deleteSource) {
+          await tx.delete(employees).where(eq(employees.id, sourceEmployeeId));
+        } else {
+          await tx.update(employees).set({ status: "OFFBOARDED" }).where(eq(employees.id, sourceEmployeeId));
+        }
+      });
+
+      const totalMoved = Object.values(transferred).reduce((a, b) => a + b, 0);
+      res.json({
+        message: `Merged ${source.firstName} ${source.lastName} → ${target.firstName} ${target.lastName}. ${totalMoved} records transferred.${deleteSource ? " Source deleted." : " Source offboarded."}`,
+        transferred,
+        sourceDeleted: deleteSource,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to merge employees" });
     }
   });
 
