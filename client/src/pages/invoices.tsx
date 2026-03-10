@@ -242,15 +242,24 @@ export default function InvoicesPage() {
     const formData = new FormData(e.currentTarget);
     const raw: Record<string, any> = {};
     formData.forEach((v, k) => { if (v) raw[k] = v as string; });
-    const amountExcl = parseFloat(raw.amountExclGst || "0");
+    const hours = parseFloat(raw.hours || "0");
+    const rate = parseFloat(raw.hourlyRate || "0");
+    const amountExcl = hours && rate ? hours * rate : parseFloat(raw.amountExclGst || "0");
     createMutation.mutate({
-      employeeId: raw.employeeId,
+      employeeId: raw.employeeId || undefined,
+      clientId: raw.clientId || undefined,
       year: parseInt(raw.year),
       month: parseInt(raw.month),
       amountExclGst: String(amountExcl.toFixed(2)),
       gstAmount: String((amountExcl * 0.1).toFixed(2)),
       amountInclGst: String((amountExcl * 1.1).toFixed(2)),
+      hours: hours ? String(hours) : undefined,
+      hourlyRate: rate ? String(rate) : undefined,
       description: raw.description || undefined,
+      issueDate: raw.issueDate || undefined,
+      dueDate: raw.dueDate || undefined,
+      reference: raw.reference || undefined,
+      contactName: raw.clientId ? clients?.find(c => c.id === raw.clientId)?.name : undefined,
       status: "DRAFT",
     });
   };
@@ -301,10 +310,25 @@ export default function InvoicesPage() {
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-1.5">
+                  <Label>Client (Bill To)</Label>
+                  <Select name="clientId">
+                    <SelectTrigger data-testid="select-invoice-client">
+                      <SelectValue placeholder="Select client" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients?.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
                   <Label>Employee</Label>
-                  <Select name="employeeId" required>
+                  <Select name="employeeId">
                     <SelectTrigger data-testid="select-invoice-employee">
-                      <SelectValue placeholder="Select employee" />
+                      <SelectValue placeholder="Select employee (optional)" />
                     </SelectTrigger>
                     <SelectContent>
                       {employees?.map((c) => (
@@ -334,16 +358,41 @@ export default function InvoicesPage() {
                     </Select>
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="issueDate">Issue Date</Label>
+                    <Input id="issueDate" name="issueDate" type="date" defaultValue={new Date().toISOString().split("T")[0]} data-testid="input-issue-date" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="dueDate">Due Date</Label>
+                    <Input id="dueDate" name="dueDate" type="date" data-testid="input-due-date" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="hours">Hours</Label>
+                    <Input id="hours" name="hours" type="number" step="0.01" data-testid="input-hours" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="hourlyRate">Hourly Rate</Label>
+                    <Input id="hourlyRate" name="hourlyRate" type="number" step="0.01" data-testid="input-hourly-rate" />
+                  </div>
+                </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="amountExclGst">Amount (excl. GST)</Label>
-                  <Input id="amountExclGst" name="amountExclGst" type="number" step="0.01" required data-testid="input-amount" />
+                  <Input id="amountExclGst" name="amountExclGst" type="number" step="0.01" placeholder="Auto-calculated from hours × rate" data-testid="input-amount" />
+                  <p className="text-xs text-muted-foreground">Leave blank if hours and rate are provided</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="description">Description</Label>
                   <Input id="description" name="description" data-testid="input-description" />
                 </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="reference">Reference</Label>
+                  <Input id="reference" name="reference" placeholder="e.g. Contract number" data-testid="input-reference" />
+                </div>
                 <Button type="submit" className="w-full" disabled={createMutation.isPending} data-testid="button-submit-invoice">
-                  {createMutation.isPending ? "Creating..." : "Create Invoice"}
+                  {createMutation.isPending ? "Creating..." : "Create Draft Invoice"}
                 </Button>
               </form>
             </DialogContent>
@@ -1157,6 +1206,7 @@ function InvoiceDetailDialog({
   onSave: (id: string, data: Record<string, any>) => void;
   isPending: boolean;
 }) {
+  const { toast } = useToast();
   const initialIds = (invoice as any).linkedEmployeeIds?.length
     ? (invoice as any).linkedEmployeeIds as string[]
     : invoice.employeeId ? [invoice.employeeId] : [];
@@ -1170,6 +1220,23 @@ function InvoiceDetailDialog({
   const { data: payments, isLoading: paymentsLoading } = useQuery<InvoicePayment[]>({
     queryKey: [`/api/invoices/${invoice.id}/payments`],
   });
+
+  const pushToXeroMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/invoices/${invoice.id}/push-to-xero`);
+      return res.json();
+    },
+    onSuccess: (data: { xeroInvoiceId: string; invoiceNumber: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Invoice pushed to Xero", description: `Invoice ${data.invoiceNumber} created as Draft in Xero` });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Push to Xero failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const canPushToXero = !invoice.xeroInvoiceId && invoice.status === "DRAFT";
 
   const hasChanged = (() => {
     const origSet = new Set(initialIds);
@@ -1208,11 +1275,32 @@ function InvoiceDetailDialog({
     <Dialog open onOpenChange={() => onClose()}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="dialog-invoice-detail">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="w-4 h-4" />
-            Invoice {invoice.invoiceNumber || "—"}
-            <InvoiceTypeBadge type={(invoice as any).invoiceType} testId={`badge-type-detail-${invoice.id}`} />
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Invoice {invoice.invoiceNumber || "—"}
+              <InvoiceTypeBadge type={(invoice as any).invoiceType} testId={`badge-type-detail-${invoice.id}`} />
+            </DialogTitle>
+            {canPushToXero && (
+              <Button
+                size="sm"
+                onClick={() => pushToXeroMutation.mutate()}
+                disabled={pushToXeroMutation.isPending}
+                data-testid="button-push-to-xero"
+              >
+                {pushToXeroMutation.isPending ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Pushing...</>
+                ) : (
+                  <><Send className="w-4 h-4" /> Push to Xero</>
+                )}
+              </Button>
+            )}
+            {invoice.xeroInvoiceId && (
+              <Badge variant="outline" className="text-xs text-emerald-600 border-emerald-300">
+                Linked to Xero
+              </Badge>
+            )}
+          </div>
         </DialogHeader>
 
         <div className="space-y-4">

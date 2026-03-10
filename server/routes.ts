@@ -5,7 +5,7 @@ import { storage } from "./storage";
 import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema } from "@shared/schema";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
-import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions } from "./xero";
+import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, pushInvoiceToXero } from "./xero";
 import { requireAuth, hashPassword } from "./auth";
 import { scanTimesheetPdf } from "./ocr";
 import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from "./rates";
@@ -530,6 +530,15 @@ export async function registerRoutes(
       res.json({ ...invoice, linkedEmployeeIds: links.map(l => l.employeeId) });
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to update invoice" });
+    }
+  });
+
+  app.post("/api/invoices/:id/push-to-xero", async (req, res) => {
+    try {
+      const result = await pushInvoiceToXero(req.params.id);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to push invoice to Xero" });
     }
   });
 

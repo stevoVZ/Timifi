@@ -1455,3 +1455,92 @@ export async function syncBankTransactions(): Promise<{
 
   return { total: allTxns.length, created, updated, errors };
 }
+
+export async function pushInvoiceToXero(invoiceId: string): Promise<{ xeroInvoiceId: string; invoiceNumber: string }> {
+  const { accessToken, tenantId } = await refreshTokenIfNeeded();
+
+  const invoice = await storage.getInvoice(invoiceId);
+  if (!invoice) throw new Error("Invoice not found");
+  if (invoice.status !== "DRAFT") throw new Error("Only DRAFT invoices can be pushed to Xero");
+  if (invoice.xeroInvoiceId) throw new Error("Invoice is already linked to Xero");
+
+  let contactId = (invoice as any).xeroContactId;
+  if (!contactId && (invoice as any).clientId) {
+    const client = await storage.getClient((invoice as any).clientId);
+    if (client) contactId = (client as any).xeroContactId;
+  }
+  if (!contactId) throw new Error("No Xero contact linked. Please assign a client with a Xero contact ID first.");
+
+  const lineDescription = invoice.description || `${MONTHS_SHORT[invoice.month]} ${invoice.year} services`;
+  const amountExcl = parseFloat(invoice.amountExclGst);
+  const hours = invoice.hours ? parseFloat(invoice.hours) : 0;
+  const rate = invoice.hourlyRate ? parseFloat(invoice.hourlyRate) : 0;
+
+  let quantity: number;
+  let unitAmount: number;
+  if (hours > 0 && rate > 0) {
+    quantity = hours;
+    unitAmount = rate;
+  } else if (hours > 0 && amountExcl > 0) {
+    quantity = hours;
+    unitAmount = Math.round((amountExcl / hours) * 100) / 100;
+  } else {
+    quantity = 1;
+    unitAmount = amountExcl;
+  }
+
+  const xeroInvoice: Record<string, any> = {
+    Type: "ACCREC",
+    Contact: { ContactID: contactId },
+    Status: "DRAFT",
+    LineAmountTypes: "Exclusive",
+    LineItems: [
+      {
+        Description: lineDescription,
+        Quantity: quantity,
+        UnitAmount: unitAmount,
+        AccountCode: "200",
+        TaxType: "OUTPUT",
+      },
+    ],
+  };
+
+  if (invoice.issueDate) xeroInvoice.Date = invoice.issueDate;
+  if (invoice.dueDate) xeroInvoice.DueDate = invoice.dueDate;
+  if ((invoice as any).reference) xeroInvoice.Reference = (invoice as any).reference;
+  if (invoice.invoiceNumber) xeroInvoice.InvoiceNumber = invoice.invoiceNumber;
+
+  const response = await xeroFetch("https://api.xero.com/api.xro/2.0/Invoices", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+    body: JSON.stringify({ Invoices: [xeroInvoice] }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Xero API error (${response.status}): ${errorBody}`);
+  }
+
+  const result = await response.json() as any;
+  const created = result.Invoices?.[0];
+  if (!created) throw new Error("Xero did not return a created invoice");
+
+  const xeroInvoiceId = created.InvoiceID;
+  const xeroInvoiceNumber = created.InvoiceNumber || invoice.invoiceNumber;
+
+  await storage.updateInvoice(invoiceId, {
+    xeroInvoiceId,
+    invoiceNumber: xeroInvoiceNumber,
+    xeroContactId: contactId,
+    invoiceType: "ACCREC",
+  });
+
+  return { xeroInvoiceId, invoiceNumber: xeroInvoiceNumber };
+}
+
+const MONTHS_SHORT = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
