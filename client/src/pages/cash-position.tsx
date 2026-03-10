@@ -179,8 +179,8 @@ export default function CashPositionPage() {
     return (
       <div className="flex flex-col h-full">
         <TopBar title="Cash Position" />
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
             {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24" />)}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -206,9 +206,9 @@ export default function CashPositionPage() {
   return (
     <div className="flex flex-col h-full">
       <TopBar title="Cash Position" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
           <KpiCard
             title="Cash Balance"
             value={fmt(totalCashBalance)}
@@ -236,7 +236,7 @@ export default function CashPositionPage() {
           <KpiCard
             title="Total Payroll Cost"
             value={fmt(payrollCost)}
-            subtitle={`${data.payroll.payRunCount} pay runs (gross + super + PAYG)`}
+            subtitle={`${data.payroll.payRunCount} pay runs (gross + PAYG)`}
             icon={Users}
             variant="negative"
             testId="kpi-payroll-cost"
@@ -300,7 +300,7 @@ export default function CashPositionPage() {
               </CardHeader>
               <CardContent className="px-5 pb-4 space-y-3">
                 {[
-                  { label: "Payroll (Gross + Super + PAYG)", value: payrollCost, icon: Users },
+                  { label: "Payroll (Gross + PAYG)", value: payrollCost, icon: Users },
                   { label: "Supplier Invoices Paid (ACCPAY)", value: suppliersPaid, icon: FileText },
                   { label: "ATO / Tax Payments", value: data.summary.atoSpend, icon: Receipt },
                   { label: "Superannuation", value: data.summary.superSpend, icon: PiggyBank },
@@ -446,36 +446,38 @@ export default function CashPositionPage() {
             <p className="text-[11px] text-muted-foreground">Based on synced bank transactions only (excludes inter-account transfers)</p>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="space-y-2">
-              <div className="grid grid-cols-[100px_1fr_100px_100px_100px] gap-2 text-[11px] font-medium text-muted-foreground uppercase tracking-wide pb-1 border-b">
-                <div>Month</div>
-                <div>Flow</div>
-                <div className="text-right">In</div>
-                <div className="text-right">Out</div>
-                <div className="text-right">Net</div>
+            <div className="overflow-x-auto">
+              <div className="space-y-2 min-w-[500px]">
+                <div className="grid grid-cols-[80px_1fr_80px_80px_80px] sm:grid-cols-[100px_1fr_100px_100px_100px] gap-2 text-[10px] sm:text-[11px] font-medium text-muted-foreground uppercase tracking-wide pb-1 border-b">
+                  <div>Month</div>
+                  <div>Flow</div>
+                  <div className="text-right">In</div>
+                  <div className="text-right">Out</div>
+                  <div className="text-right">Net</div>
+                </div>
+                {recentMonths.map(m => {
+                  const inPct = (m.cashIn / maxBar) * 100;
+                  const outPct = (m.cashOut / maxBar) * 100;
+                  return (
+                    <div key={m.month} className="grid grid-cols-[80px_1fr_80px_80px_80px] sm:grid-cols-[100px_1fr_100px_100px_100px] gap-2 items-center" data-testid={`row-flow-${m.month}`}>
+                      <div className="text-xs sm:text-sm font-medium">{formatMonth(m.month)}</div>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${inPct}%` }} />
+                        </div>
+                        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full bg-red-400 rounded-full transition-all" style={{ width: `${outPct}%` }} />
+                        </div>
+                      </div>
+                      <div className="text-xs sm:text-sm tabular-nums text-right text-emerald-600 dark:text-emerald-400">{fmt(m.cashIn)}</div>
+                      <div className="text-xs sm:text-sm tabular-nums text-right text-red-600 dark:text-red-400">{fmt(m.cashOut)}</div>
+                      <div className={`text-xs sm:text-sm font-semibold tabular-nums text-right ${m.net >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                        {fmt(m.net)}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              {recentMonths.map(m => {
-                const inPct = (m.cashIn / maxBar) * 100;
-                const outPct = (m.cashOut / maxBar) * 100;
-                return (
-                  <div key={m.month} className="grid grid-cols-[100px_1fr_100px_100px_100px] gap-2 items-center" data-testid={`row-flow-${m.month}`}>
-                    <div className="text-sm font-medium">{formatMonth(m.month)}</div>
-                    <div className="flex flex-col gap-0.5">
-                      <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${inPct}%` }} />
-                      </div>
-                      <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-red-400 rounded-full transition-all" style={{ width: `${outPct}%` }} />
-                      </div>
-                    </div>
-                    <div className="text-sm tabular-nums text-right text-emerald-600 dark:text-emerald-400">{fmt(m.cashIn)}</div>
-                    <div className="text-sm tabular-nums text-right text-red-600 dark:text-red-400">{fmt(m.cashOut)}</div>
-                    <div className={`text-sm font-semibold tabular-nums text-right ${m.net >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                      {fmt(m.net)}
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           </CardContent>
         </Card>

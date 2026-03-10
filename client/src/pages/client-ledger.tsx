@@ -159,7 +159,7 @@ export default function ClientLedgerPage() {
     <div className="flex flex-col h-full" data-testid="page-client-ledger">
       <TopBar title="Client Ledger" subtitle="Client payments received vs employee costs paid" />
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="text-xs text-muted-foreground mb-1 block">Period</label>

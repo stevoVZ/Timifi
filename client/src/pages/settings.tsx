@@ -1929,7 +1929,7 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col h-full">
       <TopBar title="Settings" subtitle="Configure your recruitment portal" />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-3xl mx-auto">
           <Tabs defaultValue={tabFromUrl || "branding"}>
             <TabsList className="mb-6 flex-wrap" data-testid="tabs-settings">

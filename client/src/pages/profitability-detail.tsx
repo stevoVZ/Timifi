@@ -58,7 +58,7 @@ export default function ProfitabilityDetailPage() {
     return (
       <div className="flex flex-col h-screen">
         <TopBar title="Profitability Detail" />
-        <div className="flex-1 overflow-auto p-6 space-y-6">
+        <div className="flex-1 overflow-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
           <Skeleton className="h-8 w-64" />
           <div className="grid grid-cols-4 gap-4">
             {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-32" />)}
@@ -95,7 +95,7 @@ export default function ProfitabilityDetailPage() {
   return (
     <div className="flex flex-col h-screen">
       <TopBar title={`${employeeName} — ${MONTHS[period.month]} ${period.year}`} />
-      <div className="flex-1 overflow-auto p-6 space-y-6">
+      <div className="flex-1 overflow-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
         <div className="flex items-center gap-3">
           <Link href="/profitability">
             <Button variant="ghost" size="sm" data-testid="button-back-profitability">

@@ -71,8 +71,8 @@ The Cash Position page (`/cash-position`) provides a treasury overview using **m
 - **KPI Cards:** Revenue Collected (from ACCREC paid invoices), Outstanding Invoices, Total Payroll Cost (from pay runs), Amex Outstanding
 - **Bank Data Gap Warning:** Shown when invoice revenue significantly exceeds bank RECEIVE totals (e.g., PM&C payments go to an unconnected bank account)
 - **Revenue by Client:** Breakdown from ACCREC invoices showing paid vs outstanding per client with progress bars
-- **Cost Summary:** Payroll (totalGross + totalSuper), ACCPAY suppliers, ATO, Super, Amex card purchases
-- **Amex Debt Tracker:** Total charged vs credits vs repayments from bank, with progress bar and outstanding balance
+- **Cost Summary:** Payroll (Gross + PAYG), ACCPAY suppliers, ATO, Super (from bank txns), Amex card purchases — super is NOT included in payroll total to avoid double-counting with the separate bank-transaction-based super line
+- **Amex Debt Tracker:** Outstanding = totalSpend - credits - repayments. Total charged = non-transfer purchases only (excludes repayment transfers).
 - **Bank Account Flows:** Per-account net movement for synced accounts (MSG Recruitment, Tax Account, Macquarie Platinum)
 - **Monthly Bank Flow:** Last 12 months with horizontal bar chart (bank transactions only, excl. transfers)
 - **Employee Bank Flow Summary:** Revenue received and costs paid per employee from linked bank transactions

@@ -110,7 +110,7 @@ export default function PayrollDetailPage() {
     return (
       <div className="flex flex-col h-full">
         <TopBar title="Pay Run" subtitle="Loading..." />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30">
+        <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
           <div className="max-w-6xl mx-auto space-y-4">
             <Skeleton className="h-40 w-full rounded-md" />
             <Skeleton className="h-60 w-full rounded-md" />
@@ -124,7 +124,7 @@ export default function PayrollDetailPage() {
     return (
       <div className="flex flex-col h-full">
         <TopBar title="Pay Run" subtitle="Not found" />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30">
+        <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
           <div className="max-w-6xl mx-auto">
             <Card>
               <CardContent className="py-12 text-center">
@@ -152,7 +152,7 @@ export default function PayrollDetailPage() {
           </Button>
         }
       />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-6xl mx-auto space-y-4">
           <Card data-testid="card-pay-run-summary">
             <CardContent className="p-5">

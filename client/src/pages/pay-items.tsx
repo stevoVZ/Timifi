@@ -136,7 +136,7 @@ export default function PayItemsPage() {
     return (
       <>
         <TopBar title="Pay Items" subtitle="Manage pay codes and rates" />
-        <div className="p-6 space-y-4">
+        <div className="p-3 sm:p-6 space-y-4">
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-14 w-full rounded-lg" />
           ))}
@@ -157,7 +157,7 @@ export default function PayItemsPage() {
           </Button>
         }
       />
-      <div className="p-6">
+      <div className="p-3 sm:p-6">
         <Card>
           <CardContent className="p-0">
             <Table>

@@ -135,7 +135,7 @@ export default function PayrollPage() {
         title="Payroll"
         subtitle={`${payRunsList?.length || 0} pay runs`}
       />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-6xl mx-auto space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <Card data-testid="kpi-total-runs">

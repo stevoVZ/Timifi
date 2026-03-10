@@ -156,7 +156,7 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col h-full">
       <TopBar title="Dashboard" subtitle={`${currentMonth} · ${fy}`} />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-7xl mx-auto space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {isLoading

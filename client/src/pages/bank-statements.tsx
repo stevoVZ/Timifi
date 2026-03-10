@@ -348,10 +348,10 @@ export default function BankStatementsPage() {
     return (
       <div className="flex flex-col h-full">
         <TopBar title="Bank Statements" />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30">
+        <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
           <div className="max-w-7xl mx-auto space-y-4">
             <Skeleton className="h-10 w-full" />
-            <div className="grid grid-cols-4 gap-3">{[1,2,3,4].map(i => <Skeleton key={i} className="h-24" />)}</div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{[1,2,3,4].map(i => <Skeleton key={i} className="h-24" />)}</div>
             <Skeleton className="h-96 w-full" />
           </div>
         </main>
@@ -365,17 +365,17 @@ export default function BankStatementsPage() {
         title="Bank Statements"
         subtitle={`${MONTHS[month]} ${year}`}
       />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
-        <div className="max-w-7xl mx-auto space-y-5">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
+        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5">
 
-          <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth} data-testid="button-prev-month">
+              <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={prevMonth} data-testid="button-prev-month">
                 <ChevronLeft className="w-4 h-4" />
               </Button>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2">
                 <Select value={String(month)} onValueChange={(v) => setMonth(parseInt(v))}>
-                  <SelectTrigger className="h-8 w-[130px] text-sm font-semibold" data-testid="select-month">
+                  <SelectTrigger className="h-8 w-[100px] sm:w-[130px] text-sm font-semibold" data-testid="select-month">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -385,7 +385,7 @@ export default function BankStatementsPage() {
                   </SelectContent>
                 </Select>
                 <Select value={String(year)} onValueChange={(v) => setYear(parseInt(v))}>
-                  <SelectTrigger className="h-8 w-[80px] text-sm font-semibold" data-testid="select-year">
+                  <SelectTrigger className="h-8 w-[72px] sm:w-[80px] text-sm font-semibold" data-testid="select-year">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -395,7 +395,7 @@ export default function BankStatementsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={nextMonth} data-testid="button-next-month">
+              <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={nextMonth} data-testid="button-next-month">
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
@@ -413,7 +413,7 @@ export default function BankStatementsPage() {
                 {autoSuggestMutation.isPending ? "Linking..." : "Auto-Link"}
               </Button>
               <Select value={selectedAccount} onValueChange={setSelectedAccount}>
-                <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="select-account-filter">
+                <SelectTrigger className="h-8 w-full sm:w-[160px] text-xs" data-testid="select-account-filter">
                   <SelectValue placeholder="All Accounts" />
                 </SelectTrigger>
                 <SelectContent>
@@ -430,7 +430,7 @@ export default function BankStatementsPage() {
                   <button
                     key={val}
                     onClick={() => setTypeFilter(val)}
-                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    className={`px-2.5 sm:px-3 py-1.5 text-xs font-medium transition-colors ${
                       typeFilter === val
                         ? "bg-primary text-primary-foreground"
                         : "bg-card hover:bg-muted/60 text-muted-foreground"
@@ -441,11 +441,11 @@ export default function BankStatementsPage() {
                   </button>
                 ))}
               </div>
-              <div className="relative">
+              <div className="relative flex-1 sm:flex-none">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                 <Input
                   placeholder="Search..."
-                  className="pl-8 h-8 w-[180px] text-xs"
+                  className="pl-8 h-8 w-full sm:w-[180px] text-xs"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   data-testid="input-search"

@@ -982,6 +982,7 @@ export async function registerRoutes(
         const empInvoices = allInvoices.filter((i) => {
           if (i.month !== month || i.year !== year) return false;
           if (i.invoiceType === "ACCPAY") return false;
+          if (i.status === "VOIDED" || i.status === "DELETED") return false;
           if (i.employeeId === emp.id) return true;
           const linked = invEmpMap[i.id];
           if (linked && linked.includes(emp.id)) return true;
@@ -1565,11 +1566,22 @@ export async function registerRoutes(
       const superRate = Number(payRun.superRate || "0.115");
 
       function estimatePayg(annualGross: number): number {
-        if (annualGross <= 18200) return 0;
-        if (annualGross <= 45000) return (annualGross - 18200) * 0.19;
-        if (annualGross <= 120000) return 5092 + (annualGross - 45000) * 0.325;
-        if (annualGross <= 180000) return 29467 + (annualGross - 120000) * 0.37;
-        return 51667 + (annualGross - 180000) * 0.45;
+        let tax = 0;
+        if (annualGross <= 18200) tax = 0;
+        else if (annualGross <= 45000) tax = (annualGross - 18200) * 0.19;
+        else if (annualGross <= 120000) tax = 5092 + (annualGross - 45000) * 0.325;
+        else if (annualGross <= 180000) tax = 29467 + (annualGross - 120000) * 0.37;
+        else tax = 51667 + (annualGross - 180000) * 0.45;
+
+        let lito = 0;
+        if (annualGross <= 37500) lito = 700;
+        else if (annualGross <= 45000) lito = 700 - (annualGross - 37500) * 0.05;
+        else if (annualGross <= 66667) lito = 325 - (annualGross - 45000) * 0.015;
+        tax = Math.max(0, tax - lito);
+
+        if (annualGross > 26000) tax += annualGross * 0.02;
+
+        return tax;
       }
 
       const lineData = [];
@@ -1582,7 +1594,7 @@ export async function registerRoutes(
         const annualised = gross * 12;
         const paygAnnual = estimatePayg(annualised);
         const payg = Math.round(paygAnnual / 12);
-        const superAmt = Math.round(gross * superRate);
+        const superAmt = Math.round(gross * superRate * 100) / 100;
         const net = gross - payg;
 
         lineData.push({
@@ -2276,9 +2288,9 @@ export async function registerRoutes(
       const monthlyFlowSorted = Object.values(monthlyFlow).sort((a, b) => a.month.localeCompare(b.month));
 
       const bankCashFlow = accountList.filter(a => !a.name.includes("American Express")).reduce((sum, a) => sum + a.net, 0);
-      const amexDebt = amexTotalSpend - amexTotalCredits;
+      const amexDebt = amexTotalSpend - amexTotalCredits - amexRepayments;
 
-      const amexTotalCharged = amexTotalSpend + amexRepayments;
+      const amexTotalCharged = amexTotalSpend;
       const amexTotalPaidOff = amexRepayments + amexTotalCredits;
 
       const invoiceRevenue = {
@@ -2322,7 +2334,7 @@ export async function registerRoutes(
       for (const pr of allPayRuns) {
         const gross = parseFloat(String(pr.totalGross || 0));
         const superAmt = parseFloat(String(pr.totalSuper || 0));
-        payrollTotal += gross + superAmt;
+        payrollTotal += gross;
         payrollCount++;
       }
 
@@ -3008,6 +3020,7 @@ export async function registerRoutes(
 
         const empInvoices = periodInvoices.filter(inv => {
           if (claimedInvoiceIds.has(inv.id)) return false;
+          if (inv.status === "VOIDED" || inv.status === "DELETED") return false;
           const invType = (inv as any).invoiceType;
           if (invType && invType !== "ACCREC") return false;
           if (inv.employeeId === employee.id && inv.contactName === clientName) return true;
@@ -3389,6 +3402,7 @@ export async function registerRoutes(
 
         const empInvoices = periodInvoices.filter(inv => {
           if (claimedInvoiceIds.has(inv.id)) return false;
+          if (inv.status === "VOIDED" || inv.status === "DELETED") return false;
           const invType = (inv as any).invoiceType;
           if (invType && invType !== "ACCREC") return false;
           if (inv.employeeId === employee.id && inv.contactName === clientName) return true;

@@ -114,7 +114,7 @@ export default function TimesheetsPage() {
         title="Timesheets"
         subtitle="Upload, review and manage employee timesheets"
       />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-6xl mx-auto">
           <Tabs value={mainTab} onValueChange={setMainTab}>
             <TabsList className="mb-4" data-testid="tabs-main-view">

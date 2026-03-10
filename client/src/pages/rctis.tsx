@@ -226,7 +226,7 @@ export default function RctisPage() {
         </div>
       } />
 
-      <main className="p-6 max-w-6xl mx-auto space-y-6">
+      <main className="p-3 sm:p-6 max-w-6xl mx-auto space-y-4 sm:space-y-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">

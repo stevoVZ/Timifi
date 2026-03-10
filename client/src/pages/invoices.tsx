@@ -428,7 +428,7 @@ export default function InvoicesPage() {
           </div>
         }
       />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-7xl mx-auto space-y-5">
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

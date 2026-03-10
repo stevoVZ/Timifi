@@ -242,8 +242,8 @@ export default function ProfitabilityPage() {
     <div className="flex flex-col h-full" data-testid="page-profitability">
       <TopBar title="Client Profitability" subtitle="Revenue vs cost analysis per employee placement" />
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-2">
             <Button variant="outline" size="icon" onClick={prevMonth} data-testid="button-prev-month">
               <ChevronLeft className="w-4 h-4" />

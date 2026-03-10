@@ -240,7 +240,7 @@ export default function EmployeesPage() {
           </>
         }
       />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-6xl mx-auto space-y-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Card data-testid="kpi-active-count">
@@ -298,7 +298,7 @@ export default function EmployeesPage() {
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <div className="relative flex-1 min-w-0 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search employees..."

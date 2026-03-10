@@ -154,7 +154,7 @@ export default function EmployeeDetailPage() {
     return (
       <div className="flex flex-col h-full">
         <TopBar title="Loading..." />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30">
+        <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
           <div className="max-w-4xl mx-auto space-y-4">
             <Skeleton className="h-40 w-full rounded-md" />
             <Skeleton className="h-60 w-full rounded-md" />
@@ -168,7 +168,7 @@ export default function EmployeeDetailPage() {
     return (
       <div className="flex flex-col h-full">
         <TopBar title="Employee Not Found" />
-        <main className="flex-1 overflow-auto p-6 bg-muted/30 flex items-center justify-center">
+        <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30 flex items-center justify-center">
           <Card>
             <CardContent className="py-12 px-8 text-center">
               <div className="text-lg font-semibold mb-2">Employee not found</div>
@@ -200,7 +200,7 @@ export default function EmployeeDetailPage() {
           </Link>
         }
       />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-4xl mx-auto space-y-5">
           <Card>
             <CardContent className="p-6">

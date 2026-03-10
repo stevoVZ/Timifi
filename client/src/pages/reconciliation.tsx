@@ -232,16 +232,16 @@ export default function ReconciliationPage() {
         title="Monthly Reconciliation"
         subtitle="Track workflow completion across all employees"
       />
-      <main className="flex-1 overflow-auto p-6 bg-muted/30">
-        <div className="max-w-7xl mx-auto space-y-5">
-          <div className="flex items-center justify-between flex-wrap gap-3">
+      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
+        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth} data-testid="button-prev-month">
+              <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={prevMonth} data-testid="button-prev-month">
                 <ChevronLeft className="w-4 h-4" />
               </Button>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2">
                 <Select value={String(month)} onValueChange={(v) => setMonth(parseInt(v))}>
-                  <SelectTrigger className="h-8 w-[130px] text-sm font-semibold" data-testid="select-month">
+                  <SelectTrigger className="h-8 w-[100px] sm:w-[130px] text-sm font-semibold" data-testid="select-month">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
