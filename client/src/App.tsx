@@ -32,6 +32,7 @@ import ProfitabilityDetailPage from "@/pages/profitability-detail";
 import ClientLedgerPage from "@/pages/client-ledger";
 import RctisPage from "@/pages/rctis";
 import CashPositionPage from "@/pages/cash-position";
+import { GlobalSearch } from "@/components/global-search";
 
 function useAuth() {
   return useQuery<{ id: string; username: string } | null>({
@@ -96,15 +97,32 @@ function AdminLayout() {
           <AdminRouter />
         </div>
       </div>
+      <GlobalSearch />
     </SidebarProvider>
   );
 }
 
 function PortalGuard({ component: Component }: { component: React.ComponentType }) {
-  const employeeId = localStorage.getItem("portal_employee_id");
-  if (!employeeId) {
-    return <Redirect to="/portal/login" />;
+  const { data, isLoading } = useQuery<{ employeeId: string; name: string } | null>({
+    queryKey: ["/api/portal/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/portal/me");
+      if (!res.ok) return null;
+      return res.json();
+    },
+    staleTime: 60000,
+    retry: false,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
   }
+
+  if (!data) return <Redirect to="/portal/login" />;
   return <Component />;
 }
 

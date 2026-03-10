@@ -99,8 +99,8 @@ function PortalSidebar({ employeeName }: { employeeName?: string }) {
           size="sm"
           className="w-full justify-start gap-2 mt-2"
           data-testid="button-portal-logout"
-          onClick={() => {
-            localStorage.removeItem("portal_employee_id");
+          onClick={async () => {
+            await fetch("/api/portal/logout", { method: "POST" }).catch(() => {});
             localStorage.removeItem("portal_employee_name");
             window.location.href = "/portal/login";
           }}

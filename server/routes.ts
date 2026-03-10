@@ -8,7 +8,7 @@ import { eq, sql } from "drizzle-orm";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, pushInvoiceToXero } from "./xero";
-import { requireAuth, hashPassword } from "./auth";
+import { requireAuth, hashPassword, comparePasswords } from "./auth";
 import { scanTimesheetPdf } from "./ocr";
 import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from "./rates";
 import { getACTWorkingDays, getACTExpectedHours } from "./act-working-days";
@@ -62,6 +62,18 @@ function getEffectiveRate(
   };
 }
 
+function requirePortalAuth(req: any, res: any, next: any) {
+  if (req.session?.portalEmployeeId) return next();
+  return res.status(401).json({ message: "Portal authentication required" });
+}
+
+function requirePortalSelf(req: any, res: any, next: any) {
+  const sessionId = req.session?.portalEmployeeId;
+  if (!sessionId) return res.status(401).json({ message: "Portal authentication required" });
+  if (sessionId !== req.params.employeeId) return res.status(403).json({ message: "Access denied" });
+  return next();
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -72,6 +84,68 @@ export async function registerRoutes(
     if (req.path.startsWith("/portal/")) return next();
     if (req.path === "/xero/callback") return next();
     requireAuth(req, res, next);
+  });
+
+  app.get("/api/search", requireAuth, async (req, res) => {
+    try {
+      const q = (req.query.q as string || "").toLowerCase().trim();
+      if (!q || q.length < 2) return res.json({ employees: [], invoices: [], payRuns: [], timesheets: [] });
+
+      const [allEmployees, allInvoices, allPayRuns, allTimesheets] = await Promise.all([
+        storage.getEmployees(),
+        storage.getInvoices(),
+        storage.getPayRuns(),
+        storage.getTimesheets(),
+      ]);
+
+      const empMap = new Map(allEmployees.map(e => [e.id, e]));
+      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+      const employees = allEmployees.filter(e =>
+        `${e.firstName} ${e.lastName}`.toLowerCase().includes(q) ||
+        (e.email && e.email.toLowerCase().includes(q)) ||
+        (e.clientName && e.clientName.toLowerCase().includes(q)) ||
+        (e.jobTitle && e.jobTitle.toLowerCase().includes(q)) ||
+        (e.contractCode && e.contractCode.toLowerCase().includes(q))
+      ).slice(0, 6).map(e => ({
+        id: e.id, name: `${e.firstName} ${e.lastName}`,
+        jobTitle: e.jobTitle || null, clientName: e.clientName || null, status: e.status,
+      }));
+
+      const invoices = allInvoices.filter(i =>
+        (i.invoiceNumber && i.invoiceNumber.toLowerCase().includes(q)) ||
+        (i.contactName && i.contactName.toLowerCase().includes(q)) ||
+        (i.description && i.description.toLowerCase().includes(q))
+      ).slice(0, 5).map(i => ({
+        id: i.id, invoiceNumber: i.invoiceNumber || null, contactName: i.contactName || null,
+        amountExclGst: i.amountExclGst, status: i.status, year: i.year, month: i.month,
+      }));
+
+      const payRuns = allPayRuns.filter(p => {
+        const period = `${monthNames[(p.month||1)-1]} ${p.year}`.toLowerCase();
+        return period.includes(q) || p.status.toLowerCase().includes(q) || String(p.year).includes(q);
+      }).slice(0, 4).map(p => ({
+        id: p.id, year: p.year, month: p.month, status: p.status, totalGross: p.totalGross,
+      }));
+
+      const timesheets = allTimesheets.filter(t => {
+        const emp = empMap.get(t.employeeId);
+        if (!emp) return false;
+        const name = `${emp.firstName} ${emp.lastName}`.toLowerCase();
+        const period = `${monthNames[(t.month||1)-1]} ${t.year}`.toLowerCase();
+        return name.includes(q) || period.includes(q) || t.status.toLowerCase().includes(q);
+      }).slice(0, 5).map(t => {
+        const emp = empMap.get(t.employeeId);
+        return {
+          id: t.id, employeeName: emp ? `${emp.firstName} ${emp.lastName}` : "Unknown",
+          year: t.year, month: t.month, totalHours: t.totalHours, status: t.status,
+        };
+      });
+
+      res.json({ employees, invoices, payRuns, timesheets });
+    } catch (err: any) {
+      res.status(500).json({ message: "Search failed" });
+    }
   });
 
   app.get("/api/dashboard/stats", async (_req, res) => {
@@ -166,6 +240,22 @@ export async function registerRoutes(
       res.json(data);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch employees" });
+    }
+  });
+
+  app.post("/api/employees/:id/set-portal-password", requireAuth, async (req, res) => {
+    try {
+      const { password } = req.body;
+      if (!password || password.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters" });
+      }
+      const employee = await storage.getEmployee(req.params.id);
+      if (!employee) return res.status(404).json({ message: "Employee not found" });
+      const hashed = await hashPassword(password);
+      await storage.updateEmployee(req.params.id, { portalPasswordHash: hashed } as any);
+      res.json({ message: "Portal password set successfully" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to set portal password" });
     }
   });
 
@@ -510,6 +600,23 @@ export async function registerRoutes(
       const timesheet = await storage.updateTimesheet(req.params.id, coerceDates(updateData));
       if (auditEntries.length > 0) {
         await storage.createTimesheetAuditLogs(auditEntries);
+      }
+
+      const newStatus = updateData.status;
+      if (newStatus && (newStatus === "APPROVED" || newStatus === "REJECTED") && newStatus !== existing.status) {
+        const employee = await storage.getEmployee(existing.employeeId);
+        const empName = employee ? `${employee.firstName} ${employee.lastName}` : existing.employeeId;
+        const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        const periodLabel = `${monthNames[(existing.month || 1) - 1]} ${existing.year || ""}`.trim();
+        await storage.createNotification({
+          type: "TIMESHEET",
+          priority: newStatus === "REJECTED" ? "HIGH" : "MEDIUM",
+          title: `Timesheet ${newStatus.toLowerCase()}`,
+          body: `${empName}'s timesheet for ${periodLabel} has been ${newStatus.toLowerCase()}.`,
+          actionLabel: "View Timesheet",
+          actionRoute: `/timesheets`,
+          employeeId: existing.employeeId,
+        });
       }
 
       res.json(timesheet);
@@ -1283,11 +1390,20 @@ export async function registerRoutes(
 
   app.post("/api/portal/login", async (req, res) => {
     try {
-      const { email } = req.body;
+      const { email, password } = req.body;
       if (!email) return res.status(400).json({ message: "Email is required" });
+      if (!password) return res.status(400).json({ message: "Password is required" });
       const allEmployees = await storage.getEmployees();
       const employee = allEmployees.find(c => c.email.toLowerCase() === email.toLowerCase());
-      if (!employee) return res.status(401).json({ message: "No employee found with that email" });
+      if (!employee) return res.status(401).json({ message: "Invalid email or password" });
+
+      if (!(employee as any).portalPasswordHash) {
+        return res.status(401).json({ message: "Portal access not yet activated. Contact your administrator." });
+      }
+      const valid = await comparePasswords(password, (employee as any).portalPasswordHash);
+      if (!valid) return res.status(401).json({ message: "Invalid email or password" });
+
+      (req as any).session.portalEmployeeId = employee.id;
       res.json({
         employeeId: employee.id,
         name: `${employee.firstName} ${employee.lastName}`,
@@ -1297,7 +1413,21 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/employee/:employeeId/stats", async (req, res) => {
+  app.get("/api/portal/me", (req: any, res) => {
+    const id = req.session?.portalEmployeeId;
+    if (!id) return res.status(401).json({ message: "Not authenticated" });
+    storage.getEmployee(id).then(emp => {
+      if (!emp) return res.status(401).json({ message: "Employee not found" });
+      res.json({ employeeId: emp.id, name: `${emp.firstName} ${emp.lastName}` });
+    }).catch(() => res.status(500).json({ message: "Error" }));
+  });
+
+  app.post("/api/portal/logout", (req: any, res) => {
+    delete req.session.portalEmployeeId;
+    res.json({ success: true });
+  });
+
+  app.get("/api/portal/employee/:employeeId/stats", requirePortalSelf, async (req, res) => {
     try {
       const employee = await storage.getEmployee(req.params.employeeId);
       if (!employee) return res.status(404).json({ message: "Employee not found" });
@@ -1403,8 +1533,25 @@ export async function registerRoutes(
 
   app.patch("/api/leave/:id", async (req, res) => {
     try {
+      const [existingLeave] = await db.select().from(leaveRequests).where(eq(leaveRequests.id, req.params.id));
       const leave = await storage.updateLeaveRequest(req.params.id, req.body);
       if (!leave) return res.status(404).json({ message: "Leave request not found" });
+
+      const newStatus = req.body.status;
+      if (existingLeave && newStatus && (newStatus === "APPROVED" || newStatus === "REJECTED") && newStatus !== existingLeave.status) {
+        const employee = await storage.getEmployee(leave.employeeId);
+        const empName = employee ? `${employee.firstName} ${employee.lastName}` : leave.employeeId;
+        await storage.createNotification({
+          type: "SYSTEM",
+          priority: newStatus === "REJECTED" ? "HIGH" : "MEDIUM",
+          title: `Leave request ${newStatus.toLowerCase()}`,
+          body: `${empName}'s ${leave.leaveType || "leave"} request (${leave.startDate} to ${leave.endDate}) has been ${newStatus.toLowerCase()}.`,
+          actionLabel: "View Leave",
+          actionRoute: `/leave`,
+          employeeId: leave.employeeId,
+        });
+      }
+
       res.json(leave);
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to update leave request" });
@@ -1491,7 +1638,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/employee/:employeeId/tax", async (req, res) => {
+  app.get("/api/portal/employee/:employeeId/tax", requirePortalSelf, async (req, res) => {
     try {
       const dec = await storage.getTaxDeclaration(req.params.employeeId);
       res.json(dec || null);
@@ -1500,7 +1647,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/employee/:employeeId/bank", async (req, res) => {
+  app.get("/api/portal/employee/:employeeId/bank", requirePortalSelf, async (req, res) => {
     try {
       const acc = await storage.getBankAccount(req.params.employeeId);
       res.json(acc || null);
@@ -1509,7 +1656,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/portal/employee/:employeeId/super", async (req, res) => {
+  app.get("/api/portal/employee/:employeeId/super", requirePortalSelf, async (req, res) => {
     try {
       const mem = await storage.getSuperMembership(req.params.employeeId);
       res.json(mem || null);
@@ -1625,6 +1772,17 @@ export async function registerRoutes(
         totalSuper: String(totalSuper.toFixed(2)),
         totalNet: String(totalNet.toFixed(2)),
         employeeCount: lines.length,
+      });
+
+      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const periodLabel = `${monthNames[(payRun.month || 1) - 1]} ${payRun.year || ""}`.trim();
+      await storage.createNotification({
+        type: "PAYRUN",
+        priority: "HIGH",
+        title: "Pay run filed",
+        body: `Pay run for ${periodLabel} has been filed with ${lines.length} employee(s). Total gross: $${totalGross.toFixed(2)}.`,
+        actionLabel: "View Pay Run",
+        actionRoute: `/payroll/${payRun.id}`,
       });
 
       res.json({ payRun: updated, lines, linesCreated: lines.length });

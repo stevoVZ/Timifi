@@ -53,6 +53,7 @@ export const employees = pgTable("employees", {
   xeroEmployeeId: text("xero_employee_id"),
   supplierContactId: varchar("supplier_contact_id"),
   payrollTaxApplicable: boolean("payroll_tax_applicable").notNull().default(true),
+  portalPasswordHash: text("portal_password_hash"),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

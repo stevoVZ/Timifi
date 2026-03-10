@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { PortalShell } from "@/components/portal-shell";
@@ -25,7 +25,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Plus, Clock, FileText, CheckCircle, AlertTriangle, XCircle, ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
+import { Plus, Clock, FileText, CheckCircle, AlertTriangle, XCircle, ChevronDown, ChevronUp, RotateCcw, Upload } from "lucide-react";
+import { usePortalAuth } from "@/hooks/use-portal-auth";
 import type { Timesheet } from "@shared/schema";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -38,14 +39,6 @@ interface WeekEntry {
 
 interface WeeklyBreakdown {
   weeks: WeekEntry[];
-}
-
-function getEmployeeId(): string | null {
-  return localStorage.getItem("portal_employee_id");
-}
-
-function getEmployeeName(): string {
-  return localStorage.getItem("portal_employee_name") || "Employee";
 }
 
 function getWeeksForMonth(year: number, month: number): string[] {
@@ -98,12 +91,14 @@ function TimesheetSubmitForm({
   isPending,
   onSubmit,
   initialData,
+  scannedData,
 }: {
   employeeId: string;
   onSuccess?: () => void;
   isPending: boolean;
   onSubmit: (data: Record<string, any>) => void;
   initialData?: Timesheet | null;
+  scannedData?: { totalHours?: number; regularHours?: number; overtimeHours?: number } | null;
 }) {
   const now = new Date();
   const [year, setYear] = useState(initialData?.year ?? now.getFullYear());
@@ -129,6 +124,16 @@ function TimesheetSubmitForm({
     }
     setWeekEntries(weekLabels.map((label) => ({ label, regular: "", overtime: "" })));
   }, [year, month]);
+
+  useEffect(() => {
+    if (scannedData && scannedData.totalHours && weekLabels.length > 0) {
+      const regularTotal = scannedData.regularHours ?? scannedData.totalHours ?? 0;
+      const overtimeTotal = scannedData.overtimeHours ?? 0;
+      const perWeekRegular = (regularTotal / weekLabels.length).toFixed(1);
+      const perWeekOvertime = overtimeTotal > 0 ? (overtimeTotal / weekLabels.length).toFixed(1) : "";
+      setWeekEntries(weekLabels.map((label) => ({ label, regular: perWeekRegular, overtime: perWeekOvertime })));
+    }
+  }, [scannedData]);
 
   const totals = useMemo(() => {
     let regular = 0;
@@ -376,19 +381,42 @@ function TimesheetCard({ ts, onResubmit }: { ts: Timesheet; onResubmit?: (ts: Ti
 
 export default function PortalTimesheetsPage() {
   const [, setLocation] = useLocation();
-  const employeeId = getEmployeeId();
+  const { employeeId, employeeName } = usePortalAuth();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [resubmitTs, setResubmitTs] = useState<Timesheet | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadResult, setUploadResult] = useState<any>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  const handlePdfUpload = async (file: File) => {
+    setIsScanning(true);
+    setUploadResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("files", file);
+      const res = await fetch("/api/timesheets/scan", { method: "POST", body: formData });
+      if (!res.ok) throw new Error("Scan failed");
+      const data = await res.json();
+      const result = data.results?.[0];
+      if (result) setUploadResult(result);
+    } catch (e) {
+      toast({ title: "Scan failed", description: "Could not read the PDF. Please fill in manually.", variant: "destructive" });
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const { data: timesheetsList, isLoading } = useQuery<Timesheet[]>({
+    queryKey: ["/api/timesheets/employee", employeeId],
+    enabled: !!employeeId,
+  });
 
   if (!employeeId) {
     setLocation("/portal/login");
     return null;
   }
-
-  const { data: timesheetsList, isLoading } = useQuery<Timesheet[]>({
-    queryKey: ["/api/timesheets/employee", employeeId],
-  });
 
   const createMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -425,7 +453,7 @@ export default function PortalTimesheetsPage() {
   };
 
   return (
-    <PortalShell employeeName={getEmployeeName()}>
+    <PortalShell employeeName={employeeName}>
       <div className="p-6 bg-muted/30 min-h-full">
         <div className="max-w-5xl mx-auto space-y-6">
           <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -448,11 +476,49 @@ export default function PortalTimesheetsPage() {
                 <DialogHeader>
                   <DialogTitle>{resubmitTs ? "Resubmit Timesheet" : "Submit Timesheet"}</DialogTitle>
                 </DialogHeader>
+                {!resubmitTs && (
+                  <div className="border border-dashed rounded-lg p-4 text-center space-y-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setUploadFile(file);
+                          handlePdfUpload(file);
+                        }
+                      }}
+                      data-testid="input-pdf-upload"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isScanning}
+                      data-testid="button-upload-pdf"
+                    >
+                      <Upload className="w-4 h-4 mr-1.5" />
+                      {isScanning ? "Scanning PDF..." : "Upload Timesheet PDF"}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      {uploadFile ? uploadFile.name : "Optional — upload a PDF to auto-fill hours"}
+                    </p>
+                    {uploadResult && (
+                      <p className="text-xs text-green-600">
+                        Scanned: {uploadResult.totalHours || 0}h detected
+                      </p>
+                    )}
+                  </div>
+                )}
                 <TimesheetSubmitForm
                   employeeId={employeeId}
                   isPending={createMutation.isPending}
                   onSubmit={(data) => createMutation.mutate(data)}
                   initialData={resubmitTs}
+                  scannedData={uploadResult}
                 />
               </DialogContent>
             </Dialog>

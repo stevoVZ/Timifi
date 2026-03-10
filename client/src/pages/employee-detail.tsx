@@ -78,6 +78,25 @@ export default function EmployeeDetailPage() {
   const { toast } = useToast();
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Record<string, string>>({});
+  const [portalPwOpen, setPortalPwOpen] = useState(false);
+  const [portalPw, setPortalPw] = useState("");
+  const setPortalPwMutation = useMutation({
+    mutationFn: async (password: string) => {
+      const res = await fetch(`/api/employees/${id}/set-portal-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) throw new Error((await res.json()).message || "Failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Portal password set", description: "Employee can now log into the portal." });
+      setPortalPwOpen(false);
+      setPortalPw("");
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
 
   const { data: employee, isLoading } = useQuery<Employee>({
     queryKey: ["/api/employees", id],
@@ -626,6 +645,48 @@ export default function EmployeeDetailPage() {
                 clients={clientsList || []}
                 invoiceContacts={invoiceContacts || []}
               />
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Lock className="w-4 h-4" />
+                    Portal Access
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {portalPwOpen ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="password"
+                        placeholder="Min 6 characters"
+                        value={portalPw}
+                        onChange={(e) => setPortalPw(e.target.value)}
+                        className="max-w-xs"
+                        data-testid="input-portal-password"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => setPortalPwMutation.mutate(portalPw)}
+                        disabled={setPortalPwMutation.isPending || portalPw.length < 6}
+                        data-testid="button-save-portal-password"
+                      >
+                        {setPortalPwMutation.isPending ? "Saving..." : "Save"}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setPortalPwOpen(false); setPortalPw(""); }} data-testid="button-cancel-portal-password">
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={() => setPortalPwOpen(true)} data-testid="button-set-portal-password">
+                      <Lock className="w-3.5 h-3.5 mr-1.5" />
+                      Set Portal Password
+                    </Button>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Set or reset the employee's password for the self-service portal.
+                  </p>
+                </CardContent>
+              </Card>
             </TabsContent>
 
             <TabsContent value="financials" className="mt-4">

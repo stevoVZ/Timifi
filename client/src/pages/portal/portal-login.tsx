@@ -32,7 +32,6 @@ export default function PortalLoginPage() {
         throw new Error(data.message || "Login failed");
       }
       const data = await res.json();
-      localStorage.setItem("portal_employee_id", data.employeeId);
       localStorage.setItem("portal_employee_name", data.name);
       setLocation("/portal/dashboard");
     } catch (err: any) {

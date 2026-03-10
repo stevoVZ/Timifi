@@ -13,15 +13,8 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Send, Mail, MailOpen, MessageSquare, Plus, ArrowLeft } from "lucide-react";
+import { usePortalAuth } from "@/hooks/use-portal-auth";
 import type { Message } from "@shared/schema";
-
-function getEmployeeId(): string | null {
-  return localStorage.getItem("portal_employee_id");
-}
-
-function getEmployeeName(): string {
-  return localStorage.getItem("portal_employee_name") || "Employee";
-}
 
 function formatTimestamp(dateStr: string | Date) {
   const d = new Date(dateStr);
@@ -78,7 +71,7 @@ function groupIntoThreads(messages: Message[]): ConversationThread[] {
 
 export default function PortalMessagesPage() {
   const [, setLocation] = useLocation();
-  const employeeId = getEmployeeId();
+  const { employeeId, employeeName } = usePortalAuth();
   const [selectedThreadSubject, setSelectedThreadSubject] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
   const [newSubject, setNewSubject] = useState("");
@@ -86,14 +79,15 @@ export default function PortalMessagesPage() {
   const [replyBody, setReplyBody] = useState("");
   const { toast } = useToast();
 
+  const { data: messagesList, isLoading } = useQuery<Message[]>({
+    queryKey: ["/api/messages/employee", employeeId],
+    enabled: !!employeeId,
+  });
+
   if (!employeeId) {
     setLocation("/portal/login");
     return null;
   }
-
-  const { data: messagesList, isLoading } = useQuery<Message[]>({
-    queryKey: ["/api/messages/employee", employeeId],
-  });
 
   const sendMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
@@ -173,7 +167,7 @@ export default function PortalMessagesPage() {
   };
 
   return (
-    <PortalShell employeeName={getEmployeeName()}>
+    <PortalShell employeeName={employeeName}>
       <div className="flex h-full">
         <div className="w-[300px] flex-shrink-0 border-r flex flex-col bg-background">
           <div className="p-4 border-b">

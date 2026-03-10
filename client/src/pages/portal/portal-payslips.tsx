@@ -14,19 +14,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DollarSign, Building2, Landmark, CheckCircle2, Receipt, Download } from "lucide-react";
+import { usePortalAuth } from "@/hooks/use-portal-auth";
 import type { PayRunLine, PayRun } from "@shared/schema";
 
 type PayslipEntry = PayRunLine & { payRun: PayRun };
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-function getEmployeeId(): string | null {
-  return localStorage.getItem("portal_employee_id");
-}
-
-function getEmployeeName(): string {
-  return localStorage.getItem("portal_employee_name") || "Employee";
-}
 
 function formatCurrency(amount: string | number) {
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
@@ -64,12 +57,7 @@ function isInCurrentFY(payRun: PayRun): boolean {
 
 export default function PortalPayslipsPage() {
   const [, setLocation] = useLocation();
-  const employeeId = getEmployeeId();
-
-  if (!employeeId) {
-    setLocation("/portal/login");
-    return null;
-  }
+  const { employeeId, employeeName } = usePortalAuth();
 
   const { data, isLoading } = useQuery<{ payslips: PayslipEntry[] }>({
     queryKey: ["/api/payslips", employeeId],
@@ -78,7 +66,13 @@ export default function PortalPayslipsPage() {
       if (!res.ok) throw new Error("Failed to fetch payslips");
       return res.json();
     },
+    enabled: !!employeeId,
   });
+
+  if (!employeeId) {
+    setLocation("/portal/login");
+    return null;
+  }
 
   const payslips = data?.payslips || [];
 
@@ -105,7 +99,7 @@ export default function PortalPayslipsPage() {
   ];
 
   return (
-    <PortalShell employeeName={getEmployeeName()}>
+    <PortalShell employeeName={employeeName}>
       <div className="p-6 bg-muted/30 min-h-full">
         <div className="max-w-5xl mx-auto space-y-6">
           <div>

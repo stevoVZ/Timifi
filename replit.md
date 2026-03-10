@@ -109,3 +109,36 @@ All MSG employee bank transactions have been manually linked to their respective
 - Anthony Ikic: Anthony Ikic + To IKIC ANTHONY ANTE
 - Simon Lenz: Simon Lenz + Finite Group (revenue)
 - Panatda Phaiyakounh: MK + Panadtda Phaiyakounh
+
+## Portal Security
+
+- Employee portal uses server-side session auth (`req.session.portalEmployeeId`)
+- Admins set portal passwords via `POST /api/employees/:id/set-portal-password` (min 6 chars)
+- Portal endpoints (`/stats`, `/tax`, `/bank`, `/super`) are protected by `requirePortalSelf` middleware
+- `PortalGuard` component checks `/api/portal/me` session instead of localStorage
+- Schema column: `portal_password_hash` on `employees` table
+
+## Global Search
+
+- `GET /api/search?q=<query>` searches employees, invoices, pay runs, timesheets (min 2 chars)
+- Frontend: `GlobalSearch` component at `client/src/components/global-search.tsx` uses shadcn `CommandDialog`
+- Trigger: ⌘K keyboard shortcut or sidebar footer button
+- Results navigate to the relevant detail page
+
+## Auto-Notifications
+
+- Timesheet approve/reject creates TIMESHEET notification
+- Leave approve/reject creates SYSTEM notification
+- Pay run filing creates PAYRUN notification
+- All notifications appear on the /notifications page
+
+## CSV Export
+
+- Payroll and Invoices pages have Export CSV buttons in the TopBar
+- Uses client-side `downloadCSV` helper function
+
+## Portal PDF Upload
+
+- Portal timesheet submission dialog includes optional PDF upload
+- Sends PDF to `/api/timesheets/scan` for OCR processing
+- Auto-fills detected hours into the form

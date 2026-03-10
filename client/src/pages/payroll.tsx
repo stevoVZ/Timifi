@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { TopBar } from "@/components/top-bar";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -30,6 +31,7 @@ import {
   Search,
   CalendarDays,
   FileText,
+  Download,
 } from "lucide-react";
 import type { PayRun } from "@shared/schema";
 
@@ -56,6 +58,29 @@ function formatCurrency(amount: string | number) {
     currency: "AUD",
     minimumFractionDigits: 2,
   }).format(num);
+}
+
+function downloadCSV(rows: PayRun[]) {
+  const headers = ["Pay Run Ref", "Frequency", "Period", "Payment Date", "Wages", "Tax", "Super", "Net Pay", "Status"];
+  const csvRows = rows.map((r) => [
+    r.payRunRef || "",
+    r.calendarName || "Monthly",
+    `${MONTHS[r.month]} ${r.year}`,
+    r.paymentDate || r.payDate || "",
+    Number(r.totalGross).toFixed(2),
+    Number(r.totalPayg).toFixed(2),
+    Number(r.totalSuper).toFixed(2),
+    Number(r.totalNet).toFixed(2),
+    r.status,
+  ]);
+  const csv = [headers, ...csvRows].map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `payroll-export-${new Date().toISOString().split("T")[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function PayrollPage() {
@@ -134,6 +159,12 @@ export default function PayrollPage() {
       <TopBar
         title="Payroll"
         subtitle={`${payRunsList?.length || 0} pay runs`}
+        actions={
+          <Button variant="outline" onClick={() => downloadCSV(sorted)} data-testid="button-export-csv">
+            <Download className="w-4 h-4" />
+            Export CSV
+          </Button>
+        }
       />
       <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
         <div className="max-w-6xl mx-auto space-y-4">

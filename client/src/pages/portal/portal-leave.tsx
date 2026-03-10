@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { usePortalAuth } from "@/hooks/use-portal-auth";
 import type { LeaveRequest } from "@shared/schema";
 import { CalendarDays, CalendarRange, Palmtree, HeartPulse, Heart, Clock } from "lucide-react";
 
@@ -56,8 +57,8 @@ function formatDate(dateStr: string) {
 }
 
 export default function PortalLeavePage() {
-  const employeeId = localStorage.getItem("portal_employee_id") || "";
-  const employeeName = localStorage.getItem("portal_employee_name") || "";
+  const { employeeId: authEmployeeId, employeeName } = usePortalAuth();
+  const employeeId = authEmployeeId || "";
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("history");
   const [form, setForm] = useState({

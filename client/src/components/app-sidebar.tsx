@@ -1,6 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, Users, Clock, CreditCard, FileText, Bell, Settings, DollarSign, ClipboardCheck, Wallet, TrendingUp, BookOpen, Receipt } from "lucide-react";
+import { LayoutDashboard, Users, Clock, CreditCard, FileText, Bell, Settings, DollarSign, ClipboardCheck, Wallet, TrendingUp, BookOpen, Receipt, Search } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -117,6 +117,18 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="px-4 py-3">
+        <button
+          onClick={() => {
+            const event = new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true });
+            document.dispatchEvent(event);
+          }}
+          className="w-full flex items-center gap-2 px-2 py-1.5 mb-2 rounded-md text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+          data-testid="button-search-shortcut"
+        >
+          <Search className="w-3.5 h-3.5" />
+          <span className="flex-1 text-left">Search</span>
+          <kbd className="text-[9px] bg-sidebar-accent px-1.5 py-0.5 rounded font-mono">⌘K</kbd>
+        </button>
         <div className="flex items-center gap-3 px-2">
           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary" data-testid="avatar-current-user">
             {userInitials}

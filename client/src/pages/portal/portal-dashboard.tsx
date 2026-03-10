@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
 import { PortalShell } from "@/components/portal-shell";
+import { usePortalAuth } from "@/hooks/use-portal-auth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
@@ -43,14 +44,6 @@ interface PortalStats {
   recentPayslips: RecentPayslip[];
 }
 
-function getEmployeeId(): string | null {
-  return localStorage.getItem("portal_employee_id");
-}
-
-function getEmployeeName(): string {
-  return localStorage.getItem("portal_employee_name") || "Employee";
-}
-
 function formatCurrency(val: number): string {
   return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val);
 }
@@ -62,20 +55,21 @@ function formatMonth(year: number, month: number): string {
 
 export default function PortalDashboardPage() {
   const [, setLocation] = useLocation();
-  const employeeId = getEmployeeId();
+  const { employeeId, employeeName: authEmployeeName } = usePortalAuth();
+
+  const { data: stats, isLoading } = useQuery<PortalStats>({
+    queryKey: ["/api/portal/employee", employeeId, "stats"],
+    enabled: !!employeeId,
+  });
 
   if (!employeeId) {
     setLocation("/portal/login");
     return null;
   }
 
-  const { data: stats, isLoading } = useQuery<PortalStats>({
-    queryKey: ["/api/portal/employee", employeeId, "stats"],
-  });
-
   const employeeName = stats
     ? `${stats.employee.firstName} ${stats.employee.lastName}`
-    : getEmployeeName();
+    : authEmployeeName;
 
   const currentMonth = new Date().toLocaleDateString("en-AU", { month: "long", year: "numeric" });
 

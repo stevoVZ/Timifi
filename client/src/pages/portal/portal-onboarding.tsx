@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { usePortalAuth } from "@/hooks/use-portal-auth";
 import type { Employee } from "@shared/schema";
 import {
   CheckCircle2,
@@ -42,8 +43,8 @@ const STEPS = [
 ];
 
 export default function PortalOnboardingPage() {
-  const employeeId = localStorage.getItem("portal_employee_id") || "";
-  const employeeName = localStorage.getItem("portal_employee_name") || "";
+  const { employeeId: authEmployeeId, employeeName } = usePortalAuth();
+  const employeeId = authEmployeeId || "";
   const { toast } = useToast();
   const [step, setStep] = useState(0);
 
