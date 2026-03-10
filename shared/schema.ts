@@ -355,6 +355,8 @@ export const rateHistory = pgTable("rate_history", {
   superPercent: numeric("super_percent", { precision: 5, scale: 2 }),
   source: text("source").notNull().default("PAYROLL_SYNC"),
   payRunId: varchar("pay_run_id").references(() => payRuns.id),
+  placementId: varchar("placement_id"),
+  clientName: text("client_name"),
   notes: text("notes"),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

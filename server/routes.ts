@@ -177,7 +177,7 @@ export async function registerRoutes(
 
       let body = { ...req.body };
       if (existing.xeroEmployeeId) {
-        const xeroLockedFields = ["firstName", "lastName", "email", "phone", "jobTitle", "hourlyRate", "startDate", "endDate", "dateOfBirth", "gender", "addressLine1", "suburb", "state", "postcode", "payFrequency"];
+        const xeroLockedFields = ["firstName", "lastName", "email", "phone", "jobTitle", "startDate", "endDate", "dateOfBirth", "gender", "addressLine1", "suburb", "state", "postcode", "payFrequency"];
         for (const field of xeroLockedFields) {
           delete body[field];
         }
@@ -1773,6 +1773,8 @@ export async function registerRoutes(
           chargeOutRate: newChargeOut || "0",
           payRate: newPayRate || "0",
           source: "PLACEMENT_UPDATE",
+          placementId: req.params.id,
+          clientName: existing.clientName || null,
           notes: `Rate change on ${clientLabel} placement: charge-out $${newChargeOut || "0"}, pay $${newPayRate || "0"}`,
         });
       }
@@ -3085,6 +3087,134 @@ export async function registerRoutes(
       res.json({ created, updated, totalEmployees: allEmployees.length });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to generate expected hours" });
+    }
+  });
+
+  app.post("/api/placements/auto-populate", async (req, res) => {
+    try {
+      const { db } = await import("./db");
+      const {
+        invoices: invTable,
+        employees: empTable,
+        clients: clientsTable,
+        placements: placementsTable,
+        invoiceLineItems: lineItemsTable,
+      } = await import("@shared/schema");
+      const { eq, and, sql, isNotNull, inArray } = await import("drizzle-orm");
+      const { getActiveTenantId } = await import("./storage");
+
+      const tenantId = await getActiveTenantId();
+      const conds: any[] = [isNotNull(invTable.employeeId), eq(invTable.invoiceType, "ACCREC")];
+      if (tenantId) conds.push(eq(invTable.tenantId, tenantId));
+
+      const invoiceRows = await db.select({
+        employeeId: invTable.employeeId,
+        contactName: invTable.contactName,
+        issueDate: invTable.issueDate,
+        invoiceId: invTable.id,
+        clientId: invTable.clientId,
+      }).from(invTable).where(and(...conds));
+
+      const grouped: Record<string, {
+        employeeId: string;
+        contactName: string;
+        clientId: string | null;
+        invoiceDates: string[];
+        invoiceIds: string[];
+      }> = {};
+
+      for (const inv of invoiceRows) {
+        if (!inv.employeeId || !inv.contactName) continue;
+        const key = `${inv.employeeId}::${inv.contactName}`;
+        if (!grouped[key]) {
+          grouped[key] = {
+            employeeId: inv.employeeId,
+            contactName: inv.contactName,
+            clientId: inv.clientId,
+            invoiceDates: [],
+            invoiceIds: [],
+          };
+        }
+        if (inv.issueDate) grouped[key].invoiceDates.push(inv.issueDate);
+        if (inv.invoiceId) grouped[key].invoiceIds.push(inv.invoiceId);
+      }
+
+      const existingPlacements = await db.select({
+        employeeId: placementsTable.employeeId,
+        clientName: placementsTable.clientName,
+      }).from(placementsTable).where(
+        tenantId ? eq(placementsTable.tenantId, tenantId) : sql`1=1`
+      );
+
+      const existingSet = new Set(
+        existingPlacements.map((p) => `${p.employeeId}::${(p.clientName || "").toLowerCase().trim()}`)
+      );
+
+      const allClients = await storage.getClients();
+      const clientsByName: Record<string, string> = {};
+      for (const c of allClients) {
+        if (c.name) clientsByName[c.name.toLowerCase()] = c.id;
+      }
+
+      let created = 0;
+      for (const g of Object.values(grouped)) {
+        const key = `${g.employeeId}::${g.contactName.toLowerCase().trim()}`;
+        if (existingSet.has(key)) continue;
+
+        const resolvedClientId = g.clientId || clientsByName[g.contactName.toLowerCase()] || null;
+
+        const sortedDates = g.invoiceDates.filter(Boolean).sort();
+        const startDate = sortedDates.length > 0 ? sortedDates[0] : null;
+        const latestDate = sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : null;
+
+        const threeMonthsAgo = new Date();
+        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        const isActive = latestDate ? new Date(latestDate) >= threeMonthsAgo : false;
+
+        let chargeOutRate: string | null = null;
+        const invoiceLineRows = g.invoiceIds.length > 0 ? await db.select({
+          unitAmount: lineItemsTable.unitAmount,
+        }).from(lineItemsTable).where(
+          and(
+            inArray(lineItemsTable.invoiceId, g.invoiceIds),
+            isNotNull(lineItemsTable.unitAmount)
+          )
+        ) : [];
+        if (invoiceLineRows.length > 0) {
+          const rates: Record<string, number> = {};
+          for (const row of invoiceLineRows) {
+            if (row.unitAmount) {
+              const r = parseFloat(row.unitAmount).toFixed(2);
+              rates[r] = (rates[r] || 0) + 1;
+            }
+          }
+          const sorted = Object.entries(rates).sort((a, b) => b[1] - a[1]);
+          if (sorted.length > 0) chargeOutRate = sorted[0][0];
+        }
+
+        if (!chargeOutRate) {
+          const totalAmount = invoiceLineRows.reduce((s, r) => s + (r.unitAmount ? parseFloat(r.unitAmount) : 0), 0);
+          if (totalAmount > 0 && invoiceLineRows.length > 0) {
+            chargeOutRate = (totalAmount / invoiceLineRows.length).toFixed(2);
+          }
+        }
+
+        await storage.createPlacement({
+          employeeId: g.employeeId,
+          clientId: resolvedClientId,
+          clientName: g.contactName,
+          startDate: startDate || null,
+          endDate: !isActive && latestDate ? latestDate : null,
+          chargeOutRate: chargeOutRate,
+          status: isActive ? "ACTIVE" : "ENDED",
+        });
+        created++;
+      }
+
+      res.json({ created, message: `Created ${created} new placements from invoice data` });
+    } catch (err: any) {
+      console.error("Auto-populate placements error:", err);
+      res.status(500).json({ message: err.message || "Failed to auto-populate placements" });
     }
   });
 

@@ -1228,6 +1228,21 @@ function DataTab() {
     },
   });
 
+  const autoPopulatePlacementsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/placements/auto-populate", {});
+      return res.json();
+    },
+    onSuccess: (data: { created: number; message: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/placements"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
+      toast({ title: "Placements Populated", description: data.message });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to auto-populate placements", description: err.message, variant: "destructive" });
+    },
+  });
+
   const months = workingDaysQuery.data || [];
   const totalWorkingDays = months.reduce((s, m) => s + m.workingDays, 0);
   const totalHours = months.reduce((s, m) => s + m.expectedHours, 0);
@@ -1342,6 +1357,26 @@ function DataTab() {
             <Calculator className="w-4 h-4" />
           )}
           {generateMutation.isPending ? "Generating..." : "Generate Expected Hours"}
+        </Button>
+      </div>
+
+      <div className="border-t pt-6">
+        <h3 className="text-sm font-semibold mb-1" data-testid="heading-auto-populate-placements">Auto-Populate Placements from Invoices</h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Scans all invoices to find employee-client relationships and creates placement records where they don't already exist.
+          Sets charge-out rates from invoice line items and marks placements as Active or Ended based on recent activity.
+        </p>
+        <Button
+          onClick={() => autoPopulatePlacementsMutation.mutate()}
+          disabled={autoPopulatePlacementsMutation.isPending}
+          data-testid="button-auto-populate-placements"
+        >
+          {autoPopulatePlacementsMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Link2 className="w-4 h-4" />
+          )}
+          {autoPopulatePlacementsMutation.isPending ? "Populating..." : "Auto-Populate Placements"}
         </Button>
       </div>
 

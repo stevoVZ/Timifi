@@ -463,7 +463,6 @@ export default function EmployeeDetailPage() {
                       onStartEdit={startEdit}
                       onSave={saveEdit}
                       onCancel={cancelEdit}
-                      locked={!!employee.xeroEmployeeId}
                       isPending={updateMutation.isPending}
                       testId="text-pay-rate"
                     />
@@ -735,6 +734,7 @@ function FinancialsTab({ reconciliation, employeeId }: { reconciliation: Reconci
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Effective Date</th>
+                    <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Client</th>
                     <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Pay Rate</th>
                     <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Charge-Out (Ex GST)</th>
                     <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Super %</th>
@@ -748,6 +748,7 @@ function FinancialsTab({ reconciliation, employeeId }: { reconciliation: Reconci
                         {rh.effectiveDate ? new Date(rh.effectiveDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : "—"}
                         {idx === 0 && <Badge variant="outline" className="ml-2 text-[9px] px-1 py-0 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">Current</Badge>}
                       </td>
+                      <td className="py-2.5 px-2 text-foreground text-xs">{rh.clientName || "—"}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-foreground">${parseFloat(rh.payRate).toFixed(2)}/hr</td>
                       <td className="py-2.5 px-2 text-right font-mono text-foreground">{rh.chargeOutRate ? `$${parseFloat(rh.chargeOutRate).toFixed(2)}/hr` : "—"}</td>
                       <td className="py-2.5 px-2 text-right font-mono text-foreground">{rh.superPercent ? `${parseFloat(rh.superPercent).toFixed(1)}%` : "—"}</td>
