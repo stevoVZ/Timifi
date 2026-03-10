@@ -1167,9 +1167,10 @@ export async function syncInvoices(): Promise<{
       let descriptionVal: string | undefined;
       if (inv.LineItems && inv.LineItems.length > 0) {
         const firstLine = inv.LineItems[0];
-        if (firstLine.Quantity) totalHours = String(firstLine.Quantity);
-        if (firstLine.UnitAmount) hourlyRateVal = String(firstLine.UnitAmount);
         if (firstLine.Description) descriptionVal = firstLine.Description;
+        const sumQty = inv.LineItems.reduce((sum: number, li: any) => sum + (Number(li.Quantity) || 0), 0);
+        if (sumQty > 0) totalHours = String(sumQty);
+        if (firstLine.UnitAmount) hourlyRateVal = String(firstLine.UnitAmount);
       }
 
       const invoiceTypeVal = inv.Type === "ACCPAY" ? "ACCPAY" : inv.Type === "ACCREC" ? "ACCREC" : null;

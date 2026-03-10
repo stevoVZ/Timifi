@@ -828,8 +828,7 @@ export default function InvoicesPage() {
                                       <TableCell className="text-center"><StatusBadge status={inv.status} /></TableCell>
                                       <TableCell className="text-right" onClick={e => e.stopPropagation()}>
                                         {inv.status === "DRAFT" && <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "AUTHORISED" } })} data-testid={`button-authorise-${inv.id}`}>Authorise</Button>}
-                                        {inv.status === "AUTHORISED" && <Button size="sm" className="h-7 text-xs" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "SENT" } })} data-testid={`button-send-${inv.id}`}>Send</Button>}
-                                        {(inv.status === "SENT" || inv.status === "OVERDUE") && <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "PAID", paidDate: new Date().toISOString().split("T")[0] } })} data-testid={`button-mark-paid-${inv.id}`}>Mark Paid</Button>}
+                                        {(inv.status === "AUTHORISED" || inv.status === "SENT" || inv.status === "OVERDUE") && <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => updateMutation.mutate({ id: inv.id, data: { status: "PAID", paidDate: new Date().toISOString().split("T")[0] } })} data-testid={`button-mark-paid-${inv.id}`}>Mark Paid</Button>}
                                       </TableCell>
                                     </TableRow>
                                   );
@@ -1490,7 +1489,13 @@ function InvoiceDetailDialog({
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Hours</span>
-              <span className="font-mono">{invoice.hours ? `${invoice.hours}h` : "—"}</span>
+              <span className="font-mono">{(() => {
+                if (lineItems && lineItems.length > 0) {
+                  const sum = lineItems.reduce((s, li) => s + (parseFloat(li.quantity || "0") || 0), 0);
+                  if (sum > 0) return `${sum}h`;
+                }
+                return invoice.hours ? `${invoice.hours}h` : "—";
+              })()}</span>
             </div>
             <div>
               <span className="text-xs text-muted-foreground block">Hourly Rate</span>
