@@ -174,18 +174,31 @@ export async function registerRoutes(
       const existing = await storage.getEmployee(req.params.id);
       if (!existing) return res.status(404).json({ message: "Employee not found" });
 
+      let body = { ...req.body };
       if (existing.xeroEmployeeId) {
         const xeroLockedFields = ["firstName", "lastName", "email", "phone", "jobTitle", "hourlyRate", "startDate", "endDate", "dateOfBirth", "gender", "addressLine1", "suburb", "state", "postcode", "payFrequency"];
-        const body = { ...req.body };
         for (const field of xeroLockedFields) {
           delete body[field];
         }
-        const employee = await storage.updateEmployee(req.params.id, body);
-        res.json(employee);
-      } else {
-        const employee = await storage.updateEmployee(req.params.id, req.body);
-        res.json(employee!);
       }
+
+      const newChargeOut = body.chargeOutRate !== undefined ? body.chargeOutRate : existing.chargeOutRate;
+      const newPayRate = body.hourlyRate !== undefined ? body.hourlyRate : existing.hourlyRate;
+      const rateChanged = (body.chargeOutRate !== undefined && body.chargeOutRate !== existing.chargeOutRate) ||
+                           (body.hourlyRate !== undefined && body.hourlyRate !== existing.hourlyRate);
+      if (rateChanged) {
+        await storage.createRateHistory({
+          employeeId: req.params.id,
+          effectiveDate: new Date().toISOString().split("T")[0],
+          chargeOutRate: newChargeOut || "0",
+          payRate: newPayRate || "0",
+          source: "MANUAL",
+          notes: `Employee rate updated: charge-out $${newChargeOut || "0"}, pay $${newPayRate || "0"}`,
+        });
+      }
+
+      const employee = await storage.updateEmployee(req.params.id, body);
+      res.json(employee!);
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to update employee" });
     }
@@ -1737,8 +1750,28 @@ export async function registerRoutes(
 
   app.patch("/api/placements/:id", async (req, res) => {
     try {
-      const placement = await storage.updatePlacement(req.params.id, req.body);
-      if (!placement) return res.status(404).json({ message: "Placement not found" });
+      const existing = await storage.getPlacement(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Placement not found" });
+
+      const newChargeOut = req.body.chargeOutRate !== undefined ? req.body.chargeOutRate : existing.chargeOutRate;
+      const newPayRate = req.body.payRate !== undefined ? req.body.payRate : existing.payRate;
+      const rateChanged = (req.body.chargeOutRate !== undefined && req.body.chargeOutRate !== existing.chargeOutRate) ||
+                           (req.body.payRate !== undefined && req.body.payRate !== existing.payRate);
+      if (rateChanged && existing.employeeId) {
+        const effectiveDate = req.body.rateEffectiveDate || new Date().toISOString().split("T")[0];
+        const clientLabel = existing.clientName || "client";
+        await storage.createRateHistory({
+          employeeId: existing.employeeId,
+          effectiveDate,
+          chargeOutRate: newChargeOut || "0",
+          payRate: newPayRate || "0",
+          source: "PLACEMENT_UPDATE",
+          notes: `Rate change on ${clientLabel} placement: charge-out $${newChargeOut || "0"}, pay $${newPayRate || "0"}`,
+        });
+      }
+
+      const { rateEffectiveDate, ...updateData } = req.body;
+      const placement = await storage.updatePlacement(req.params.id, updateData);
       res.json(placement);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to update placement" });

@@ -118,6 +118,7 @@ export default function EmployeeDetailPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/employees", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees", id, "rate-history"] });
       toast({ title: "Updated", description: "Employee details saved." });
       setEditingField(null);
     },
@@ -1056,6 +1057,7 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
     payRate: "",
     payrollFeePercent: "",
     notes: "",
+    rateEffectiveDate: "",
   });
   const [formData, setFormData] = useState({
     clientId: "",
@@ -1080,6 +1082,7 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
       payRate: p.payRate || "",
       payrollFeePercent: p.payrollFeePercent || "0",
       notes: p.notes || "",
+      rateEffectiveDate: new Date().toISOString().split("T")[0],
     });
   };
 
@@ -1112,6 +1115,7 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId, "placements"] });
       queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId, "rate-history"] });
       toast({ title: "Placement Updated", description: "Placement details saved." });
       setEditingPlacementId(null);
     },
@@ -1133,6 +1137,7 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
         payRate: editData.payRate || null,
         payrollFeePercent: editData.payrollFeePercent || "0",
         notes: editData.notes || null,
+        rateEffectiveDate: editData.rateEffectiveDate || null,
       },
     });
   };
@@ -1258,6 +1263,8 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                 onCancel={cancelEditing}
                 isPending={editMutation.isPending}
                 placementId={p.id}
+                originalChargeOutRate={p.chargeOutRate || ""}
+                originalPayRate={p.payRate || ""}
               />
             ) : (
               <>
@@ -1352,6 +1359,8 @@ function PlacementsCard({ employeeId, placements, clients }: { employeeId: strin
                     onCancel={cancelEditing}
                     isPending={editMutation.isPending}
                     placementId={p.id}
+                    originalChargeOutRate={p.chargeOutRate || ""}
+                    originalPayRate={p.payRate || ""}
                   />
                 ) : (
                   <>
@@ -1395,9 +1404,13 @@ function PlacementEditForm({
   onCancel,
   isPending,
   placementId,
+  originalChargeOutRate,
+  originalPayRate,
 }: {
-  editData: { clientId: string; clientName: string; startDate: string; endDate: string; chargeOutRate: string; payRate: string; payrollFeePercent: string; notes: string };
+  editData: { clientId: string; clientName: string; startDate: string; endDate: string; chargeOutRate: string; payRate: string; payrollFeePercent: string; notes: string; rateEffectiveDate?: string };
   setEditData: (v: any) => void;
+  originalChargeOutRate?: string;
+  originalPayRate?: string;
   clients: Client[];
   onSave: () => void;
   onCancel: () => void;
@@ -1478,6 +1491,19 @@ function PlacementEditForm({
           />
         </div>
       </div>
+      {((editData.chargeOutRate !== (originalChargeOutRate || "")) || (editData.payRate !== (originalPayRate || ""))) && (
+        <div className="p-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+          <label className="text-xs font-medium text-amber-700 dark:text-amber-300 mb-1 block">Rate Change Effective Date</label>
+          <Input
+            type="date"
+            className="h-8 text-sm"
+            value={editData.rateEffectiveDate || ""}
+            onChange={(e) => setEditData((prev: any) => ({ ...prev, rateEffectiveDate: e.target.value }))}
+            data-testid={`input-edit-rate-effective-${placementId}`}
+          />
+          <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">This date will be recorded in rate history for forecasting</p>
+        </div>
+      )}
       <div>
         <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
         <Input
