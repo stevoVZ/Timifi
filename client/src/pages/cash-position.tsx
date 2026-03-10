@@ -17,6 +17,8 @@ interface AccountSummary {
   txnCount: number;
   earliest: string | null;
   latest: string | null;
+  openingBalance: number;
+  currentBalance: number;
 }
 
 interface EmployeeCashFlow {
@@ -193,7 +195,9 @@ export default function CashPositionPage() {
   const amexDebt = data.amex.outstandingDebt;
   const payrollCost = data.payroll.totalGrossCost;
   const suppliersPaid = data.invoiceRevenue.suppliersPaid;
-  const netPosition = invoiceRevenue - payrollCost - suppliersPaid - data.summary.atoSpend - data.summary.superSpend - data.amex.cardPurchases;
+
+  const operatingAccounts = data.accounts.filter(a => !a.name.includes("American Express"));
+  const totalCashBalance = operatingAccounts.reduce((s, a) => s + a.currentBalance, 0);
 
   const bankIn = data.summary.bankReceiveRevenue;
   const bankMissing = invoiceRevenue - bankIn;
@@ -206,7 +210,15 @@ export default function CashPositionPage() {
       <TopBar title="Cash Position" />
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <KpiCard
+            title="Cash Balance"
+            value={fmt(totalCashBalance)}
+            subtitle="Across all operating accounts"
+            icon={Wallet}
+            variant={totalCashBalance >= 0 ? "positive" : "negative"}
+            testId="kpi-cash-balance"
+          />
           <KpiCard
             title="Revenue Collected"
             value={fmt(invoiceRevenue)}
@@ -419,22 +431,33 @@ export default function CashPositionPage() {
             <CardHeader className="pb-3 px-5 pt-4">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <Landmark className="w-4 h-4" />
-                Bank Account Flows
+                Bank Account Balances
               </CardTitle>
-              <p className="text-[11px] text-muted-foreground">Net movement per synced account</p>
+              <p className="text-[11px] text-muted-foreground">Current balance per synced account</p>
             </CardHeader>
             <CardContent className="px-5 pb-4 space-y-3">
               {data.accounts.filter(a => !a.name.includes("American Express")).map(acct => (
-                <div key={acct.name} className="flex items-center justify-between">
-                  <div>
+                <div key={acct.name} data-testid={`bank-account-${acct.name.replace(/\s+/g, "-").toLowerCase()}`}>
+                  <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">{acct.name}</span>
-                    <p className="text-[11px] text-muted-foreground">{acct.txnCount} txns</p>
+                    <span className={`text-base font-bold tabular-nums ${acct.currentBalance >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                      {fmtFull(acct.currentBalance)}
+                    </span>
                   </div>
-                  <span className={`text-sm font-semibold tabular-nums ${acct.net >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                    {fmt(acct.net)}
-                  </span>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <span className="text-[11px] text-muted-foreground">{acct.txnCount} txns</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Net flow: {fmt(acct.net)}
+                    </span>
+                  </div>
                 </div>
               ))}
+              <div className="border-t pt-2 flex items-center justify-between">
+                <span className="text-sm font-bold">Total Cash</span>
+                <span className={`text-base font-bold tabular-nums ${data.accounts.filter(a => !a.name.includes("American Express")).reduce((s, a) => s + a.currentBalance, 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                  {fmtFull(data.accounts.filter(a => !a.name.includes("American Express")).reduce((s, a) => s + a.currentBalance, 0))}
+                </span>
+              </div>
             </CardContent>
           </Card>
         </div>

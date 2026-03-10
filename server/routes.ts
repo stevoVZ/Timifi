@@ -2258,7 +2258,17 @@ export async function registerRoutes(
         }
       }
 
-      const accountList = Object.values(accounts).sort((a, b) => {
+      const openingBalances: Record<string, number> = {};
+      for (const acctName of Object.keys(accounts)) {
+        const setting = await storage.getSetting(`bank.opening_balance.${acctName}`);
+        openingBalances[acctName] = setting?.value ? parseFloat(setting.value) : 0;
+      }
+
+      const accountList = Object.values(accounts).map(a => ({
+        ...a,
+        openingBalance: openingBalances[a.name] || 0,
+        currentBalance: (openingBalances[a.name] || 0) + a.net,
+      })).sort((a, b) => {
         const order: Record<string, number> = { "MSG RECRUITMENT": 0, "Tax Account": 1, "Macquarie Platinum Transaction Account": 2 };
         return (order[a.name] ?? 3) - (order[b.name] ?? 3);
       });
