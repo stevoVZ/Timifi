@@ -2202,9 +2202,12 @@ export async function registerRoutes(
         nonXeroTimesheets.map(t => `${t.employeeId}|${t.year}|${t.month}`)
       );
 
-      const existingXeroKeys = new Map<string, typeof xeroSyncTimesheets[0]>();
+      const existingXeroByKey = new Map<string, (typeof xeroSyncTimesheets[0])[]>();
       for (const ts of xeroSyncTimesheets) {
-        existingXeroKeys.set(`${ts.employeeId}|${ts.year}|${ts.month}`, ts);
+        const key = `${ts.employeeId}|${ts.year}|${ts.month}`;
+        const list = existingXeroByKey.get(key) || [];
+        list.push(ts);
+        existingXeroByKey.set(key, list);
       }
 
       let deleted = 0;
@@ -2217,25 +2220,29 @@ export async function registerRoutes(
         const key = `${bucket.employeeId}|${bucket.year}|${bucket.month}`;
         processedKeys.add(key);
 
+        const existingRows = existingXeroByKey.get(key) || [];
+
         if (nonXeroKeys.has(key)) {
           skippedConflict++;
-          const existingXero = existingXeroKeys.get(key);
-          if (existingXero) {
-            await storage.deleteTimesheet(existingXero.id);
+          for (const row of existingRows) {
+            await storage.deleteTimesheet(row.id);
             deleted++;
           }
           continue;
         }
 
-        const existingXero = existingXeroKeys.get(key);
-        if (existingXero) {
-          await storage.updateTimesheet(existingXero.id, {
+        if (existingRows.length > 0) {
+          await storage.updateTimesheet(existingRows[0].id, {
             totalHours: String(bucket.hours.toFixed(2)),
             regularHours: String(bucket.hours.toFixed(2)),
             clientId: bucket.clientId,
             placementId: bucket.placementId,
           });
           updated++;
+          for (let i = 1; i < existingRows.length; i++) {
+            await storage.deleteTimesheet(existingRows[i].id);
+            deleted++;
+          }
         } else {
           await storage.createTimesheetWithTenant({
             employeeId: bucket.employeeId,
