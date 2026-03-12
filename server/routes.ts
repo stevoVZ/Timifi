@@ -5963,5 +5963,76 @@ export async function registerRoutes(
     }
   });
 
+  // ── Xero Payrun Push ─────────────────────────────────────────────────────
+  app.get("/api/payroll/prepare", requireAuth, async (req, res) => {
+    try {
+      const month = parseInt(req.query.month as string);
+      const year = parseInt(req.query.year as string);
+      if (!month || !year) return res.status(400).json({ message: "month and year required" });
+
+      const allEmployees = await storage.getEmployees();
+      const activePayroll = allEmployees.filter(
+        e => e.status === "ACTIVE" && e.paymentMethod === "PAYROLL"
+      );
+
+      const { getSuperRate } = await import("./rates");
+      const superRate = getSuperRate(new Date(year, month - 1, 1));
+      const superFraction = superRate / 100;
+
+      const result = [];
+      for (const emp of activePayroll) {
+        const timesheets = await storage.getTimesheetsByEmployee(emp.id);
+        const ts = timesheets.find(t => t.year === year && t.month === month);
+        const hours = ts ? parseFloat(ts.totalHours) : 0;
+        const rate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
+        const gross = Math.round(hours * rate * 100) / 100;
+        const payg = ts ? Math.round(gross * 0.19 * 100) / 100 : 0;
+        const superAmt = Math.round(gross * superFraction * 100) / 100;
+        const net = Math.round((gross - payg) * 100) / 100;
+
+        result.push({
+          id: emp.id,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          xeroEmployeeId: emp.xeroEmployeeId || null,
+          hourlyRate: rate,
+          timesheet: ts ? {
+            id: ts.id,
+            totalHours: parseFloat(ts.totalHours),
+            status: ts.status,
+          } : null,
+          calculated: { hours, rate, gross, payg, super: superAmt, net },
+          included: hours > 0 && !!emp.xeroEmployeeId,
+        });
+      }
+
+      // Fetch Xero calendars
+      let calendars: any[] = [];
+      try {
+        const { getXeroPayrollCalendars } = await import("./xero-payrun");
+        calendars = await getXeroPayrollCalendars();
+      } catch {}
+
+      res.json({ employees: result, superRate, calendars });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to prepare payroll" });
+    }
+  });
+
+  app.post("/api/payroll/push-to-xero", requireAuth, async (req, res) => {
+    try {
+      const { calendarId, periodStart, periodEnd, paymentDate, employees } = req.body;
+      if (!calendarId || !periodStart || !periodEnd || !paymentDate) {
+        return res.status(400).json({ message: "calendarId, periodStart, periodEnd, paymentDate required" });
+      }
+      const { pushPayRunToXero } = await import("./xero-payrun");
+      const result = await pushPayRunToXero({ calendarId, periodStart, periodEnd, paymentDate, employees });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to push pay run to Xero" });
+    }
+  });
+
+
   return httpServer;
 }
