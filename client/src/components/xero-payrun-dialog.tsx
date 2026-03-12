@@ -460,5 +460,3 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
     </Dialog>
   );
 }
-EOSX
-echo "Done"
