@@ -75,6 +75,7 @@ export const timesheets = pgTable("timesheets", {
   fileName: text("file_name"),
   fileHash: text("file_hash"),
   fileSizeBytes: integer("file_size_bytes"),
+  source: text("source"),
   submittedAt: timestamp("submitted_at"),
   reviewedAt: timestamp("reviewed_at"),
   tenantId: varchar("tenant_id"),

@@ -242,6 +242,202 @@ export async function scanTimesheetPdf(
   }
 }
 
+export interface RctiLineItem {
+  contractorNo: string | null;
+  contractorName: string | null;
+  description: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  hours: number;
+  rateExGst: number;
+  totalExGst: number;
+}
+
+export interface RctiScanResult {
+  fileName: string;
+  fileSize: string;
+  fileSizeBytes: number;
+  fileHash: string;
+  clientName: string | null;
+  clientAbn: string | null;
+  reference: string | null;
+  date: string | null;
+  dueDate: string | null;
+  lineItems: RctiLineItem[];
+  totalHours: number;
+  totalExGst: number;
+  gstAmount: number;
+  totalInclGst: number;
+  confidence: number;
+  warnings: string[];
+}
+
+const RCTI_SYSTEM_PROMPT = `You are an RCTI (Recipient Created Tax Invoice) data extraction assistant. You will receive one or more page images from a PDF RCTI document and must extract structured data from them.
+
+An RCTI is an invoice created by the buyer (labour hire agency) on behalf of the contractor/supplier for services rendered. Extract the following:
+
+1. The issuing client/organisation name (the company that issued the RCTI)
+2. The client's ABN (Australian Business Number)
+3. The RCTI reference/invoice number
+4. The date and due date of the RCTI
+5. Each line item with:
+   - Contractor number/code
+   - Contractor name (the person who performed the work)
+   - Description/details of work
+   - Start date and end date of the work period
+   - Quantity (hours worked)
+   - Rate (hourly rate, excluding GST)
+   - Line total (excluding GST)
+6. Totals: total hours, total excluding GST, GST amount, total including GST
+
+IMPORTANT RULES:
+- Parse ALL line items carefully — there may be multiple contractors on a single RCTI
+- Rates and amounts should be numeric values (not strings)
+- Dates should be in YYYY-MM-DD format
+- If a field is not clearly visible, set it to null
+- Look for patterns like "Timesheet Reference", "Qty", "Rate Ex GST", "Total Ex GST"
+
+Return your response as a JSON object with this exact structure:
+{
+  "clientName": "string or null",
+  "clientAbn": "string or null",
+  "reference": "string or null",
+  "date": "YYYY-MM-DD or null",
+  "dueDate": "YYYY-MM-DD or null",
+  "lineItems": [
+    {
+      "contractorNo": "string or null",
+      "contractorName": "string or null",
+      "description": "string or null",
+      "startDate": "YYYY-MM-DD or null",
+      "endDate": "YYYY-MM-DD or null",
+      "hours": number,
+      "rateExGst": number,
+      "totalExGst": number
+    }
+  ],
+  "totalHours": number,
+  "totalExGst": number,
+  "gstAmount": number,
+  "totalInclGst": number,
+  "confidence": number between 0 and 100,
+  "warnings": ["array of warning strings"]
+}
+
+Be precise with numbers. If you cannot read a value clearly, set confidence lower and add a warning. Always return valid JSON.`;
+
+export async function scanRctiPdf(
+  fileBuffer: Buffer,
+  fileName: string
+): Promise<RctiScanResult> {
+  const fileSizeKB = (fileBuffer.length / 1024).toFixed(0);
+  const fileSizeBytes = fileBuffer.length;
+  const fileHash = createHash("sha256").update(fileBuffer).digest("hex");
+
+  try {
+    const pageImages = await pdfToImages(fileBuffer);
+
+    if (pageImages.length === 0) {
+      throw new Error("Failed to convert PDF to images — no pages extracted");
+    }
+
+    const imageContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] = pageImages.map(
+      (img) => ({
+        type: "image_url" as const,
+        image_url: {
+          url: `data:image/png;base64,${img.toString("base64")}`,
+          detail: "high" as const,
+        },
+      })
+    );
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: RCTI_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `Extract RCTI data from these ${pageImages.length} page image(s) of a PDF RCTI document. Parse all line items, rates, and amounts carefully.`,
+            },
+            ...imageContent,
+          ],
+        },
+      ],
+      max_tokens: 4000,
+      response_format: { type: "json_object" },
+    });
+
+    const content = response.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(content);
+
+    const lineItems: RctiLineItem[] = Array.isArray(parsed.lineItems)
+      ? parsed.lineItems.map((li: any) => ({
+          contractorNo: li.contractorNo || null,
+          contractorName: li.contractorName || null,
+          description: li.description || null,
+          startDate: li.startDate || null,
+          endDate: li.endDate || null,
+          hours: Number(li.hours) || 0,
+          rateExGst: Number(li.rateExGst) || 0,
+          totalExGst: Number(li.totalExGst) || 0,
+        }))
+      : [];
+
+    const confidence = Math.min(100, Math.max(0, Number(parsed.confidence) || 70));
+    const warnings: string[] = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+
+    if (lineItems.length === 0) {
+      warnings.push("No line items extracted — please verify the PDF format");
+    }
+
+    if (confidence < 70) {
+      warnings.push("Low confidence scan — please verify extracted data manually");
+    }
+
+    return {
+      fileName,
+      fileSize: `${fileSizeKB} KB`,
+      fileSizeBytes,
+      fileHash,
+      clientName: parsed.clientName || null,
+      clientAbn: parsed.clientAbn || null,
+      reference: parsed.reference || null,
+      date: parsed.date || null,
+      dueDate: parsed.dueDate || null,
+      lineItems,
+      totalHours: Number(parsed.totalHours) || 0,
+      totalExGst: Number(parsed.totalExGst) || 0,
+      gstAmount: Number(parsed.gstAmount) || 0,
+      totalInclGst: Number(parsed.totalInclGst) || 0,
+      confidence,
+      warnings,
+    };
+  } catch (error: any) {
+    console.error(`RCTI OCR error for ${fileName}:`, error.message);
+    return {
+      fileName,
+      fileSize: `${fileSizeKB} KB`,
+      fileSizeBytes,
+      fileHash,
+      clientName: null,
+      clientAbn: null,
+      reference: null,
+      date: null,
+      dueDate: null,
+      lineItems: [],
+      totalHours: 0,
+      totalExGst: 0,
+      gstAmount: 0,
+      totalInclGst: 0,
+      confidence: 0,
+      warnings: [`AI extraction failed: ${error.message}`],
+    };
+  }
+}
+
 function getMonthName(month: number): string {
   const months = ["", "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"];

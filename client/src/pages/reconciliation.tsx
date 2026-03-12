@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { TopBar } from "@/components/top-bar";
@@ -30,7 +30,7 @@ import type { InvoiceLineItem, InvoicePayment } from "@shared/schema";
 import {
   Users, Clock, FileText, CreditCard, CheckCircle, XCircle, AlertTriangle,
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, ArrowUpDown, DollarSign, Percent,
-  ExternalLink, Loader2, Send, Building2, UploadCloud,
+  ExternalLink, Loader2, Send, Building2, UploadCloud, Eye, Paperclip,
 } from "lucide-react";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -38,7 +38,7 @@ const MONTHS = ["", "January", "February", "March", "April", "May", "June", "Jul
 interface TimesheetEntry {
   id: string; hours: number; regularHours: number; overtimeHours: number; status: string; grossValue: number;
   clientId?: string | null; placementId?: string | null; fileName?: string | null;
-  fileHash?: string | null; fileSizeBytes?: number | null;
+  fileHash?: string | null; fileSizeBytes?: number | null; source?: string | null;
 }
 
 interface InvoiceEntry {
@@ -232,9 +232,9 @@ export default function ReconciliationPage() {
         title="Monthly Reconciliation"
         subtitle="Track workflow completion across all employees"
       />
-      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
-        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <main className="flex-1 overflow-auto bg-muted/30">
+        <div className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b px-3 sm:px-6 py-2.5">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={prevMonth} data-testid="button-prev-month">
                 <ChevronLeft className="w-4 h-4" />
@@ -266,6 +266,9 @@ export default function ReconciliationPage() {
               </Button>
             </div>
           </div>
+        </div>
+        <div className="p-3 sm:p-6">
+        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5">
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {kpis.map((k) => (
@@ -566,6 +569,7 @@ export default function ReconciliationPage() {
             </div>
           )}
         </div>
+        </div>
       </main>
 
       {timesheetDetail && (
@@ -623,6 +627,33 @@ function TimesheetDetailDialog({
   const [lastScanMeta, setLastScanMeta] = useState<{ fileHash: string; fileSizeBytes: number; fileName: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pdfViewId, setPdfViewId] = useState<string | null>(null);
+  const [pdfData, setPdfData] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfTitle, setPdfTitle] = useState("");
+
+  const handleViewPdf = useCallback(async (tsId: string, fileName: string) => {
+    setPdfViewId(tsId);
+    setPdfTitle(fileName);
+    setPdfLoading(true);
+    setPdfData(null);
+    try {
+      const res = await fetch(`/api/timesheets/${tsId}/documents`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch document");
+      const docs = await res.json();
+      if (docs.length > 0 && docs[0].fileUrl) {
+        setPdfData(docs[0].fileUrl);
+      } else {
+        toast({ title: "No PDF document found", variant: "destructive" });
+        setPdfViewId(null);
+      }
+    } catch {
+      toast({ title: "Failed to load PDF", variant: "destructive" });
+      setPdfViewId(null);
+    } finally {
+      setPdfLoading(false);
+    }
+  }, [toast]);
 
   const handlePdfUpload = useCallback(async (files: FileList | null) => {
     if (!files) return;
@@ -777,15 +808,38 @@ function TimesheetDetailDialog({
               {allTs.map((ts, idx) => (
                 <div
                   key={ts.id}
-                  className={`flex justify-between items-center p-2 rounded border cursor-pointer transition-colors ${editIdx === idx || (editIdx === null && idx === 0) ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
+                  className={`p-2 rounded border cursor-pointer transition-colors ${editIdx === idx || (editIdx === null && idx === 0) ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
                   onClick={() => { setEditIdx(idx); setHours(String(ts.hours)); setRegularHours(String(ts.regularHours)); setOvertimeHours(String(ts.overtimeHours)); setLastScanMeta(null); setScanWarning(null); }}
                   data-testid={`ts-entry-${idx}`}
                 >
-                  <div>
-                    <span className="font-mono font-semibold">{ts.hours}h</span>
-                    <Badge variant="secondary" className="text-[9px] ml-1.5">{ts.status}</Badge>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <span className="font-mono font-semibold">{ts.hours}h</span>
+                      <Badge variant="secondary" className="text-[9px] ml-1.5">{ts.status}</Badge>
+                    </div>
+                    <span className="font-mono text-muted-foreground">{fmtCurrencyFull(ts.grossValue)}</span>
                   </div>
-                  <span className="font-mono text-muted-foreground">{fmtCurrencyFull(ts.grossValue)}</span>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {ts.fileName ? (
+                      <>
+                        <Paperclip className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                        <span className="text-[10px] text-muted-foreground truncate max-w-[200px]" title={ts.fileName}>{ts.fileName}</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-1.5 ml-auto text-[10px] gap-1"
+                          onClick={(e) => { e.stopPropagation(); handleViewPdf(ts.id, ts.fileName!); }}
+                          data-testid={`button-view-pdf-${idx}`}
+                        >
+                          <Eye className="w-3 h-3" /> View
+                        </Button>
+                      </>
+                    ) : (
+                      <Badge variant="outline" className="text-[9px] h-4">
+                        {ts.source === "XERO_SYNC" ? "Xero Sync" : ts.source === "ADMIN_ENTRY" ? "Admin Entry" : "Manual entry"}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -846,10 +900,52 @@ function TimesheetDetailDialog({
               <Button size="sm" variant="outline" onClick={onClose}>Cancel</Button>
             </div>
           </div>
+          {pdfViewId && (
+            <div className="border rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between p-2 bg-muted/50 border-b">
+                <div className="flex items-center gap-1.5 text-xs">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span className="font-medium truncate max-w-[250px]">{pdfTitle}</span>
+                </div>
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => { setPdfViewId(null); setPdfData(null); }} data-testid="button-close-pdf">
+                  Close
+                </Button>
+              </div>
+              {pdfLoading ? (
+                <div className="flex items-center justify-center h-[400px]">
+                  <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                </div>
+              ) : pdfData ? (
+                <PdfIframe pdfData={pdfData} />
+              ) : null}
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
   );
+}
+
+function PdfIframe({ pdfData }: { pdfData: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pdfData) { setBlobUrl(null); return; }
+    try {
+      let raw = pdfData;
+      if (raw.startsWith("data:")) raw = raw.split(",")[1];
+      const bytes = atob(raw);
+      const arr = new Uint8Array(bytes.length);
+      for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+      const blob = new Blob([arr], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      setBlobUrl(url);
+      return () => URL.revokeObjectURL(url);
+    } catch { setBlobUrl(null); }
+  }, [pdfData]);
+
+  if (!blobUrl) return <div className="flex items-center justify-center h-[400px] text-xs text-muted-foreground">Unable to load PDF</div>;
+  return <iframe src={blobUrl} className="w-full h-[400px]" title="Timesheet PDF" data-testid="iframe-pdf-preview" />;
 }
 
 function InvoiceDetailDialog({

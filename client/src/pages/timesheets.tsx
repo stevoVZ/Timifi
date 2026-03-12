@@ -2248,40 +2248,42 @@ function MonthlyHoursView() {
   };
 
   return (
-    <div className="space-y-4">
+    <div>
       <PdfViewerDialog
         open={docViewerOpen}
         onOpenChange={setDocViewerOpen}
         pdfData={docViewerData}
         title={docViewerTitle}
       />
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth} data-testid="button-monthly-prev">
-          <ChevronLeft className="w-4 h-4" />
-        </Button>
-        <Select value={String(month)} onValueChange={(v) => setMonth(parseInt(v))}>
-          <SelectTrigger className="h-8 w-[130px] text-sm font-semibold" data-testid="select-monthly-month">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {MONTHS.slice(1).map((m, i) => (
-              <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={String(year)} onValueChange={(v) => setYear(parseInt(v))}>
-          <SelectTrigger className="h-8 w-[80px] text-sm font-semibold" data-testid="select-monthly-year">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {[now.getFullYear() - 2, now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y => (
-              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button variant="outline" size="icon" className="h-8 w-8" onClick={nextMonth} data-testid="button-monthly-next">
-          <ChevronRight className="w-4 h-4" />
-        </Button>
+      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b px-3 py-2.5 mb-4 -mx-3 -mt-3 sm:-mx-6 sm:-mt-4 rounded-t-lg">
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={prevMonth} data-testid="button-monthly-prev">
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <Select value={String(month)} onValueChange={(v) => setMonth(parseInt(v))}>
+            <SelectTrigger className="h-8 w-[130px] text-sm font-semibold" data-testid="select-monthly-month">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MONTHS.slice(1).map((m, i) => (
+                <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={String(year)} onValueChange={(v) => setYear(parseInt(v))}>
+            <SelectTrigger className="h-8 w-[80px] text-sm font-semibold" data-testid="select-monthly-year">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[now.getFullYear() - 2, now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={nextMonth} data-testid="button-monthly-next">
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       <Card>

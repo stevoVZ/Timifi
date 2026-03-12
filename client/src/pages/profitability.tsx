@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { TopBar } from "@/components/top-bar";
@@ -27,7 +27,8 @@ import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown,
   DollarSign, Percent, Users, FileText, Wallet, Link2,
   ArrowUpRight, ArrowDownRight, Minus, X, Calculator,
-  CreditCard, Receipt, Clock, Plus, Activity,
+  CreditCard, Receipt, Clock, Plus, Activity, Landmark,
+  ExternalLink, CheckCircle2, AlertCircle, Eye, Paperclip, Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -44,6 +45,18 @@ interface InvoiceDetail {
   issueDate: string | null;
   status: string;
   invoiceType: string | null;
+  bankLinked?: boolean;
+}
+
+interface TimesheetDetail {
+  id: string;
+  totalHours: number;
+  regularHours: number;
+  overtimeHours: number;
+  status: string;
+  fileName: string | null;
+  source: string | null;
+  clientName: string | null;
 }
 
 interface RctiDetail {
@@ -82,6 +95,8 @@ interface ProfitabilityRow {
   chargeOutRate: number;
   payRate: number;
   rateSpread: number;
+  payRateSource?: "PLACEMENT" | "RATE_HISTORY" | "PAYROLL_DERIVED" | "EMPLOYEE_DEFAULT";
+  chargeOutRateSource?: "PLACEMENT" | "RATE_HISTORY" | "INVOICE_DERIVED" | "EMPLOYEE_DEFAULT";
   expectedHours: number;
   utilisation: number;
   employee: {
@@ -109,6 +124,7 @@ interface ProfitabilityRow {
     rctiAmountExGst: number;
     invoices: InvoiceDetail[];
     rctis: RctiDetail[];
+    timesheets?: TimesheetDetail[];
   };
   cost: {
     grossEarnings: number;
@@ -159,6 +175,28 @@ interface ProfitabilityData {
   period: { month: number; year: number };
 }
 
+function rateSourceLabel(source?: string): { label: string; color: string; title: string } {
+  switch (source) {
+    case "PLACEMENT": return { label: "P", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300", title: "From placement" };
+    case "RATE_HISTORY": return { label: "H", color: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300", title: "From rate history" };
+    case "PAYROLL_DERIVED": return { label: "PR", color: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300", title: "Derived from payroll" };
+    case "INVOICE_DERIVED": return { label: "INV", color: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300", title: "Derived from invoices" };
+    case "EMPLOYEE_DEFAULT": return { label: "D", color: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400", title: "Employee default rate" };
+    default: return { label: "", color: "", title: "" };
+  }
+}
+
+function RateSourceBadge({ source }: { source?: string }) {
+  if (!source) return null;
+  const { label, color, title } = rateSourceLabel(source);
+  if (!label) return null;
+  return (
+    <span className={`inline-flex items-center justify-center text-[9px] font-semibold rounded px-1 py-0.5 leading-none ml-1 ${color}`} title={title}>
+      {label}
+    </span>
+  );
+}
+
 function fmtCurrency(n: number): string {
   if (n === 0) return "$0";
   const prefix = n < 0 ? "-" : "";
@@ -183,7 +221,22 @@ export default function ProfitabilityPage() {
   const [year, setYear] = useState(now.getFullYear());
   const [initialPeriodSet, setInitialPeriodSet] = useState(false);
   const [drillDown, setDrillDown] = useState<DrillDownState | null>(null);
+  const [closedViaBack, setClosedViaBack] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (drillDown) {
+      setClosedViaBack(false);
+      history.pushState({ drillDown: true }, "");
+      const onPopState = (e: PopStateEvent) => {
+        if (e.state?.drillDown) return;
+        setClosedViaBack(true);
+        setDrillDown(null);
+      };
+      window.addEventListener("popstate", onPopState);
+      return () => window.removeEventListener("popstate", onPopState);
+    }
+  }, [drillDown]);
 
   const { data: latestPeriod } = useQuery<{ month: number; year: number }>({
     queryKey: ["/api/bank-transactions/latest-period"],
@@ -236,36 +289,39 @@ export default function ProfitabilityPage() {
   };
 
   const rows = data?.rows || [];
-  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalCostIncPT: 0, totalProfit: 0, totalProfitExPT: 0, totalProfitIncPT: 0, totalPayrollTax: 0, totalCashReceived: 0, totalPayrollFees: 0, avgMargin: 0, avgMarginIncPT: 0, avgUtilisation: 0, totalActualHours: 0, totalExpectedHours: 0 };
+  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalCostIncPT: 0, totalPayrollTax: 0, totalProfitExPT: 0, totalProfitIncPT: 0, totalProfit: 0, totalCashReceived: 0, totalPayrollFees: 0, avgMargin: 0, avgMarginExPT: 0, avgMarginIncPT: 0, avgUtilisation: 0, totalActualHours: 0, totalExpectedHours: 0 };
 
   return (
     <div className="flex flex-col h-full" data-testid="page-profitability">
       <TopBar title="Client Profitability" subtitle="Revenue vs cost analysis per employee placement" />
 
-      <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon" onClick={prevMonth} data-testid="button-prev-month">
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <span className="text-sm font-medium w-40 text-center" data-testid="text-current-period">
-              {MONTHS[month]} {year}
-            </span>
-            <Button variant="outline" size="icon" onClick={nextMonth} data-testid="button-next-month">
-              <ChevronRight className="w-4 h-4" />
+      <div className="flex-1 overflow-y-auto">
+        <div className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b px-3 sm:px-6 py-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="icon" onClick={prevMonth} data-testid="button-prev-month">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="text-sm font-medium w-40 text-center" data-testid="text-current-period">
+                {MONTHS[month]} {year}
+              </span>
+              <Button variant="outline" size="icon" onClick={nextMonth} data-testid="button-next-month">
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => autoLinkMutation.mutate()}
+              disabled={autoLinkMutation.isPending}
+              data-testid="button-auto-link"
+            >
+              <Link2 className="w-4 h-4 mr-2" />
+              {autoLinkMutation.isPending ? "Linking..." : "Auto-Link Invoices"}
             </Button>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => autoLinkMutation.mutate()}
-            disabled={autoLinkMutation.isPending}
-            data-testid="button-auto-link"
-          >
-            <Link2 className="w-4 h-4 mr-2" />
-            {autoLinkMutation.isPending ? "Linking..." : "Auto-Link Invoices"}
-          </Button>
         </div>
+        <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
 
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -400,10 +456,10 @@ export default function ProfitabilityPage() {
                             </Link>
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-muted-foreground" data-testid={`cell-charge-rate-${row.placementId}`}>
-                            ${row.chargeOutRate.toFixed(0)}
+                            <span className="inline-flex items-center">${row.chargeOutRate.toFixed(0)}<RateSourceBadge source={row.chargeOutRateSource} /></span>
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-muted-foreground" data-testid={`cell-pay-rate-${row.placementId}`}>
-                            {row.payRate > 0 ? `$${row.payRate.toFixed(0)}` : "—"}
+                            <span className="inline-flex items-center">{row.payRate > 0 ? `$${row.payRate.toFixed(0)}` : "—"}<RateSourceBadge source={row.payRateSource} /></span>
                           </td>
                           <td className={`px-4 py-3 text-right tabular-nums font-medium ${spreadColor}`} data-testid={`cell-spread-${row.placementId}`}>
                             {row.rateSpread !== 0 ? `$${row.rateSpread.toFixed(0)}` : "—"}
@@ -523,6 +579,7 @@ export default function ProfitabilityPage() {
             </CardContent>
           </Card>
         )}
+        </div>
       </div>
 
       {drillDown && (
@@ -530,7 +587,12 @@ export default function ProfitabilityPage() {
           row={drillDown.row}
           column={drillDown.column}
           period={{ month, year }}
-          onClose={() => setDrillDown(null)}
+          onClose={() => {
+            if (!closedViaBack) {
+              history.back();
+            }
+            setDrillDown(null);
+          }}
         />
       )}
     </div>
@@ -618,6 +680,33 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
   const [addOvertime, setAddOvertime] = useState("");
   const hasAnyHoursData = row.revenue.invoicedHours > 0 || row.revenue.timesheetHours > 0 || row.revenue.estimatedHours > 0;
   const showAddForm = !hasAnyHoursData || (row.revenue.invoicedHours === 0 && row.revenue.timesheetHours === 0);
+  const [pdfViewId, setPdfViewId] = useState<string | null>(null);
+  const [pdfData, setPdfData] = useState<string | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfTitle, setPdfTitle] = useState("");
+
+  const handleViewPdf = useCallback(async (tsId: string, fileName: string) => {
+    setPdfViewId(tsId);
+    setPdfTitle(fileName);
+    setPdfLoading(true);
+    setPdfData(null);
+    try {
+      const res = await fetch(`/api/timesheets/${tsId}/documents`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch document");
+      const docs = await res.json();
+      if (docs.length > 0 && docs[0].fileUrl) {
+        setPdfData(docs[0].fileUrl);
+      } else {
+        toast({ title: "No PDF document found", variant: "destructive" });
+        setPdfViewId(null);
+      }
+    } catch {
+      toast({ title: "Failed to load PDF", variant: "destructive" });
+      setPdfViewId(null);
+    } finally {
+      setPdfLoading(false);
+    }
+  }, [toast]);
 
   const addHoursMutation = useMutation({
     mutationFn: async () => {
@@ -719,7 +808,10 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
 
       {row.revenue.invoices.length > 0 && (
         <div>
-          <div className="text-xs font-medium text-muted-foreground mb-2">From invoices</div>
+          <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+            <FileText className="w-3.5 h-3.5" />
+            From invoices
+          </div>
           <div className="border rounded-md overflow-hidden">
             <Table>
               <TableHeader>
@@ -733,7 +825,12 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
               <TableBody>
                 {row.revenue.invoices.map((inv) => (
                   <TableRow key={inv.id} className="text-sm">
-                    <TableCell className="font-mono">{inv.invoiceNumber || "—"}</TableCell>
+                    <TableCell className="font-mono">
+                      <Link href="/invoices" className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-invoice-${inv.id}`}>
+                        {inv.invoiceNumber || "—"}
+                        <ExternalLink className="w-3 h-3" />
+                      </Link>
+                    </TableCell>
                     <TableCell>{inv.contactName || "—"}</TableCell>
                     <TableCell className="text-right tabular-nums font-medium">{inv.hours > 0 ? inv.hours.toFixed(1) : "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">{inv.hours > 0 ? fmtCurrencyFull(inv.amountExclGst / inv.hours) + "/hr" : "—"}</TableCell>
@@ -751,7 +848,10 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
       )}
       {row.revenue.rctis.length > 0 && (
         <div>
-          <div className="text-xs font-medium text-muted-foreground mb-2">From RCTIs</div>
+          <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+            <Receipt className="w-3.5 h-3.5" />
+            From RCTIs
+          </div>
           <div className="border rounded-md overflow-hidden">
             <Table>
               <TableHeader>
@@ -764,7 +864,12 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
               <TableBody>
                 {row.revenue.rctis.map((r) => (
                   <TableRow key={r.id} className="text-sm">
-                    <TableCell>{r.clientName || "—"}</TableCell>
+                    <TableCell>
+                      <Link href="/rctis" className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-rcti-${r.id}`}>
+                        {r.clientName || "—"}
+                        <ExternalLink className="w-3 h-3" />
+                      </Link>
+                    </TableCell>
                     <TableCell>{MONTHS[r.month]} {r.year}</TableCell>
                     <TableCell className="text-right tabular-nums font-medium">{r.hours > 0 ? r.hours.toFixed(1) : "—"}</TableCell>
                   </TableRow>
@@ -772,6 +877,92 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
               </TableBody>
             </Table>
           </div>
+        </div>
+      )}
+      {(row.revenue.timesheets?.length ?? 0) > 0 && (
+        <div>
+          <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5" />
+            From timesheets ({row.revenue.timesheets!.length})
+          </div>
+          <div className="border rounded-md overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="text-xs">
+                  <TableHead>Client</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Regular</TableHead>
+                  <TableHead className="text-right">Overtime</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {row.revenue.timesheets!.map((ts) => (
+                  <TableRow key={ts.id} className="text-sm" data-testid={`drilldown-timesheet-${ts.id}`}>
+                    <TableCell>
+                      <div>{ts.clientName || "—"}</div>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        {ts.fileName ? (
+                          <>
+                            <Paperclip className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                            <span className="text-[10px] text-muted-foreground truncate max-w-[140px]" title={ts.fileName}>{ts.fileName}</span>
+                            <button
+                              className="inline-flex items-center gap-0.5 text-[10px] text-primary hover:underline ml-1"
+                              onClick={() => handleViewPdf(ts.id, ts.fileName!)}
+                              data-testid={`button-view-pdf-${ts.id}`}
+                            >
+                              <Eye className="w-3 h-3" /> View
+                            </button>
+                          </>
+                        ) : (
+                          <Badge variant="outline" className="text-[9px] h-4">
+                            {ts.source === "XERO_SYNC" ? "Xero Sync" : ts.source === "ADMIN_ENTRY" ? "Admin Entry" : "Manual entry"}
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-[10px]">{ts.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{ts.regularHours > 0 ? ts.regularHours.toFixed(1) : "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{ts.overtimeHours > 0 ? ts.overtimeHours.toFixed(1) : "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">
+                      <Link href="/timesheets" className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-timesheet-${ts.id}`}>
+                        {ts.totalHours.toFixed(1)}
+                        <ExternalLink className="w-3 h-3" />
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                <TableRow className="bg-muted/50 font-semibold text-sm">
+                  <TableCell colSpan={2}>Total timesheet hours</TableCell>
+                  <TableCell className="text-right tabular-nums">{row.revenue.timesheets!.reduce((s, t) => s + t.regularHours, 0).toFixed(1)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{row.revenue.timesheets!.reduce((s, t) => s + t.overtimeHours, 0).toFixed(1)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{row.revenue.timesheets!.reduce((s, t) => s + t.totalHours, 0).toFixed(1)}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+          {pdfViewId && (
+            <div className="border rounded-lg overflow-hidden mt-2">
+              <div className="flex items-center justify-between p-2 bg-muted/50 border-b">
+                <div className="flex items-center gap-1.5 text-xs">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span className="font-medium truncate max-w-[250px]">{pdfTitle}</span>
+                </div>
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => { setPdfViewId(null); setPdfData(null); }} data-testid="button-close-profitability-pdf">
+                  Close
+                </Button>
+              </div>
+              {pdfLoading ? (
+                <div className="flex items-center justify-center h-[400px]">
+                  <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                </div>
+              ) : pdfData ? (
+                <ProfitabilityPdfIframe pdfData={pdfData} />
+              ) : null}
+            </div>
+          )}
         </div>
       )}
 
@@ -830,6 +1021,28 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
   );
 }
 
+function ProfitabilityPdfIframe({ pdfData }: { pdfData: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pdfData) { setBlobUrl(null); return; }
+    try {
+      let raw = pdfData;
+      if (raw.startsWith("data:")) raw = raw.split(",")[1];
+      const bytes = atob(raw);
+      const arr = new Uint8Array(bytes.length);
+      for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+      const blob = new Blob([arr], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      setBlobUrl(url);
+      return () => URL.revokeObjectURL(url);
+    } catch { setBlobUrl(null); }
+  }, [pdfData]);
+
+  if (!blobUrl) return <div className="flex items-center justify-center h-[400px] text-xs text-muted-foreground">Unable to load PDF</div>;
+  return <iframe src={blobUrl} className="w-full h-[400px]" title="Timesheet PDF" data-testid="iframe-profitability-pdf-preview" />;
+}
+
 function DrillDownDialog({
   row,
   column,
@@ -883,7 +1096,7 @@ function DrillDownDialog({
               <div className="text-xs font-medium text-muted-foreground mb-1">Rate Economics</div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Charge-out rate</span>
-                <span className="tabular-nums font-medium">${row.chargeOutRate.toFixed(2)}/hr</span>
+                <span className="tabular-nums font-medium inline-flex items-center">${row.chargeOutRate.toFixed(2)}/hr<RateSourceBadge source={row.chargeOutRateSource} /></span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">× Hours worked</span>
@@ -911,12 +1124,18 @@ function DrillDownDialog({
                         <TableHead className="text-right">Amount (ex GST)</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Bank</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {row.revenue.invoices.map((inv) => (
                         <TableRow key={inv.id} className="text-sm" data-testid={`drilldown-invoice-${inv.id}`}>
-                          <TableCell className="font-mono">{inv.invoiceNumber || "—"}</TableCell>
+                          <TableCell className="font-mono">
+                            <Link href="/invoices" className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-revenue-invoice-${inv.id}`}>
+                              {inv.invoiceNumber || "—"}
+                              <ExternalLink className="w-3 h-3" />
+                            </Link>
+                          </TableCell>
                           <TableCell>{inv.contactName || "—"}</TableCell>
                           <TableCell className="text-right tabular-nums">{inv.hours > 0 ? inv.hours.toFixed(1) : "—"}</TableCell>
                           <TableCell className="text-right tabular-nums font-medium">{fmtCurrencyFull(inv.amountExclGst)}</TableCell>
@@ -924,12 +1143,25 @@ function DrillDownDialog({
                           <TableCell>
                             <Badge variant="outline" className="text-[10px]">{inv.status}</Badge>
                           </TableCell>
+                          <TableCell>
+                            {inv.bankLinked ? (
+                              <Badge variant="outline" className="text-[10px] text-green-600 border-green-300 bg-green-50" data-testid={`badge-bank-linked-${inv.id}`}>
+                                <CheckCircle2 className="w-3 h-3 mr-0.5" />
+                                Paid
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 bg-amber-50" data-testid={`badge-bank-unlinked-${inv.id}`}>
+                                <AlertCircle className="w-3 h-3 mr-0.5" />
+                                Unpaid
+                              </Badge>
+                            )}
+                          </TableCell>
                         </TableRow>
                       ))}
                       <TableRow className="bg-muted/50 font-semibold text-sm">
                         <TableCell colSpan={3}>Invoice subtotal</TableCell>
                         <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.revenue.invoices.reduce((s, i) => s + i.amountExclGst, 0))}</TableCell>
-                        <TableCell colSpan={2} />
+                        <TableCell colSpan={3} />
                       </TableRow>
                     </TableBody>
                   </Table>
@@ -955,7 +1187,12 @@ function DrillDownDialog({
                     <TableBody>
                       {row.revenue.rctis.map((r) => (
                         <TableRow key={r.id} className="text-sm" data-testid={`drilldown-rcti-${r.id}`}>
-                          <TableCell>{r.clientName || "—"}</TableCell>
+                          <TableCell>
+                            <Link href="/rctis" className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-revenue-rcti-${r.id}`}>
+                              {r.clientName || "—"}
+                              <ExternalLink className="w-3 h-3" />
+                            </Link>
+                          </TableCell>
                           <TableCell>{MONTHS[r.month]} {r.year}</TableCell>
                           <TableCell className="text-right tabular-nums">{r.hours > 0 ? r.hours.toFixed(1) : "—"}</TableCell>
                           <TableCell className="text-right tabular-nums font-medium">{fmtCurrencyFull(r.amountExclGst)}</TableCell>
@@ -966,7 +1203,43 @@ function DrillDownDialog({
                 </div>
               </div>
             )}
-            {row.revenue.invoices.length === 0 && row.revenue.rctis.length === 0 && (
+            {row.cashReceivedTxns.length > 0 && (
+              <div>
+                <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                  <Landmark className="w-3.5 h-3.5" />
+                  Bank Statements ({row.cashReceivedTxns.length})
+                </div>
+                <div className="border rounded-md overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="text-xs">
+                        <TableHead>Date</TableHead>
+                        <TableHead>Contact</TableHead>
+                        <TableHead>Reference</TableHead>
+                        <TableHead className="max-w-[120px]">Description</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {row.cashReceivedTxns.map((t) => (
+                        <TableRow key={t.id} className="text-sm" data-testid={`drilldown-bank-${t.id}`}>
+                          <TableCell className="whitespace-nowrap">{fmtDate(t.date)}</TableCell>
+                          <TableCell>{t.contactName || "—"}</TableCell>
+                          <TableCell className="font-mono text-xs">{t.reference || "—"}</TableCell>
+                          <TableCell className="max-w-[120px] truncate text-muted-foreground">{t.description || "—"}</TableCell>
+                          <TableCell className="text-right tabular-nums font-medium">{fmtCurrencyFull(t.amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="bg-muted/50 font-semibold text-sm">
+                        <TableCell colSpan={4}>Cash received subtotal</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtCurrencyFull(row.cashReceivedTxns.reduce((s, t) => s + t.amount, 0))}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+            {row.revenue.invoices.length === 0 && row.revenue.rctis.length === 0 && row.cashReceivedTxns.length === 0 && (
               <div className="text-center text-sm text-muted-foreground py-6">No revenue records found for this period.</div>
             )}
           </div>
@@ -1032,8 +1305,8 @@ function DrillDownDialog({
               {row.payRate > 0 && (
                 <>
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Pay rate</span>
-                    <span className="tabular-nums">${row.payRate.toFixed(2)}/hr</span>
+                    <span className="text-muted-foreground">Pay rate (incl super)</span>
+                    <span className="tabular-nums inline-flex items-center">${row.payRate.toFixed(2)}/hr<RateSourceBadge source={row.payRateSource} /></span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">× Hours worked</span>
@@ -1050,10 +1323,10 @@ function DrillDownDialog({
                   <>
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-[10px]" data-testid="badge-estimated-cost">Estimated</Badge>
-                      <span className="text-xs text-muted-foreground">Based on placement pay rates × hours (payroll not yet processed)</span>
+                      <span className="text-xs text-muted-foreground">Based on placement pay rates (incl super) × hours (payroll not yet processed)</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Estimated Cost (pay rates × hours + super)</span>
+                      <span className="text-muted-foreground">Estimated Cost (pay rates incl super × hours)</span>
                       <span className="tabular-nums font-medium">{fmtCurrencyFull(row.cost.totalCost)}</span>
                     </div>
                   </>
@@ -1105,7 +1378,12 @@ function DrillDownDialog({
                     <TableBody>
                       {row.cost.payRunLines.map((pl, idx) => (
                         <TableRow key={idx} className="text-sm" data-testid={`drilldown-payline-${idx}`}>
-                          <TableCell className="whitespace-nowrap">{fmtDate(pl.payDate)}</TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <Link href={`/payroll/${pl.payRunId}`} className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-payrun-${pl.payRunId}`}>
+                              {fmtDate(pl.payDate)}
+                              <ExternalLink className="w-3 h-3" />
+                            </Link>
+                          </TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.grossEarnings)}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.paygWithheld)}</TableCell>
                           <TableCell className="text-right tabular-nums">{fmtCurrencyFull(pl.superAmount)}</TableCell>
@@ -1135,12 +1413,12 @@ function DrillDownDialog({
               <div className="grid grid-cols-3 gap-3 text-center">
                 <div className="bg-background rounded-md p-3">
                   <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Charge Rate</div>
-                  <div className="text-lg font-bold tabular-nums">${row.chargeOutRate.toFixed(0)}</div>
+                  <div className="text-lg font-bold tabular-nums inline-flex items-center justify-center">${row.chargeOutRate.toFixed(0)}<RateSourceBadge source={row.chargeOutRateSource} /></div>
                   <div className="text-[10px] text-muted-foreground">per hour</div>
                 </div>
                 <div className="bg-background rounded-md p-3">
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Pay Rate</div>
-                  <div className="text-lg font-bold tabular-nums">{row.payRate > 0 ? `$${row.payRate.toFixed(0)}` : "—"}</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Pay Rate (Incl Super)</div>
+                  <div className="text-lg font-bold tabular-nums inline-flex items-center justify-center">{row.payRate > 0 ? `$${row.payRate.toFixed(0)}` : "—"}<RateSourceBadge source={row.payRateSource} /></div>
                   <div className="text-[10px] text-muted-foreground">per hour</div>
                 </div>
                 <div className="bg-background rounded-md p-3">

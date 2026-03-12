@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { PortalShell } from "@/components/portal-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ const STEPS = [
 
 export default function PortalOnboardingPage() {
   const { employeeId: authEmployeeId, employeeName } = usePortalAuth();
+  const [, setLocation] = useLocation();
   const employeeId = authEmployeeId || "";
   const { toast } = useToast();
   const [step, setStep] = useState(0);
@@ -576,7 +578,7 @@ export default function PortalOnboardingPage() {
                   ? "All your details have been submitted. Your administrator will review them shortly."
                   : "Some steps are still incomplete. You can revisit them anytime by clicking the steps above."}
               </p>
-              <Button onClick={() => window.location.href = "/portal/dashboard"} data-testid="button-go-dashboard">
+              <Button onClick={() => setLocation("/portal/dashboard")} data-testid="button-go-dashboard">
                 Go to Dashboard
               </Button>
             </CardContent>

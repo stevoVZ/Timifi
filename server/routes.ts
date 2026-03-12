@@ -7,9 +7,9 @@ import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
-import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, pushInvoiceToXero } from "./xero";
+import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, syncBankTransactionsAllTenants, syncBankTransactionsForTenant, pushInvoiceToXero } from "./xero";
 import { requireAuth, hashPassword, comparePasswords } from "./auth";
-import { scanTimesheetPdf } from "./ocr";
+import { scanTimesheetPdf, scanRctiPdf } from "./ocr";
 import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from "./rates";
 import { getACTWorkingDays, getACTExpectedHours } from "./act-working-days";
 
@@ -22,6 +22,36 @@ function normalizeCompanyName(name: string): string {
     .replace(/\b(pty\.?\s*ltd\.?|limited|ltd\.?|inc\.?|incorporated)\b/gi, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function computeExGstFromSpend(
+  inclGstAmount: number,
+  contractorInvoices: { amountExclGst: string | null; amountInclGst: string | null; gstAmount: string | null }[]
+): number {
+  if (contractorInvoices.length > 0) {
+    const totalInclGst = contractorInvoices.reduce((s, inv) => s + parseFloat(inv.amountInclGst || "0"), 0);
+    const totalExclGst = contractorInvoices.reduce((s, inv) => s + parseFloat(inv.amountExclGst || "0"), 0);
+    if (totalInclGst > 0 && totalExclGst > 0) {
+      return inclGstAmount * (totalExclGst / totalInclGst);
+    }
+  }
+  return inclGstAmount / 1.1;
+}
+
+function getContractorAccpayInvoices(
+  allInvoices: { invoiceType: string | null; xeroContactId: string | null; contactName: string | null; status: string; amountExclGst: string; amountInclGst: string; gstAmount: string; year: number; month: number }[],
+  employee: { supplierContactId: string | null; companyName: string | null },
+  month: number,
+  year: number
+) {
+  return allInvoices.filter(inv => {
+    if (inv.invoiceType !== "ACCPAY") return false;
+    if (inv.status === "VOIDED" || inv.status === "DELETED") return false;
+    if (inv.year !== year || inv.month !== month) return false;
+    if (employee.supplierContactId && inv.xeroContactId === employee.supplierContactId) return true;
+    if (employee.companyName && inv.contactName && normalizeCompanyName(inv.contactName) === normalizeCompanyName(employee.companyName)) return true;
+    return false;
+  });
 }
 
 type RateHistoryIndex = Record<string, RateHistory[]>;
@@ -384,11 +414,11 @@ export async function registerRoutes(
     try {
       const { fileData, fileType: uploadedFileType, files: filesList, changeSource: reqSource, ...timesheetData } = req.body;
       const parsed = insertTimesheetSchema.parse(coerceDates(timesheetData));
-      const timesheet = await storage.createTimesheet(parsed);
-
       let notesJson: any = {};
       try { notesJson = parsed.notes ? JSON.parse(parsed.notes) : {}; } catch {}
       const source = reqSource || notesJson.intakeSource || "MANUAL_EDIT";
+      const tsSource = parsed.fileName ? "PDF_UPLOAD" : (source === "ADMIN_ENTRY" ? "ADMIN_ENTRY" : "MANUAL_ENTRY");
+      const timesheet = await storage.createTimesheet({ ...parsed, source: tsSource });
 
       await storage.createTimesheetAuditLogs([{
         timesheetId: timesheet.id,
@@ -505,7 +535,7 @@ export async function registerRoutes(
             if (parsed.status) updateFields.status = parsed.status;
             timesheet = await storage.updateTimesheet(existingRecord.id, updateFields);
           } else {
-            timesheet = await storage.createTimesheet(parsed);
+            timesheet = await storage.createTimesheet({ ...parsed, source: "PDF_UPLOAD" });
             await storage.createTimesheetAuditLogs([{
               timesheetId: timesheet.id,
               employeeId: parsed.employeeId,
@@ -1134,7 +1164,8 @@ export async function registerRoutes(
 
         let employeeCost: number;
         if (emp.paymentMethod === "INVOICE" && contractorCost && contractorCost.total > 0) {
-          employeeCost = contractorCost.total / 1.1;
+          const accpayInvs = getContractorAccpayInvoices(allInvoices as any, emp, month, year);
+          employeeCost = computeExGstFromSpend(contractorCost.total, accpayInvs);
         } else if (payLine) {
           const plGross = parseFloat(payLine.grossEarnings || "0");
           const plSuper = parseFloat(payLine.superAmount || "0");
@@ -1204,6 +1235,7 @@ export async function registerRoutes(
             fileName: t.fileName || null,
             fileHash: t.fileHash || null,
             fileSizeBytes: t.fileSizeBytes || null,
+            source: t.source || null,
           })),
           timesheetSummary: {
             totalHours,
@@ -2119,12 +2151,131 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/xero/sync-bank-transactions", async (_req, res) => {
+  app.post("/api/xero/sync-bank-transactions", async (req, res) => {
     try {
-      const result = await syncBankTransactions();
+      const tenantId = req.query.tenantId as string | undefined;
+      if (tenantId) {
+        const result = await syncBankTransactionsForTenant(tenantId);
+        res.json(result);
+      } else {
+        const result = await syncBankTransactions();
+        res.json(result);
+      }
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to sync bank transactions from Xero" });
+    }
+  });
+
+  app.post("/api/xero/sync-bank-transactions-all", async (_req, res) => {
+    try {
+      const result = await syncBankTransactionsAllTenants();
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to sync bank transactions from Xero" });
+    }
+  });
+
+  app.get("/api/bank-transactions/coverage", async (_req, res) => {
+    try {
+      const result = await db.execute(sql`
+        SELECT 
+          bt.tenant_id,
+          bt.bank_account_id,
+          bt.bank_account_name,
+          MIN(bt.date)::text as earliest_date,
+          MAX(bt.date)::text as latest_date,
+          COUNT(*)::int as total_transactions,
+          COUNT(DISTINCT (bt.year * 100 + bt.month))::int as months_with_data
+        FROM bank_transactions bt
+        GROUP BY bt.tenant_id, bt.bank_account_id, bt.bank_account_name
+        ORDER BY bt.tenant_id, bt.bank_account_name
+      `);
+
+      const accounts: Array<{
+        tenantId: string;
+        tenantName: string;
+        bankAccountId: string;
+        bankAccountName: string;
+        earliestDate: string;
+        latestDate: string;
+        totalTransactions: number;
+        monthsWithData: number;
+        expectedMonths: number;
+        gapMonths: string[];
+        daysSinceLatest: number;
+      }> = [];
+
+      const tenantsSetting = await storage.getSetting("xero.tenants");
+      const tenantsJson = tenantsSetting?.value || "[]";
+      let tenantList: Array<{ tenantId: string; tenantName: string }> = [];
+      try { tenantList = JSON.parse(tenantsJson); } catch {}
+      const tenantNameMap = new Map(tenantList.map(t => [t.tenantId, t.tenantName]));
+
+      const lastSyncByTenant: Record<string, string | null> = {};
+      for (const t of tenantList) {
+        const setting = await storage.getSetting(`xero.lastBankTxnSyncAt.${t.tenantId}`);
+        lastSyncByTenant[t.tenantName || t.tenantId] = setting?.value || null;
+      }
+      if (Object.keys(lastSyncByTenant).length === 0) {
+        const fallback = await storage.getSetting("xero.lastBankTxnSyncAt");
+        lastSyncByTenant["default"] = fallback?.value || null;
+      }
+
+      for (const row of result.rows as any[]) {
+        const monthsResult = await db.execute(sql`
+          SELECT DISTINCT year * 100 + month as ym
+          FROM bank_transactions
+          WHERE bank_account_id = ${row.bank_account_id} AND tenant_id = ${row.tenant_id}
+          ORDER BY ym
+        `);
+        const presentMonths = new Set((monthsResult.rows as any[]).map(r => r.ym));
+        const ymValues = [...presentMonths];
+        const minYM = Math.min(...ymValues);
+        const maxYM = Math.max(...ymValues);
+
+        const gapMonths: string[] = [];
+        let yr = Math.floor(minYM / 100);
+        let mo = minYM % 100;
+        let expectedMonths = 0;
+        while (yr * 100 + mo <= maxYM) {
+          expectedMonths++;
+          if (!presentMonths.has(yr * 100 + mo)) {
+            gapMonths.push(`${yr}-${String(mo).padStart(2, '0')}`);
+          }
+          mo++;
+          if (mo > 12) { mo = 1; yr++; }
+        }
+
+        const latestDate = new Date(row.latest_date);
+        const daysSinceLatest = Math.floor((Date.now() - latestDate.getTime()) / (1000 * 60 * 60 * 24));
+
+        accounts.push({
+          tenantId: row.tenant_id,
+          tenantName: tenantNameMap.get(row.tenant_id) || row.tenant_id,
+          bankAccountId: row.bank_account_id,
+          bankAccountName: row.bank_account_name,
+          earliestDate: row.earliest_date,
+          latestDate: row.latest_date,
+          totalTransactions: row.total_transactions,
+          monthsWithData: row.months_with_data,
+          expectedMonths,
+          gapMonths,
+          daysSinceLatest,
+        });
+      }
+
+      res.json({
+        accounts,
+        lastSync: lastSyncByTenant,
+        summary: {
+          totalAccounts: accounts.length,
+          accountsWithGaps: accounts.filter(a => a.gapMonths.length > 0).length,
+          totalGapMonths: accounts.reduce((sum, a) => sum + a.gapMonths.length, 0),
+          oldestLatestDate: accounts.length > 0 ? accounts.reduce((oldest, a) => a.latestDate < oldest ? a.latestDate : oldest, accounts[0].latestDate) : null,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to get bank transaction coverage" });
     }
   });
 
@@ -2197,6 +2348,7 @@ export async function registerRoutes(
         if (parsed.data.clientName) updateData.clientName = parsed.data.clientName;
         if (parsed.data.chargeOutRate) updateData.chargeOutRate = parsed.data.chargeOutRate;
         if (parsed.data.payRate) updateData.hourlyRate = parsed.data.payRate;
+        updateData.payrollFeePercent = parsed.data.payrollFeePercent || "0";
         if (Object.keys(updateData).length > 0) {
           await storage.updateEmployee(req.params.id, updateData);
         }
@@ -2233,6 +2385,22 @@ export async function registerRoutes(
 
       const { rateEffectiveDate, ...updateData } = req.body;
       const placement = await storage.updatePlacement(req.params.id, updateData);
+
+      const updatedStatus = req.body.status !== undefined ? req.body.status : existing.status;
+      if (updatedStatus === "ACTIVE" && existing.employeeId) {
+        const finalChargeOut = req.body.chargeOutRate !== undefined ? req.body.chargeOutRate : existing.chargeOutRate;
+        const finalPayRate = req.body.payRate !== undefined ? req.body.payRate : existing.payRate;
+        const finalFee = req.body.payrollFeePercent !== undefined ? req.body.payrollFeePercent : existing.payrollFeePercent;
+        const finalClientName = req.body.clientName !== undefined ? req.body.clientName : existing.clientName;
+        const empUpdate: any = {
+          chargeOutRate: finalChargeOut || null,
+          hourlyRate: finalPayRate || null,
+          payrollFeePercent: finalFee || "0",
+        };
+        if (finalClientName) empUpdate.clientName = finalClientName;
+        await storage.updateEmployee(existing.employeeId, empUpdate);
+      }
+
       res.json(placement);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to update placement" });
@@ -3030,7 +3198,28 @@ export async function registerRoutes(
       const matchedTxnIds = new Set(existingRctis.map(r => r.bankTransactionId).filter(Boolean));
       const unmatchedTxns = receiveTxns.filter(t => !matchedTxnIds.has(t.id));
 
+      const getChargeOutRate = (employeeId: string, placements: typeof allPlacements): number => {
+        const placement = placements.find(p => p.employeeId === employeeId);
+        const placementRate = parseFloat(placement?.chargeOutRate || "0");
+        if (placementRate > 0) return placementRate;
+        const emp = allEmployees.find(e => e.id === employeeId);
+        const empRate = parseFloat(emp?.chargeOutRate || "0");
+        if (empRate > 0) return empRate;
+        return 0;
+      };
+
+      const wasPlacementActiveOnDate = (placement: typeof allPlacements[0], dateStr: string | null): boolean => {
+        if (!dateStr) return true;
+        const txnDate = new Date(dateStr);
+        const start = placement.startDate ? new Date(placement.startDate) : null;
+        const end = placement.endDate ? new Date(placement.endDate) : null;
+        if (start && txnDate < start) return false;
+        if (end && txnDate > new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)) return false;
+        return true;
+      };
+
       let created = 0;
+      const skipped: string[] = [];
       for (const txn of unmatchedTxns) {
         const client = rctiClients.find(c => c.name.toLowerCase().trim() === (txn.contactName || "").toLowerCase().trim());
         if (!client) continue;
@@ -3039,35 +3228,83 @@ export async function registerRoutes(
           p.clientId === client.id && (p.status === "ACTIVE" || p.status === "ENDED")
         );
 
+        const uniqueEmployeeIds = [...new Set(clientPlacements.map(p => p.employeeId))];
+
+        const activePlacements = clientPlacements.filter(p => wasPlacementActiveOnDate(p, txn.date));
+        const activeUniqueEmployeeIds = [...new Set(activePlacements.map(p => p.employeeId))];
+
+        const amount = parseFloat(txn.amount || "0");
+        const gst = Math.round((amount / 11) * 100) / 100;
+        const exGst = Math.round((amount - gst) * 100) / 100;
+        const desc = txn.description || txn.reference || `Bank receipt from ${client.name}`;
+
         let employeeId: string | null = null;
-        if (clientPlacements.length === 1) {
-          employeeId = clientPlacements[0].employeeId;
-        } else if (clientPlacements.length > 1) {
-          const desc = (txn.description || txn.reference || "").toLowerCase();
-          if (desc) {
-            const nameMatch = clientPlacements.find(p => {
+
+        if (activeUniqueEmployeeIds.length === 1) {
+          employeeId = activeUniqueEmployeeIds[0];
+        } else if (uniqueEmployeeIds.length === 1) {
+          employeeId = uniqueEmployeeIds[0];
+        } else if (activeUniqueEmployeeIds.length > 1) {
+          const descLower = (txn.description || txn.reference || "").toLowerCase();
+          if (descLower) {
+            const nameMatch = activePlacements.find(p => {
               const emp = allEmployees.find(e => e.id === p.employeeId);
               if (!emp) return false;
               const first = (emp.firstName || "").toLowerCase().trim();
               const last = (emp.lastName || "").toLowerCase().trim();
               if (!first || !last || last.length < 3) return false;
               const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              return new RegExp(`\\b${escaped(last)}\\b`, "i").test(desc) &&
-                     new RegExp(`\\b${escaped(first)}\\b`, "i").test(desc);
+              return new RegExp(`\\b${escaped(last)}\\b`, "i").test(descLower) &&
+                     new RegExp(`\\b${escaped(first)}\\b`, "i").test(descLower);
             });
             if (nameMatch) employeeId = nameMatch.employeeId;
           }
-        }
 
-        const amount = parseFloat(txn.amount || "0");
-        const gst = Math.round((amount / 11) * 100) / 100;
-        const exGst = Math.round((amount - gst) * 100) / 100;
+          if (!employeeId) {
+            const allRates = activeUniqueEmployeeIds.map(eid => ({
+              employeeId: eid,
+              rate: getChargeOutRate(eid, activePlacements),
+            })).filter(r => r.rate > 0);
+
+            if (allRates.length > 0) {
+              for (const r of allRates) {
+                const candidateHours = exGst / r.rate;
+                const roundedHours = Math.round(candidateHours * 4) / 4;
+                if (Math.abs(candidateHours - roundedHours) < 0.02) {
+                  employeeId = r.employeeId;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!employeeId) {
+            skipped.push(`${desc} $${amount} on ${txn.date} - multiple employees, could not determine attribution`);
+            await storage.createRcti({
+              clientId: client.id,
+              employeeId: null,
+              month: txn.month,
+              year: txn.year,
+              hours: null,
+              hourlyRate: null,
+              amountExclGst: exGst.toFixed(2),
+              gstAmount: gst.toFixed(2),
+              amountInclGst: amount.toFixed(2),
+              description: `${desc} [UNATTRIBUTED - manual review needed]`,
+              reference: txn.reference,
+              receivedDate: txn.date,
+              bankTransactionId: txn.id,
+              status: "RECEIVED",
+            });
+            created++;
+            continue;
+          }
+        }
 
         let hours: string | null = null;
         let hourlyRate: string | null = null;
         if (employeeId) {
-          const placement = clientPlacements.find(p => p.employeeId === employeeId);
-          const rate = parseFloat(placement?.chargeOutRate || "0");
+          const rate = getChargeOutRate(employeeId, clientPlacements);
           if (rate > 0) {
             hours = (exGst / rate).toFixed(2);
             hourlyRate = rate.toFixed(2);
@@ -3084,7 +3321,7 @@ export async function registerRoutes(
           amountExclGst: exGst.toFixed(2),
           gstAmount: gst.toFixed(2),
           amountInclGst: amount.toFixed(2),
-          description: txn.description || txn.reference || `Bank receipt from ${client.name}`,
+          description: desc,
           reference: txn.reference,
           receivedDate: txn.date,
           bankTransactionId: txn.id,
@@ -3093,9 +3330,110 @@ export async function registerRoutes(
         created++;
       }
 
-      res.json({ created, message: `Created ${created} RCTI records from bank transactions` });
+      res.json({
+        created,
+        skipped: skipped.length,
+        skippedDetails: skipped,
+        message: `Created ${created} RCTI records from bank transactions${skipped.length > 0 ? ` (${skipped.length} unattributed - need manual review)` : ""}`,
+      });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to auto-match RCTIs" });
+    }
+  });
+
+  app.post("/api/rctis/scan", upload.array("files", 20), async (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: "No PDF files uploaded" });
+      }
+
+      const results = await Promise.all(
+        files.map((file) => scanRctiPdf(file.buffer, file.originalname))
+      );
+
+      res.json({ results });
+    } catch (err: any) {
+      console.error("RCTI scan error:", err);
+      res.status(500).json({ message: err.message || "Failed to scan RCTI PDFs" });
+    }
+  });
+
+  app.post("/api/rctis/batch", async (req, res) => {
+    try {
+      const { items, forceOverwrite } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "No RCTI items provided" });
+      }
+
+      const existingRctis = await storage.getRctis();
+      const dedupeIndex = existingRctis.map(r => ({
+        id: r.id,
+        employeeId: r.employeeId,
+        clientId: r.clientId,
+        month: r.month,
+        year: r.year,
+        amountExclGst: r.amountExclGst,
+      }));
+
+      const results: { created: number; skipped: number; updated: number; errors: string[]; duplicates: string[] } = {
+        created: 0,
+        skipped: 0,
+        updated: 0,
+        errors: [],
+        duplicates: [],
+      };
+
+      for (const item of items) {
+        try {
+          const parsed = insertRctiSchema.safeParse(item);
+          if (!parsed.success) {
+            results.errors.push(`Invalid data for ${item.description || "unknown"}: ${parsed.error.issues.map(i => i.message).join(", ")}`);
+            results.skipped++;
+            continue;
+          }
+
+          const duplicate = dedupeIndex.find(r =>
+            r.employeeId === parsed.data.employeeId &&
+            r.clientId === parsed.data.clientId &&
+            r.month === parsed.data.month &&
+            r.year === parsed.data.year &&
+            Math.abs(parseFloat(r.amountExclGst || "0") - parseFloat(parsed.data.amountExclGst || "0")) < 1
+          );
+
+          if (duplicate) {
+            if (forceOverwrite) {
+              await storage.updateRcti(duplicate.id, parsed.data);
+              results.updated++;
+            } else {
+              results.duplicates.push(`Duplicate: ${item.description || ""} - ${parsed.data.month}/${parsed.data.year} $${parsed.data.amountExclGst}`);
+              results.skipped++;
+            }
+            continue;
+          }
+
+          const created = await storage.createRcti(parsed.data);
+          dedupeIndex.push({
+            id: created.id,
+            employeeId: created.employeeId,
+            clientId: created.clientId,
+            month: created.month,
+            year: created.year,
+            amountExclGst: created.amountExclGst,
+          });
+          results.created++;
+        } catch (err: any) {
+          results.errors.push(`Error creating RCTI: ${err.message}`);
+          results.skipped++;
+        }
+      }
+
+      res.json({
+        ...results,
+        message: `Created ${results.created}, updated ${results.updated}, skipped ${results.skipped} RCTI records`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to batch create RCTIs" });
     }
   });
 
@@ -3163,6 +3501,16 @@ export async function registerRoutes(
       const periodRctis = allRctis.filter(r => r.month === month && r.year === year);
       const claimedInvoiceIds = new Set<string>();
       const claimedBankTxnIds = new Set<string>();
+      const claimedEmployeeCostIds = new Set<string>();
+
+      const allLineItems = await storage.getInvoiceLineItemsByInvoiceIds(periodInvoices.map(i => i.id));
+      const lineItemsByInvoice: Record<string, typeof allLineItems> = {};
+      for (const li of allLineItems) {
+        if (!lineItemsByInvoice[li.invoiceId]) lineItemsByInvoice[li.invoiceId] = [];
+        lineItemsByInvoice[li.invoiceId].push(li);
+      }
+
+      const claimedLineItemIds = new Set<string>();
 
       const rows = relevantPlacements.map(placement => {
         const employee = allEmployees.find(e => e.id === placement.employeeId);
@@ -3172,29 +3520,125 @@ export async function registerRoutes(
         const clientName = placement.clientName || client?.name || "Unknown";
 
         const effectiveRates = getEffectiveRate(rateIndex, employee.id, month, year, employee.hourlyRate, placement.chargeOutRate || employee.chargeOutRate);
-        const chargeOutRate = parseFloat(placement.chargeOutRate || "0") || effectiveRates.chargeOutRate;
-        const payRate = parseFloat(placement.payRate || "0") || effectiveRates.payRate;
+
+        const empPayLinesForRate = allPayRunLines.filter(pl => pl.line.employeeId === employee.id);
+        const payrollDerivedRate = empPayLinesForRate.reduce((best, pl) => {
+          const r = parseFloat(pl.line.ratePerHour || "0");
+          return r > 0 ? r : best;
+        }, 0);
+
+        let chargeOutRate = parseFloat(placement.chargeOutRate || "0");
+        let chargeOutRateSource: "PLACEMENT" | "RATE_HISTORY" | "INVOICE_DERIVED" | "EMPLOYEE_DEFAULT" = "PLACEMENT";
+        if (chargeOutRate > 0) {
+          chargeOutRateSource = "PLACEMENT";
+        } else if (effectiveRates.chargeOutRate > 0 && rateIndex[employee.id]?.some(r => r.chargeOutRate && parseFloat(r.chargeOutRate) > 0)) {
+          chargeOutRate = effectiveRates.chargeOutRate;
+          chargeOutRateSource = "RATE_HISTORY";
+        } else {
+          const invForRate = periodInvoices.find(inv => {
+            if (inv.status === "VOIDED" || inv.status === "DELETED") return false;
+            const invType = (inv as any).invoiceType;
+            if (invType && invType !== "ACCREC") return false;
+            return (inv.employeeId === employee.id && inv.contactName === clientName) ||
+                   (!inv.employeeId && inv.contactName === clientName);
+          });
+          if (invForRate) {
+            const invLines = lineItemsByInvoice[invForRate.id] || [];
+            const lineRate = invLines.length > 0 ? parseFloat(invLines[0].unitAmount || "0") : 0;
+            const invHrs = parseFloat(invForRate.hours || "0");
+            const invAmt = parseFloat(invForRate.amountExclGst || "0");
+            const derivedRate = lineRate > 0 ? lineRate : (invHrs > 0 ? invAmt / invHrs : parseFloat(invForRate.hourlyRate || "0"));
+            if (derivedRate > 0) {
+              chargeOutRate = derivedRate;
+              chargeOutRateSource = "INVOICE_DERIVED";
+            }
+          }
+          if (chargeOutRate === 0 && parseFloat(employee.chargeOutRate || "0") > 0) {
+            chargeOutRate = parseFloat(employee.chargeOutRate || "0");
+            chargeOutRateSource = "EMPLOYEE_DEFAULT";
+          }
+        }
+
+        let payRate = parseFloat(placement.payRate || "0");
+        let payRateSource: "PLACEMENT" | "RATE_HISTORY" | "PAYROLL_DERIVED" | "EMPLOYEE_DEFAULT" = "PLACEMENT";
+        if (payRate > 0) {
+          payRateSource = "PLACEMENT";
+        } else if (effectiveRates.payRate > 0 && rateIndex[employee.id]?.length > 0) {
+          payRate = effectiveRates.payRate;
+          payRateSource = "RATE_HISTORY";
+        } else if (payrollDerivedRate > 0) {
+          payRate = payrollDerivedRate;
+          payRateSource = "PAYROLL_DERIVED";
+        } else if (parseFloat(employee.hourlyRate || "0") > 0) {
+          payRate = parseFloat(employee.hourlyRate || "0");
+          payRateSource = "EMPLOYEE_DEFAULT";
+        }
+
         const rateSpread = chargeOutRate - payRate;
 
-        const empInvoices = periodInvoices.filter(inv => {
-          if (claimedInvoiceIds.has(inv.id)) return false;
-          if (inv.status === "VOIDED" || inv.status === "DELETED") return false;
-          const invType = (inv as any).invoiceType;
-          if (invType && invType !== "ACCREC") return false;
-          if (inv.employeeId === employee.id && inv.contactName === clientName) return true;
-          if (!inv.employeeId && inv.contactName === clientName) {
-            const invRate = inv.hours && parseFloat(inv.hours) > 0
-              ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
-              : 0;
-            return Math.abs(invRate - chargeOutRate) < 0.01;
-          }
-          return false;
-        });
-        empInvoices.forEach(inv => claimedInvoiceIds.add(inv.id));
+        let invoiceRevenue = 0;
+        let invoiceRevenueInclGst = 0;
+        let invoiceHours = 0;
+        const empInvoices: typeof periodInvoices = [];
 
-        const invoiceRevenue = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.amountExclGst || "0"), 0);
-        const invoiceRevenueInclGst = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.amountInclGst || "0"), 0);
-        const invoiceHours = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.hours || "0"), 0);
+        for (const inv of periodInvoices) {
+          if (inv.status === "VOIDED" || inv.status === "DELETED") continue;
+          const invType = (inv as any).invoiceType;
+          if (invType && invType !== "ACCREC") continue;
+          const matchesEmployee = inv.employeeId === employee.id && inv.contactName === clientName;
+          const matchesClientOnly = !inv.employeeId && inv.contactName === clientName;
+          if (!matchesEmployee && !matchesClientOnly) continue;
+
+          const lineItems = lineItemsByInvoice[inv.id] || [];
+          const unclaimedLines = lineItems.filter(li => !claimedLineItemIds.has(li.id));
+          const rateMatchedLines = unclaimedLines.filter(li => {
+            const liRate = parseFloat(li.unitAmount || "0");
+            return Math.abs(liRate - chargeOutRate) < 0.02;
+          });
+
+          if (rateMatchedLines.length > 0) {
+            rateMatchedLines.forEach(li => claimedLineItemIds.add(li.id));
+            const liRevenue = rateMatchedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
+            const liTax = rateMatchedLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0);
+            const liHours = rateMatchedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
+            invoiceRevenue += liRevenue;
+            invoiceRevenueInclGst += liRevenue + liTax;
+            invoiceHours += liHours;
+            if (!empInvoices.includes(inv)) empInvoices.push(inv);
+            const allLinesClaimed = lineItems.every(li => claimedLineItemIds.has(li.id));
+            if (allLinesClaimed) claimedInvoiceIds.add(inv.id);
+          } else if (unclaimedLines.length > 0 && !claimedInvoiceIds.has(inv.id)) {
+            if (matchesEmployee) {
+              unclaimedLines.forEach(li => claimedLineItemIds.add(li.id));
+              const liRevenue = unclaimedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
+              const liTax = unclaimedLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0);
+              const liHours = unclaimedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
+              invoiceRevenue += liRevenue;
+              invoiceRevenueInclGst += liRevenue + liTax;
+              invoiceHours += liHours;
+              if (!empInvoices.includes(inv)) empInvoices.push(inv);
+              const allLinesClaimed = lineItems.every(li => claimedLineItemIds.has(li.id));
+              if (allLinesClaimed) claimedInvoiceIds.add(inv.id);
+            } else if (matchesClientOnly) {
+              const invRate = inv.hours && parseFloat(inv.hours) > 0
+                ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
+                : 0;
+              if (Math.abs(invRate - chargeOutRate) >= 0.01) continue;
+            }
+          } else if (!claimedInvoiceIds.has(inv.id) && lineItems.length === 0) {
+            if (matchesClientOnly) {
+              const invRate = inv.hours && parseFloat(inv.hours) > 0
+                ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
+                : 0;
+              if (Math.abs(invRate - chargeOutRate) >= 0.01) continue;
+            }
+            claimedInvoiceIds.add(inv.id);
+            invoiceRevenue += parseFloat(inv.amountExclGst || "0");
+            invoiceRevenueInclGst += parseFloat(inv.amountInclGst || "0");
+            invoiceHours += parseFloat(inv.hours || "0");
+            empInvoices.push(inv);
+          }
+        }
 
         const empRctis = periodRctis.filter(r => r.employeeId === employee.id && r.clientId === placement.clientId);
         const rctiRevenue = empRctis.reduce((sum, r) => sum + parseFloat(r.amountExclGst || "0"), 0);
@@ -3209,6 +3653,7 @@ export async function registerRoutes(
         const empTimesheets = allTimesheets.filter(t => {
           if (t.employeeId !== employee.id || t.month !== month || t.year !== year) return false;
           if (t.placementId) return t.placementId === placement.id;
+          if (t.clientId && placement.clientId) return t.clientId === placement.clientId;
           return true;
         });
         const timesheetHours = empTimesheets.reduce((sum, t) => sum + parseFloat(t.totalHours || "0"), 0);
@@ -3228,7 +3673,9 @@ export async function registerRoutes(
 
         const utilisation = estimatedHours > 0 ? Math.round((bestAvailableHours / estimatedHours) * 1000) / 10 : 0;
 
-        const empPayLines = allPayRunLines.filter(pl => pl.line.employeeId === employee.id);
+        const costAlreadyClaimed = claimedEmployeeCostIds.has(employee.id);
+
+        const empPayLines = costAlreadyClaimed ? [] : allPayRunLines.filter(pl => pl.line.employeeId === employee.id);
 
         const rawGrossEarnings = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.grossEarnings || "0"), 0);
         const superAmount = empPayLines.reduce((sum, pl) => sum + parseFloat(pl.line.superAmount || "0"), 0);
@@ -3240,12 +3687,13 @@ export async function registerRoutes(
           : rawGrossEarnings;
 
         let totalEmployeeCost = grossEarnings + superAmount;
-        let costSource: "PAYROLL" | "CONTRACTOR_SPEND" | "ESTIMATED" = "PAYROLL";
+        let costSource: "PAYROLL" | "CONTRACTOR_SPEND" | "ESTIMATED" | "SHARED" = costAlreadyClaimed ? "SHARED" : "PAYROLL";
         let contractorSpend = 0;
         let contractorSpendTxnCount = 0;
         let matchedSpendTxns: typeof periodBankTxns = [];
+        let accpayInvs: ReturnType<typeof getContractorAccpayInvoices> = [];
 
-        if (employee.paymentMethod === "INVOICE" && (employee.supplierContactId || employee.companyName)) {
+        if (!costAlreadyClaimed && employee.paymentMethod === "INVOICE" && (employee.supplierContactId || employee.companyName)) {
           matchedSpendTxns = employee.supplierContactId
             ? periodBankTxns.filter(t =>
                 !claimedBankTxnIds.has(t.id) &&
@@ -3259,7 +3707,8 @@ export async function registerRoutes(
                 normalizeCompanyName(t.contactName) === normalizeCompanyName(employee.companyName!)
               );
           matchedSpendTxns.forEach(t => claimedBankTxnIds.add(t.id));
-          contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)) / 1.1, 0);
+          accpayInvs = getContractorAccpayInvoices(allInvoices as any, employee, month, year);
+          contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + computeExGstFromSpend(Math.abs(parseFloat(t.amount)), accpayInvs), 0);
           contractorSpendTxnCount = matchedSpendTxns.length;
           if (contractorSpend > 0) {
             totalEmployeeCost = contractorSpend;
@@ -3267,25 +3716,42 @@ export async function registerRoutes(
           }
         }
 
-        if (totalEmployeeCost === 0 && costSource !== "CONTRACTOR_SPEND") {
+        let estimatedGrossEarnings = 0;
+        let estimatedSuperAmount = 0;
+        if (!costAlreadyClaimed && totalEmployeeCost === 0 && costSource !== "CONTRACTOR_SPEND") {
           const periodDate = new Date(year, month - 1, 15);
           const superRateDecimal = getSuperRate(periodDate) / 100;
           const placementPayRate = parseFloat(placement.payRate || "0") || payRate;
           if (placementPayRate > 0 && bestAvailableHours > 0) {
-            const baseCost = bestAvailableHours * placementPayRate;
-            totalEmployeeCost = baseCost + (baseCost * superRateDecimal);
+            const rateIsSuperInclusive = payRateSource === "PLACEMENT" || payRateSource === "EMPLOYEE_DEFAULT";
+            if (rateIsSuperInclusive) {
+              estimatedGrossEarnings = (placementPayRate / (1 + superRateDecimal)) * bestAvailableHours;
+              estimatedSuperAmount = estimatedGrossEarnings * superRateDecimal;
+              totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
+            } else {
+              estimatedGrossEarnings = placementPayRate * bestAvailableHours;
+              estimatedSuperAmount = estimatedGrossEarnings * superRateDecimal;
+              totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
+            }
             costSource = "ESTIMATED";
           }
         }
 
-        const feePercent = parseFloat(employee.payrollFeePercent || "0");
-        const payrollFeeRevenue = grossEarnings * (feePercent / 100);
+        if (!costAlreadyClaimed && (totalEmployeeCost > 0 || costSource === "CONTRACTOR_SPEND")) {
+          claimedEmployeeCostIds.add(employee.id);
+        }
+
+        const effectiveGrossEarnings = costSource === "ESTIMATED" ? estimatedGrossEarnings : grossEarnings;
+        const effectiveSuperAmount = costSource === "ESTIMATED" ? estimatedSuperAmount : superAmount;
+
+        const feePercent = parseFloat(placement.payrollFeePercent || employee.payrollFeePercent || "0");
+        const payrollFeeRevenue = effectiveGrossEarnings * (feePercent / 100);
 
         let payrollTaxRate = 0;
         let payrollTaxAmount = 0;
         if (employee.payrollTaxApplicable && employee.state && ptRatesByState[employee.state] !== undefined) {
           payrollTaxRate = ptRatesByState[employee.state];
-          const taxableBase = costSource === "CONTRACTOR_SPEND" ? contractorSpend : grossEarnings;
+          const taxableBase = costSource === "CONTRACTOR_SPEND" ? contractorSpend : effectiveGrossEarnings;
           payrollTaxAmount = taxableBase * (payrollTaxRate / 100);
         }
 
@@ -3314,6 +3780,8 @@ export async function registerRoutes(
           chargeOutRate: Math.round(chargeOutRate * 100) / 100,
           payRate: Math.round(payRate * 100) / 100,
           rateSpread: Math.round(rateSpread * 100) / 100,
+          payRateSource,
+          chargeOutRateSource,
           expectedHours: Math.round(estimatedHours * 10) / 10,
           utilisation,
           employee: {
@@ -3322,7 +3790,7 @@ export async function registerRoutes(
             lastName: employee.lastName,
             chargeOutRate: employee.chargeOutRate,
             hourlyRate: employee.hourlyRate,
-            payrollFeePercent: employee.payrollFeePercent,
+            payrollFeePercent: placement.payrollFeePercent || employee.payrollFeePercent,
             paymentMethod: employee.paymentMethod,
             companyName: employee.companyName,
           },
@@ -3342,16 +3810,48 @@ export async function registerRoutes(
             amountExGst: Math.round(revenue * 100) / 100,
             amountInclGst: Math.round(revenueInclGst * 100) / 100,
             rctiAmountExGst: Math.round(rctiRevenue * 100) / 100,
-            invoices: empInvoices.map(inv => ({
-              id: inv.id,
-              invoiceNumber: inv.invoiceNumber,
-              contactName: inv.contactName,
-              hours: inv.hours ? parseFloat(inv.hours) : 0,
-              amountExclGst: parseFloat(inv.amountExclGst || "0"),
-              amountInclGst: parseFloat(inv.amountInclGst || "0"),
-              issueDate: inv.issueDate,
-              status: inv.status,
-              invoiceType: (inv as any).invoiceType || null,
+            invoices: empInvoices.map(inv => {
+              const invLines = (lineItemsByInvoice[inv.id] || []).filter(li => claimedLineItemIds.has(li.id));
+              const matchedLines = invLines.filter(li => Math.abs(parseFloat(li.unitAmount || "0") - chargeOutRate) < 0.02);
+              const hasLineItemMatch = matchedLines.length > 0;
+              const attrRevenue = hasLineItemMatch
+                ? matchedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0)
+                : parseFloat(inv.amountExclGst || "0");
+              const attrTax = hasLineItemMatch
+                ? matchedLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0)
+                : parseFloat(inv.gstAmount || "0");
+              const attrHours = hasLineItemMatch
+                ? matchedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0)
+                : (inv.hours ? parseFloat(inv.hours) : 0);
+              const bankLinked = inv.status === "PAID" || allBankTxns.some(bt => bt.linkedInvoiceId === inv.id);
+              return {
+                id: inv.id,
+                invoiceNumber: inv.invoiceNumber,
+                contactName: inv.contactName,
+                hours: attrHours,
+                amountExclGst: Math.round(attrRevenue * 100) / 100,
+                amountInclGst: Math.round((attrRevenue + attrTax) * 100) / 100,
+                issueDate: inv.issueDate,
+                status: inv.status,
+                invoiceType: (inv as any).invoiceType || null,
+                bankLinked,
+              };
+            }),
+            timesheets: empTimesheets.map(t => ({
+              id: t.id,
+              totalHours: parseFloat(t.totalHours || "0"),
+              regularHours: parseFloat(t.regularHours || "0"),
+              overtimeHours: parseFloat(t.overtimeHours || "0"),
+              status: t.status,
+              fileName: t.fileName || null,
+              source: t.source || null,
+              clientName: (() => {
+                if (t.clientId) {
+                  const tsClient = allClients.find(c => c.id === t.clientId);
+                  return tsClient?.name || null;
+                }
+                return clientName;
+              })(),
             })),
             rctis: empRctis.map(r => {
               const rctiClient = allClients.find(c => c.id === r.clientId);
@@ -3367,8 +3867,8 @@ export async function registerRoutes(
             }),
           },
           cost: {
-            grossEarnings: Math.round(grossEarnings * 100) / 100,
-            superAmount: Math.round(superAmount * 100) / 100,
+            grossEarnings: Math.round(effectiveGrossEarnings * 100) / 100,
+            superAmount: Math.round(effectiveSuperAmount * 100) / 100,
             netPay: Math.round(netPay * 100) / 100,
             paygWithheld: Math.round(paygWithheld * 100) / 100,
             totalCost: Math.round(costExPayrollTax * 100) / 100,
@@ -3390,7 +3890,7 @@ export async function registerRoutes(
             contractorTxns: matchedSpendTxns.map(t => ({
               id: t.id,
               contactName: t.contactName,
-              amount: Math.round(Math.abs(parseFloat(t.amount)) / 1.1 * 100) / 100,
+              amount: Math.round(computeExGstFromSpend(Math.abs(parseFloat(t.amount)), accpayInvs) * 100) / 100,
               amountInclGst: Math.abs(parseFloat(t.amount)),
               date: t.date,
               description: t.description,
@@ -3416,6 +3916,385 @@ export async function registerRoutes(
           marginPercent: Math.round(marginIncPT * 10) / 10,
         };
       }).filter(Boolean);
+
+      const placementEmployeeIds = new Set(relevantPlacements.map(p => p.employeeId));
+      const employeesWithPayroll = new Map<string, typeof allPayRunLines>();
+      for (const pl of allPayRunLines) {
+        if (!placementEmployeeIds.has(pl.line.employeeId)) {
+          if (!employeesWithPayroll.has(pl.line.employeeId)) {
+            employeesWithPayroll.set(pl.line.employeeId, []);
+          }
+          employeesWithPayroll.get(pl.line.employeeId)!.push(pl);
+        }
+      }
+
+      for (const [empId, empPayLines] of employeesWithPayroll) {
+        const employee = allEmployees.find(e => e.id === empId);
+        if (!employee) continue;
+        if (employee.paymentMethod === "INVOICE") continue;
+
+        const payrollRate = empPayLines.reduce((best, pl) => {
+          const r = parseFloat(pl.line.ratePerHour || "0");
+          return r > 0 ? r : best;
+        }, 0);
+
+        const effectiveRates2 = getEffectiveRate(rateIndex, employee.id, month, year, employee.hourlyRate, employee.chargeOutRate);
+        let payRate: number;
+        let payRateSource: "PLACEMENT" | "RATE_HISTORY" | "PAYROLL_DERIVED" | "EMPLOYEE_DEFAULT";
+        if (effectiveRates2.payRate > 0 && rateIndex[employee.id]?.length > 0) {
+          payRate = effectiveRates2.payRate;
+          payRateSource = "RATE_HISTORY";
+        } else if (payrollRate > 0) {
+          payRate = payrollRate;
+          payRateSource = "PAYROLL_DERIVED";
+        } else if (parseFloat(employee.hourlyRate || "0") > 0) {
+          payRate = parseFloat(employee.hourlyRate || "0");
+          payRateSource = "EMPLOYEE_DEFAULT";
+        } else {
+          payRate = 0;
+          payRateSource = "EMPLOYEE_DEFAULT";
+        }
+
+        const empFullName = `${employee.firstName} ${employee.lastName}`.toLowerCase();
+        const empFirstLower = employee.firstName.toLowerCase();
+        const empLastLower = employee.lastName.toLowerCase();
+
+        const payRunPeriodStart = empPayLines.reduce((earliest: Date | null, pl) => {
+          const d = pl.payRun.periodStart ? new Date(pl.payRun.periodStart) : null;
+          return d && (!earliest || d < earliest) ? d : earliest;
+        }, null);
+        const payRunPeriodEnd = empPayLines.reduce((latest: Date | null, pl) => {
+          const d = pl.payRun.periodEnd ? new Date(pl.payRun.periodEnd) : (pl.payRun.payDate ? new Date(pl.payRun.payDate) : null);
+          return d && (!latest || d > latest) ? d : latest;
+        }, null);
+
+        const empInvoices = periodInvoices.filter(inv => {
+          if (inv.status === "VOIDED" || inv.status === "DELETED") return false;
+          const invType = (inv as any).invoiceType;
+          if (invType && invType !== "ACCREC") return false;
+
+          if (payRunPeriodStart && payRunPeriodEnd && inv.issueDate) {
+            const invDate = new Date(inv.issueDate);
+            const overlapStart = new Date(payRunPeriodStart);
+            overlapStart.setDate(overlapStart.getDate() - 14);
+            const overlapEnd = new Date(payRunPeriodEnd);
+            overlapEnd.setDate(overlapEnd.getDate() + 14);
+            if (invDate < overlapStart || invDate > overlapEnd) return false;
+          }
+
+          if (inv.employeeId === employee.id) return true;
+
+          if (inv.contactName) {
+            const cn = inv.contactName.toLowerCase();
+            if (cn === empFullName) return true;
+            const parts = cn.split(" ");
+            if (parts.length >= 2 && parts[0] === empFirstLower && parts[parts.length - 1] === empLastLower) return true;
+          }
+
+          const invLineItems = lineItemsByInvoice[inv.id] || [];
+          for (const li of invLineItems) {
+            const desc = (li.description || "").toLowerCase();
+            if (desc.includes(empFullName) || (desc.includes(empFirstLower) && desc.includes(empLastLower))) {
+              return true;
+            }
+          }
+
+          return false;
+        });
+
+        let invoiceChargeOutRate = 0;
+        let invoiceRevenue = 0;
+        let invoiceRevenueInclGst = 0;
+        let invoiceHours = 0;
+        let clientName = "Unknown";
+        let clientId: string | null = null;
+        let chargeOutRateSource: "PLACEMENT" | "RATE_HISTORY" | "INVOICE_DERIVED" | "EMPLOYEE_DEFAULT" = "EMPLOYEE_DEFAULT";
+        const matchedInvoices: typeof periodInvoices = [];
+
+        for (const inv of empInvoices) {
+          if (claimedInvoiceIds.has(inv.id)) continue;
+
+          const lineItems = lineItemsByInvoice[inv.id] || [];
+          const unclaimedLines = lineItems.filter(li => !claimedLineItemIds.has(li.id));
+
+          if (unclaimedLines.length > 0) {
+            for (const li of unclaimedLines) {
+              const liRate = parseFloat(li.unitAmount || "0");
+              const liHours = parseFloat(li.quantity || "0");
+              const liAmount = parseFloat(li.lineAmount || "0");
+              const liTax = parseFloat(li.taxAmount || "0");
+              if (liRate > 0 && invoiceChargeOutRate === 0) invoiceChargeOutRate = liRate;
+              invoiceRevenue += liAmount;
+              invoiceRevenueInclGst += liAmount + liTax;
+              invoiceHours += liHours;
+              claimedLineItemIds.add(li.id);
+            }
+            const allLinesClaimed = lineItems.every(li => claimedLineItemIds.has(li.id));
+            if (allLinesClaimed) claimedInvoiceIds.add(inv.id);
+          } else if (lineItems.length === 0) {
+            claimedInvoiceIds.add(inv.id);
+            invoiceRevenue += parseFloat(inv.amountExclGst || "0");
+            invoiceRevenueInclGst += parseFloat(inv.amountInclGst || "0");
+            invoiceHours += parseFloat(inv.hours || "0");
+            if (parseFloat(inv.hourlyRate || "0") > 0 && invoiceChargeOutRate === 0) {
+              invoiceChargeOutRate = parseFloat(inv.hourlyRate || "0");
+            } else if (invoiceChargeOutRate === 0 && parseFloat(inv.hours || "0") > 0) {
+              invoiceChargeOutRate = parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours || "1");
+            }
+          }
+
+          if (inv.contactName && clientName === "Unknown") clientName = inv.contactName;
+          if (inv.clientId && !clientId) clientId = inv.clientId;
+          if (!matchedInvoices.includes(inv)) matchedInvoices.push(inv);
+        }
+
+        let chargeOutRate = 0;
+        const rateHistoryChargeOut = rateIndex[employee.id]?.some(r => r.chargeOutRate && parseFloat(r.chargeOutRate) > 0)
+          ? effectiveRates2.chargeOutRate : 0;
+        if (rateHistoryChargeOut > 0) {
+          chargeOutRate = rateHistoryChargeOut;
+          chargeOutRateSource = "RATE_HISTORY";
+        } else if (invoiceChargeOutRate > 0) {
+          chargeOutRate = invoiceChargeOutRate;
+          chargeOutRateSource = "INVOICE_DERIVED";
+        } else if (parseFloat(employee.chargeOutRate || "0") > 0) {
+          chargeOutRate = parseFloat(employee.chargeOutRate || "0");
+          chargeOutRateSource = "EMPLOYEE_DEFAULT";
+        }
+
+        if (invoiceRevenue === 0 && chargeOutRate === 0 && payRate === 0) continue;
+
+        const empRctis = periodRctis.filter(r => r.employeeId === employee.id);
+        const rctiRevenue = empRctis.reduce((sum, r) => sum + parseFloat(r.amountExclGst || "0"), 0);
+        const rctiRevenueInclGst = empRctis.reduce((sum, r) => sum + parseFloat(r.amountInclGst || "0"), 0);
+        const rctiHours = empRctis.reduce((sum, r) => sum + parseFloat(r.hours || "0"), 0);
+
+        const revenue = invoiceRevenue + rctiRevenue;
+        const revenueInclGst = invoiceRevenueInclGst + rctiRevenueInclGst;
+        const invoicedHours = invoiceHours + rctiHours;
+
+        const empTimesheets = allTimesheets.filter(t => t.employeeId === employee.id && t.month === month && t.year === year);
+        const timesheetHours = empTimesheets.reduce((sum, t) => sum + parseFloat(t.totalHours || "0"), 0);
+
+        const empExpected = allExpectedHours.filter(e => e.employeeId === employee.id);
+        const estimatedHours = empExpected.reduce((sum, e) => sum + parseFloat(e.expectedHours || "0"), 0);
+
+        let hoursSource: "INVOICED" | "TIMESHEET" | "ESTIMATED" = "ESTIMATED";
+        let bestAvailableHours = estimatedHours;
+        if (invoicedHours > 0) {
+          hoursSource = "INVOICED";
+          bestAvailableHours = invoicedHours;
+        } else if (timesheetHours > 0) {
+          hoursSource = "TIMESHEET";
+          bestAvailableHours = timesheetHours;
+        }
+
+        const utilisation = estimatedHours > 0 ? Math.round((bestAvailableHours / estimatedHours) * 1000) / 10 : 0;
+
+        const costAlreadyClaimed = claimedEmployeeCostIds.has(employee.id);
+        const payLines = costAlreadyClaimed ? [] : empPayLines;
+
+        const rawGrossEarnings = payLines.reduce((sum, pl) => sum + parseFloat(pl.line.grossEarnings || "0"), 0);
+        const superAmount = payLines.reduce((sum, pl) => sum + parseFloat(pl.line.superAmount || "0"), 0);
+        const netPay = payLines.reduce((sum, pl) => sum + parseFloat(pl.line.netPay || "0"), 0);
+        const paygWithheld = payLines.reduce((sum, pl) => sum + parseFloat(pl.line.paygWithheld || "0"), 0);
+        const usedFallbackGross = rawGrossEarnings === 0 && (netPay > 0 || paygWithheld > 0);
+        const grossEarnings = usedFallbackGross
+          ? (paygWithheld > 0 ? netPay + paygWithheld : netPay)
+          : rawGrossEarnings;
+
+        let totalEmployeeCost = grossEarnings + superAmount;
+        let costSource: "PAYROLL" | "CONTRACTOR_SPEND" | "ESTIMATED" | "SHARED" = costAlreadyClaimed ? "SHARED" : "PAYROLL";
+
+        let estimatedGrossEarnings = 0;
+        let estimatedSuperAmount = 0;
+        if (!costAlreadyClaimed && totalEmployeeCost === 0) {
+          const periodDate = new Date(year, month - 1, 15);
+          const superRateDecimal = getSuperRate(periodDate) / 100;
+          if (payRate > 0 && bestAvailableHours > 0) {
+            const rateIsSuperInclusive = payRateSource === "PLACEMENT" || payRateSource === "EMPLOYEE_DEFAULT";
+            if (rateIsSuperInclusive) {
+              estimatedGrossEarnings = (payRate / (1 + superRateDecimal)) * bestAvailableHours;
+              estimatedSuperAmount = estimatedGrossEarnings * superRateDecimal;
+              totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
+            } else {
+              estimatedGrossEarnings = payRate * bestAvailableHours;
+              estimatedSuperAmount = estimatedGrossEarnings * superRateDecimal;
+              totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
+            }
+            costSource = "ESTIMATED";
+          }
+        }
+
+        if (!costAlreadyClaimed && totalEmployeeCost > 0) {
+          claimedEmployeeCostIds.add(employee.id);
+        }
+
+        const effectiveGrossEarnings = costSource === "ESTIMATED" ? estimatedGrossEarnings : grossEarnings;
+        const effectiveSuperAmount = costSource === "ESTIMATED" ? estimatedSuperAmount : superAmount;
+
+        const rateSpread = chargeOutRate - payRate;
+        const feePercent = parseFloat(employee.payrollFeePercent || "0");
+        const payrollFeeRevenue = effectiveGrossEarnings * (feePercent / 100);
+
+        let payrollTaxRate = 0;
+        let payrollTaxAmount = 0;
+        if (employee.payrollTaxApplicable && employee.state && ptRatesByState[employee.state] !== undefined) {
+          payrollTaxRate = ptRatesByState[employee.state];
+          payrollTaxAmount = effectiveGrossEarnings * (payrollTaxRate / 100);
+        }
+
+        const costExPayrollTax = totalEmployeeCost;
+        const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
+        const profitExPayrollTax = revenue - costExPayrollTax;
+        const profitIncPayrollTax = revenue - costIncPayrollTax;
+        const marginExPT = revenue > 0 ? (profitExPayrollTax / revenue) * 100 : 0;
+        const marginIncPT = revenue > 0 ? (profitIncPayrollTax / revenue) * 100 : 0;
+
+        const client = clientId ? allClients.find(c => c.id === clientId) : null;
+        const clientBankTxns = periodBankTxns.filter(t =>
+          !claimedBankTxnIds.has(t.id) &&
+          t.type === "RECEIVE" && (
+            t.contactName === clientName ||
+            (client?.xeroContactId && t.xeroContactId === client.xeroContactId)
+          )
+        );
+        clientBankTxns.forEach(t => claimedBankTxnIds.add(t.id));
+        const cashReceived = clientBankTxns.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+        rows.push({
+          placementId: null,
+          placementStatus: null,
+          placementEndDate: null,
+          chargeOutRate: Math.round(chargeOutRate * 100) / 100,
+          payRate: Math.round(payRate * 100) / 100,
+          rateSpread: Math.round(rateSpread * 100) / 100,
+          payRateSource,
+          chargeOutRateSource,
+          expectedHours: Math.round(estimatedHours * 10) / 10,
+          utilisation,
+          employee: {
+            id: employee.id,
+            firstName: employee.firstName,
+            lastName: employee.lastName,
+            chargeOutRate: employee.chargeOutRate,
+            hourlyRate: employee.hourlyRate,
+            payrollFeePercent: employee.payrollFeePercent,
+            paymentMethod: employee.paymentMethod,
+            companyName: employee.companyName,
+          },
+          client: {
+            id: clientId,
+            name: clientName,
+          },
+          revenue: {
+            invoiceCount: matchedInvoices.length,
+            rctiCount: empRctis.length,
+            hours: invoiceHours + rctiHours,
+            invoicedHours: Math.round(invoicedHours * 10) / 10,
+            timesheetHours: Math.round(timesheetHours * 10) / 10,
+            estimatedHours: Math.round(estimatedHours * 10) / 10,
+            bestAvailableHours: Math.round(bestAvailableHours * 10) / 10,
+            hoursSource,
+            amountExGst: Math.round(revenue * 100) / 100,
+            amountInclGst: Math.round(revenueInclGst * 100) / 100,
+            rctiAmountExGst: Math.round(rctiRevenue * 100) / 100,
+            invoices: matchedInvoices.map(inv => {
+              const invLines = (lineItemsByInvoice[inv.id] || []).filter(li => claimedLineItemIds.has(li.id));
+              const attrRevenue = invLines.length > 0
+                ? invLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0)
+                : parseFloat(inv.amountExclGst || "0");
+              const attrTax = invLines.length > 0
+                ? invLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0)
+                : parseFloat(inv.gstAmount || "0");
+              const attrHours = invLines.length > 0
+                ? invLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0)
+                : (inv.hours ? parseFloat(inv.hours) : 0);
+              const bankLinked = inv.status === "PAID" || allBankTxns.some(bt => bt.linkedInvoiceId === inv.id);
+              return {
+                id: inv.id,
+                invoiceNumber: inv.invoiceNumber,
+                contactName: inv.contactName,
+                hours: attrHours,
+                amountExclGst: Math.round(attrRevenue * 100) / 100,
+                amountInclGst: Math.round((attrRevenue + attrTax) * 100) / 100,
+                issueDate: inv.issueDate,
+                status: inv.status,
+                invoiceType: (inv as any).invoiceType || null,
+                bankLinked,
+              };
+            }),
+            timesheets: empTimesheets.map(t => ({
+              id: t.id,
+              totalHours: parseFloat(t.totalHours || "0"),
+              regularHours: parseFloat(t.regularHours || "0"),
+              overtimeHours: parseFloat(t.overtimeHours || "0"),
+              status: t.status,
+              fileName: t.fileName || null,
+              source: t.source || null,
+              clientName: (() => {
+                if (t.clientId) {
+                  const tsClient = allClients.find(c => c.id === t.clientId);
+                  return tsClient?.name || null;
+                }
+                return clientName;
+              })(),
+            })),
+            rctis: empRctis.map(r => {
+              const rctiClient = allClients.find(c => c.id === r.clientId);
+              return {
+                id: r.id,
+                clientName: rctiClient?.name || clientName,
+                hours: r.hours ? parseFloat(r.hours) : 0,
+                amountExclGst: parseFloat(r.amountExclGst || "0"),
+                amountInclGst: parseFloat(r.amountInclGst || "0"),
+                month: r.month,
+                year: r.year,
+              };
+            }),
+          },
+          cost: {
+            grossEarnings: Math.round(effectiveGrossEarnings * 100) / 100,
+            superAmount: Math.round(effectiveSuperAmount * 100) / 100,
+            netPay: Math.round(netPay * 100) / 100,
+            paygWithheld: Math.round(paygWithheld * 100) / 100,
+            totalCost: Math.round(costExPayrollTax * 100) / 100,
+            totalCostIncPT: Math.round(costIncPayrollTax * 100) / 100,
+            payrollTaxRate,
+            payrollTaxAmount: Math.round(payrollTaxAmount * 100) / 100,
+            payrollTaxApplicable: employee.payrollTaxApplicable,
+            costSource,
+            contractorSpend: 0,
+            contractorSpendTxnCount: 0,
+            payRunLines: payLines.map(pl => ({
+              payRunId: pl.payRun.id,
+              payDate: pl.payRun.payDate || null,
+              grossEarnings: parseFloat(pl.line.grossEarnings || "0"),
+              superAmount: parseFloat(pl.line.superAmount || "0"),
+              netPay: parseFloat(pl.line.netPay || "0"),
+              paygWithheld: parseFloat(pl.line.paygWithheld || "0"),
+            })),
+            contractorTxns: [],
+          },
+          payrollFeeRevenue: Math.round(payrollFeeRevenue * 100) / 100,
+          profitExPayrollTax: Math.round(profitExPayrollTax * 100) / 100,
+          profitIncPayrollTax: Math.round(profitIncPayrollTax * 100) / 100,
+          marginExPT: Math.round(marginExPT * 10) / 10,
+          marginIncPT: Math.round(marginIncPT * 10) / 10,
+          cashReceived: Math.round(cashReceived * 100) / 100,
+          cashReceivedTxns: clientBankTxns.map(t => ({
+            id: t.id,
+            contactName: t.contactName,
+            amount: parseFloat(t.amount),
+            date: t.date,
+            bankAccountName: t.bankAccountName,
+            reference: t.reference,
+            description: t.description,
+          })),
+          profit: Math.round(profitIncPayrollTax * 100) / 100,
+          marginPercent: Math.round(marginIncPT * 10) / 10,
+        });
+      }
 
       const totals = {
         totalRevenue: rows.reduce((s, r: any) => s + r.revenue.amountExGst, 0),
@@ -3550,32 +4429,78 @@ export async function registerRoutes(
       const periodRctis = allRctis.filter(r => r.month === month && r.year === year);
       const claimedInvoiceIds = new Set<string>();
 
+      const detailLineItems = await storage.getInvoiceLineItemsByInvoiceIds(periodInvoices.map(i => i.id));
+      const detailLineItemsByInvoice: Record<string, typeof detailLineItems> = {};
+      for (const li of detailLineItems) {
+        if (!detailLineItemsByInvoice[li.invoiceId]) detailLineItemsByInvoice[li.invoiceId] = [];
+        detailLineItemsByInvoice[li.invoiceId].push(li);
+      }
+      const detailClaimedLineItemIds = new Set<string>();
+      let costAlreadyAssigned = false;
+
       const effectiveRates = getEffectiveRate(rateIndex, employee.id, month, year, employee.hourlyRate, employee.chargeOutRate);
+      const hasRateHistory = rateIndex[employee.id]?.length > 0;
+      const fallbackPayRateSource: "RATE_HISTORY" | "EMPLOYEE_DEFAULT" =
+        (effectiveRates.payRate > 0 && hasRateHistory) ? "RATE_HISTORY" : "EMPLOYEE_DEFAULT";
 
       const placementResults = empPlacements.map(placement => {
         const client = allClients.find(c => c.id === placement.clientId);
         const clientName = placement.clientName || client?.name || "Unknown";
         const chargeOutRate = parseFloat(placement.chargeOutRate || "0") || effectiveRates.chargeOutRate;
-        const payRate = parseFloat(placement.payRate || "0") || effectiveRates.payRate;
+        const rawPlacementPayRate = parseFloat(placement.payRate || "0");
+        const payRate = rawPlacementPayRate || effectiveRates.payRate;
+        const placementPayRateSource = rawPlacementPayRate > 0 ? "PLACEMENT" as const : fallbackPayRateSource;
 
-        const empInvoices = periodInvoices.filter(inv => {
-          if (claimedInvoiceIds.has(inv.id)) return false;
-          if (inv.status === "VOIDED" || inv.status === "DELETED") return false;
+        let invoiceRevenue = 0;
+        let invoiceHours = 0;
+        const empInvoices: typeof periodInvoices = [];
+
+        for (const inv of periodInvoices) {
+          if (inv.status === "VOIDED" || inv.status === "DELETED") continue;
           const invType = (inv as any).invoiceType;
-          if (invType && invType !== "ACCREC") return false;
-          if (inv.employeeId === employee.id && inv.contactName === clientName) return true;
-          if (!inv.employeeId && inv.contactName === clientName) {
-            const invRate = inv.hours && parseFloat(inv.hours) > 0
-              ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
-              : 0;
-            return Math.abs(invRate - chargeOutRate) < 0.01;
-          }
-          return false;
-        });
-        empInvoices.forEach(inv => claimedInvoiceIds.add(inv.id));
+          if (invType && invType !== "ACCREC") continue;
+          const matchesEmployee = inv.employeeId === employee.id && inv.contactName === clientName;
+          const matchesClientOnly = !inv.employeeId && inv.contactName === clientName;
+          if (!matchesEmployee && !matchesClientOnly) continue;
 
-        const invoiceRevenue = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.amountExclGst || "0"), 0);
-        const invoiceHours = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.hours || "0"), 0);
+          const lineItems = detailLineItemsByInvoice[inv.id] || [];
+          const unclaimedLines = lineItems.filter(li => !detailClaimedLineItemIds.has(li.id));
+          const rateMatchedLines = unclaimedLines.filter(li => {
+            const liRate = parseFloat(li.unitAmount || "0");
+            return Math.abs(liRate - chargeOutRate) < 0.02;
+          });
+
+          if (rateMatchedLines.length > 0) {
+            rateMatchedLines.forEach(li => detailClaimedLineItemIds.add(li.id));
+            const liRevenue = rateMatchedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
+            const liHours = rateMatchedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
+            invoiceRevenue += liRevenue;
+            invoiceHours += liHours;
+            if (!empInvoices.includes(inv)) empInvoices.push(inv);
+            const allLinesClaimed = lineItems.every(li => detailClaimedLineItemIds.has(li.id));
+            if (allLinesClaimed) claimedInvoiceIds.add(inv.id);
+          } else if (unclaimedLines.length > 0 && !claimedInvoiceIds.has(inv.id) && matchesEmployee) {
+            unclaimedLines.forEach(li => detailClaimedLineItemIds.add(li.id));
+            const liRevenue = unclaimedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
+            const liHours = unclaimedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
+            invoiceRevenue += liRevenue;
+            invoiceHours += liHours;
+            if (!empInvoices.includes(inv)) empInvoices.push(inv);
+            const allLinesClaimed = lineItems.every(li => detailClaimedLineItemIds.has(li.id));
+            if (allLinesClaimed) claimedInvoiceIds.add(inv.id);
+          } else if (!claimedInvoiceIds.has(inv.id) && lineItems.length === 0) {
+            if (matchesClientOnly) {
+              const invRate = inv.hours && parseFloat(inv.hours) > 0
+                ? parseFloat(inv.amountExclGst || "0") / parseFloat(inv.hours)
+                : 0;
+              if (Math.abs(invRate - chargeOutRate) >= 0.01) continue;
+            }
+            claimedInvoiceIds.add(inv.id);
+            invoiceRevenue += parseFloat(inv.amountExclGst || "0");
+            invoiceHours += parseFloat(inv.hours || "0");
+            empInvoices.push(inv);
+          }
+        }
 
         const empRctis = periodRctis.filter(r => r.employeeId === employee.id && r.clientId === placement.clientId);
         const rctiRevenue = empRctis.reduce((sum, r) => sum + parseFloat(r.amountExclGst || "0"), 0);
@@ -3592,16 +4517,30 @@ export async function registerRoutes(
             startDate: placement.startDate,
             endDate: placement.endDate,
           },
-          invoices: empInvoices.map(inv => ({
-            id: inv.id,
-            invoiceNumber: inv.invoiceNumber,
-            contactName: inv.contactName,
-            hours: inv.hours ? parseFloat(inv.hours) : 0,
-            amountExclGst: parseFloat(inv.amountExclGst || "0"),
-            amountInclGst: parseFloat(inv.amountInclGst || "0"),
-            issueDate: inv.issueDate,
-            status: inv.status,
-          })),
+          invoices: empInvoices.map(inv => {
+            const invLines = (detailLineItemsByInvoice[inv.id] || []).filter(li => detailClaimedLineItemIds.has(li.id));
+            const matchedLines = invLines.filter(li => Math.abs(parseFloat(li.unitAmount || "0") - chargeOutRate) < 0.02);
+            const hasLineItemMatch = matchedLines.length > 0;
+            const attrRevenue = hasLineItemMatch
+              ? matchedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0)
+              : parseFloat(inv.amountExclGst || "0");
+            const attrTax = hasLineItemMatch
+              ? matchedLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0)
+              : parseFloat(inv.gstAmount || "0");
+            const attrHours = hasLineItemMatch
+              ? matchedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0)
+              : (inv.hours ? parseFloat(inv.hours) : 0);
+            return {
+              id: inv.id,
+              invoiceNumber: inv.invoiceNumber,
+              contactName: inv.contactName,
+              hours: attrHours,
+              amountExclGst: Math.round(attrRevenue * 100) / 100,
+              amountInclGst: Math.round((attrRevenue + attrTax) * 100) / 100,
+              issueDate: inv.issueDate,
+              status: inv.status,
+            };
+          }),
           rctis: empRctis.map(r => ({
             id: r.id,
             clientName: client?.name || clientName,
@@ -3650,47 +4589,71 @@ export async function registerRoutes(
       let costSource: "PAYROLL" | "CONTRACTOR_SPEND" | "ESTIMATED" = "PAYROLL";
       let contractorSpend = 0;
       let matchedSpendTxns: typeof periodBankTxns = [];
+      let accpayInvs: ReturnType<typeof getContractorAccpayInvoices> = [];
 
       if (employee.paymentMethod === "INVOICE" && (employee.supplierContactId || employee.companyName)) {
         matchedSpendTxns = employee.supplierContactId
           ? periodBankTxns.filter(t => t.type === "SPEND" && t.xeroContactId && t.xeroContactId === employee.supplierContactId)
           : periodBankTxns.filter(t => t.type === "SPEND" && t.contactName && normalizeCompanyName(t.contactName) === normalizeCompanyName(employee.companyName!));
-        contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)) / 1.1, 0);
+        accpayInvs = getContractorAccpayInvoices(allInvoices as any, employee, month, year);
+        contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + computeExGstFromSpend(Math.abs(parseFloat(t.amount)), accpayInvs), 0);
         if (contractorSpend > 0) {
           totalEmployeeCost = contractorSpend;
           costSource = "CONTRACTOR_SPEND";
         }
       }
 
+      let estimatedGrossEarnings = 0;
+      let estimatedSuperAmount = 0;
       if (totalEmployeeCost === 0 && costSource !== "CONTRACTOR_SPEND") {
         const periodDate = new Date(year, month - 1, 15);
         const superRate = getSuperRate(periodDate) / 100;
-        let estimatedCost = 0;
         for (const pr of placementResults) {
           const placementPayRate = parseFloat(pr.placement.payRate || "0") || effectiveRates.payRate;
+          const source = parseFloat(pr.placement.payRate || "0") > 0 ? "PLACEMENT" : fallbackPayRateSource;
+          const rateIsSuperInclusive = source === "PLACEMENT" || source === "EMPLOYEE_DEFAULT";
           if (placementPayRate > 0 && pr.totalHours > 0) {
-            const baseCost = pr.totalHours * placementPayRate;
-            estimatedCost += baseCost + (baseCost * superRate);
+            if (rateIsSuperInclusive) {
+              const ge = (placementPayRate / (1 + superRate)) * pr.totalHours;
+              const sa = ge * superRate;
+              estimatedGrossEarnings += ge;
+              estimatedSuperAmount += sa;
+            } else {
+              const ge = placementPayRate * pr.totalHours;
+              const sa = ge * superRate;
+              estimatedGrossEarnings += ge;
+              estimatedSuperAmount += sa;
+            }
           }
         }
-        if (estimatedCost === 0 && bestAvailableHours > 0 && effectiveRates.payRate > 0) {
-          const baseCost = bestAvailableHours * effectiveRates.payRate;
-          estimatedCost = baseCost + (baseCost * superRate);
+        if (estimatedGrossEarnings === 0 && bestAvailableHours > 0 && effectiveRates.payRate > 0) {
+          const rateIsSuperInclusive = fallbackPayRateSource === "EMPLOYEE_DEFAULT";
+          if (rateIsSuperInclusive) {
+            estimatedGrossEarnings = (effectiveRates.payRate / (1 + superRate)) * bestAvailableHours;
+            estimatedSuperAmount = estimatedGrossEarnings * superRate;
+          } else {
+            estimatedGrossEarnings = effectiveRates.payRate * bestAvailableHours;
+            estimatedSuperAmount = estimatedGrossEarnings * superRate;
+          }
         }
-        if (estimatedCost > 0) {
-          totalEmployeeCost = estimatedCost;
+        if (estimatedGrossEarnings > 0) {
+          totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
           costSource = "ESTIMATED";
         }
       }
 
-      const feePercent = parseFloat(employee.payrollFeePercent || "0");
-      const payrollFeeAmount = grossEarnings * (feePercent / 100);
+      const effectiveGrossEarnings = costSource === "ESTIMATED" ? estimatedGrossEarnings : grossEarnings;
+      const effectiveSuperAmount = costSource === "ESTIMATED" ? estimatedSuperAmount : superAmount;
+
+      const bestPlacementFee = empPlacements.find(p => parseFloat(p.payrollFeePercent || "0") > 0)?.payrollFeePercent;
+      const feePercent = parseFloat(bestPlacementFee || employee.payrollFeePercent || "0");
+      const payrollFeeAmount = effectiveGrossEarnings * (feePercent / 100);
 
       let payrollTaxRate = 0;
       let payrollTaxAmount = 0;
       if (employee.payrollTaxApplicable && employee.state && ptRatesByState[employee.state] !== undefined) {
         payrollTaxRate = ptRatesByState[employee.state];
-        const taxableBase = costSource === "CONTRACTOR_SPEND" ? contractorSpend : grossEarnings;
+        const taxableBase = costSource === "CONTRACTOR_SPEND" ? contractorSpend : effectiveGrossEarnings;
         payrollTaxAmount = taxableBase * (payrollTaxRate / 100);
       }
 
@@ -3716,7 +4679,7 @@ export async function registerRoutes(
           state: employee.state,
           hourlyRate: employee.hourlyRate,
           chargeOutRate: employee.chargeOutRate,
-          payrollFeePercent: employee.payrollFeePercent,
+          payrollFeePercent: bestPlacementFee || employee.payrollFeePercent,
           payrollTaxApplicable: employee.payrollTaxApplicable,
           employmentType: employee.employmentType,
         },
@@ -3749,15 +4712,15 @@ export async function registerRoutes(
         },
         cost: {
           costSource,
-          grossEarnings: Math.round(grossEarnings * 100) / 100,
-          superAmount: Math.round(superAmount * 100) / 100,
+          grossEarnings: Math.round(effectiveGrossEarnings * 100) / 100,
+          superAmount: Math.round(effectiveSuperAmount * 100) / 100,
           netPay: Math.round(netPay * 100) / 100,
           paygWithheld: Math.round(paygWithheld * 100) / 100,
           contractorSpend: Math.round(contractorSpend * 100) / 100,
           contractorTxns: matchedSpendTxns.map(t => ({
             id: t.id,
             contactName: t.contactName,
-            amount: Math.round(Math.abs(parseFloat(t.amount)) / 1.1 * 100) / 100,
+            amount: Math.round(computeExGstFromSpend(Math.abs(parseFloat(t.amount)), accpayInvs) * 100) / 100,
             amountInclGst: Math.abs(parseFloat(t.amount)),
             date: t.date,
             description: t.description,

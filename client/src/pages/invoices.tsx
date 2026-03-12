@@ -164,6 +164,8 @@ export default function InvoicesPage() {
     description: "",
     reference: "",
   });
+  const [gstOption, setGstOption] = useState<"GST" | "NO_GST" | "CUSTOM">("GST");
+  const [customGstAmount, setCustomGstAmount] = useState("");
   const [invoiceLines, setInvoiceLines] = useState<InvoiceLine[]>([]);
   const { toast } = useToast();
 
@@ -197,6 +199,8 @@ export default function InvoicesPage() {
 
   const resetForm = () => {
     setInvForm({ clientId: "", employeeId: "", year: String(now.getFullYear()), month: String(now.getMonth() + 1), issueDate: now.toISOString().split("T")[0], dueDate: "", hours: "", hourlyRate: "", amountExclGst: "", description: "", reference: "" });
+    setGstOption("GST");
+    setCustomGstAmount("");
     setInvoiceLines([]);
   };
 
@@ -392,6 +396,13 @@ export default function InvoicesPage() {
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (gstOption === "CUSTOM") {
+      const gstVal = parseFloat(customGstAmount);
+      if (isNaN(gstVal) || gstVal < 0) {
+        toast({ title: "Invalid GST amount", description: "Please enter a valid non-negative GST amount", variant: "destructive" });
+        return;
+      }
+    }
     const useLines = invoiceLines.length > 0;
     let amountExcl: number;
     let totalHours: number;
@@ -419,8 +430,8 @@ export default function InvoicesPage() {
       year: parseInt(invForm.year),
       month: parseInt(invForm.month),
       amountExclGst: String(amountExcl.toFixed(2)),
-      gstAmount: String((amountExcl * 0.1).toFixed(2)),
-      amountInclGst: String((amountExcl * 1.1).toFixed(2)),
+      gstAmount: String((gstOption === "NO_GST" ? 0 : gstOption === "CUSTOM" ? (parseFloat(customGstAmount) || 0) : amountExcl * 0.1).toFixed(2)),
+      amountInclGst: String((amountExcl + (gstOption === "NO_GST" ? 0 : gstOption === "CUSTOM" ? (parseFloat(customGstAmount) || 0) : amountExcl * 0.1)).toFixed(2)),
       hours: totalHours ? String(totalHours) : undefined,
       hourlyRate: !useLines && parseFloat(invForm.hourlyRate || "0") ? invForm.hourlyRate : undefined,
       description: invForm.description || undefined,
@@ -752,6 +763,24 @@ export default function InvoicesPage() {
                           </div>
                         </div>
                       )}
+
+                      <div className="space-y-1">
+                        <Label className="text-xs">GST Treatment</Label>
+                        <div className="flex gap-2">
+                          <Button type="button" size="sm" variant={gstOption === "GST" ? "default" : "outline"} className="h-7 text-xs flex-1" onClick={() => setGstOption("GST")} data-testid="button-gst-standard">
+                            10% GST
+                          </Button>
+                          <Button type="button" size="sm" variant={gstOption === "NO_GST" ? "default" : "outline"} className="h-7 text-xs flex-1" onClick={() => setGstOption("NO_GST")} data-testid="button-gst-free">
+                            GST Free
+                          </Button>
+                          <Button type="button" size="sm" variant={gstOption === "CUSTOM" ? "default" : "outline"} className="h-7 text-xs flex-1" onClick={() => setGstOption("CUSTOM")} data-testid="button-gst-custom">
+                            Custom
+                          </Button>
+                        </div>
+                        {gstOption === "CUSTOM" && (
+                          <Input type="number" step="0.01" className="h-8 text-xs font-mono mt-1" value={customGstAmount} onChange={e => setCustomGstAmount(e.target.value)} placeholder="Enter GST amount" data-testid="input-custom-gst" />
+                        )}
+                      </div>
 
                       <div className="space-y-1">
                         <Label className="text-xs">Description</Label>

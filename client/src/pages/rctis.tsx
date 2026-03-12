@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { StatusBadge } from "@/components/status-badge";
@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -41,6 +43,11 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronsUpDown,
+  Upload,
+  Loader2,
+  AlertTriangle,
+  CheckCircle2,
+  X,
 } from "lucide-react";
 import type { Employee } from "@shared/schema";
 
@@ -98,6 +105,7 @@ export default function RctisPage() {
   const [sortField, setSortField] = useState<SortField>("period");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [showAllClients, setShowAllClients] = useState(false);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [clientSearch, setClientSearch] = useState("");
   const { toast } = useToast();
 
@@ -214,6 +222,15 @@ export default function RctisPage() {
           >
             <Link2 className="w-4 h-4 mr-2" />
             {autoMatchMutation.isPending ? "Matching..." : "Auto-Match Bank Txns"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setUploadDialogOpen(true)}
+            data-testid="button-upload-rcti"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Upload RCTI PDF
           </Button>
           <Button
             size="sm"
@@ -453,6 +470,14 @@ export default function RctisPage() {
         rcti={editingRcti}
         clients={rctiClients.length > 0 ? rctiClients : clientList}
         employees={employeeList}
+      />
+
+      <RctiUploadDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+        clients={clientList}
+        employees={employeeList}
+        existingRctis={rctiList}
       />
     </>
   );
@@ -747,6 +772,605 @@ function RctiDialog({
             </Button>
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type RctiScanLineItem = {
+  contractorNo: string | null;
+  contractorName: string | null;
+  description: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  hours: number;
+  rateExGst: number;
+  totalExGst: number;
+};
+
+type RctiScanResult = {
+  fileName: string;
+  fileSize: string;
+  fileSizeBytes: number;
+  fileHash: string;
+  clientName: string | null;
+  clientAbn: string | null;
+  reference: string | null;
+  date: string | null;
+  dueDate: string | null;
+  lineItems: RctiScanLineItem[];
+  totalHours: number;
+  totalExGst: number;
+  gstAmount: number;
+  totalInclGst: number;
+  confidence: number;
+  warnings: string[];
+};
+
+type ReviewLineItem = RctiScanLineItem & {
+  id: string;
+  selected: boolean;
+  employeeId: string;
+  clientId: string;
+  month: number;
+  year: number;
+  isDuplicate: boolean;
+  sourceFile: string;
+  reference: string | null;
+};
+
+function matchEmployeeName(name: string | null, employees: Employee[]): string {
+  if (!name) return "";
+  const lower = name.toLowerCase().trim();
+  for (const emp of employees) {
+    const full = `${emp.firstName} ${emp.lastName}`.toLowerCase().trim();
+    if (full === lower) return emp.id;
+    const reversed = `${emp.lastName} ${emp.firstName}`.toLowerCase().trim();
+    if (reversed === lower) return emp.id;
+    const last = (emp.lastName || "").toLowerCase().trim();
+    const first = (emp.firstName || "").toLowerCase().trim();
+    if (last.length >= 3 && lower.includes(last) && first.length >= 2 && lower.includes(first)) {
+      return emp.id;
+    }
+  }
+  return "";
+}
+
+function matchClientName(name: string | null, clients: ClientRecord[]): string {
+  if (!name) return "";
+  const lower = name.toLowerCase().trim();
+  for (const c of clients) {
+    if (c.name.toLowerCase().trim() === lower) return c.id;
+  }
+  for (const c of clients) {
+    if (lower.includes(c.name.toLowerCase().trim()) || c.name.toLowerCase().trim().includes(lower)) {
+      return c.id;
+    }
+  }
+  return "";
+}
+
+function deriveMonthYear(startDate: string | null, endDate: string | null, rctiDate: string | null): { month: number; year: number } {
+  const now = new Date();
+  const dateStr = endDate || startDate || rctiDate;
+  if (dateStr) {
+    try {
+      const d = new Date(dateStr);
+      if (!isNaN(d.getTime())) {
+        return { month: d.getMonth() + 1, year: d.getFullYear() };
+      }
+    } catch {}
+  }
+  return { month: now.getMonth() + 1, year: now.getFullYear() };
+}
+
+function RctiUploadDialog({
+  open,
+  onOpenChange,
+  clients,
+  employees,
+  existingRctis,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  clients: ClientRecord[];
+  employees: Employee[];
+  existingRctis: RctiRecord[];
+}) {
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [step, setStep] = useState<"upload" | "review" | "done">("upload");
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanResults, setScanResults] = useState<RctiScanResult[]>([]);
+  const [reviewItems, setReviewItems] = useState<ReviewLineItem[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [batchResult, setBatchResult] = useState<{ created: number; updated: number; skipped: number; duplicates: string[]; errors: string[] } | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+
+  const resetAll = () => {
+    setStep("upload");
+    setIsScanning(false);
+    setScanResults([]);
+    setReviewItems([]);
+    setIsSubmitting(false);
+    setBatchResult(null);
+    setSelectedFiles([]);
+    setDragActive(false);
+  };
+
+  const handleOpenChange = (val: boolean) => {
+    if (!val) resetAll();
+    onOpenChange(val);
+  };
+
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const pdfFiles = Array.from(files).filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
+    if (pdfFiles.length === 0) {
+      toast({ title: "Invalid files", description: "Please upload PDF files only", variant: "destructive" });
+      return;
+    }
+    setSelectedFiles(prev => {
+      const existingNames = new Set(prev.map(f => f.name));
+      const newFiles = pdfFiles.filter(f => !existingNames.has(f.name));
+      return [...prev, ...newFiles];
+    });
+  }, [toast]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    if (e.dataTransfer.files) addFiles(e.dataTransfer.files);
+  }, [addFiles]);
+
+  const handleScan = async () => {
+    if (selectedFiles.length === 0) return;
+    setIsScanning(true);
+    try {
+      const formData = new FormData();
+      selectedFiles.forEach(f => formData.append("files", f));
+      const res = await fetch("/api/rctis/scan", { method: "POST", body: formData });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Scan failed");
+      }
+      const data = await res.json();
+      const results: RctiScanResult[] = data.results;
+      setScanResults(results);
+
+      const items: ReviewLineItem[] = [];
+      let idx = 0;
+      for (const scan of results) {
+        const clientId = matchClientName(scan.clientName, clients);
+        for (const li of scan.lineItems) {
+          const employeeId = matchEmployeeName(li.contractorName, employees);
+          const { month, year } = deriveMonthYear(li.startDate, li.endDate, scan.date);
+          const isDuplicate = existingRctis.some(r =>
+            r.employeeId === employeeId &&
+            r.clientId === clientId &&
+            r.month === month &&
+            r.year === year &&
+            employeeId !== "" &&
+            clientId !== "" &&
+            Math.abs(parseFloat(r.amountExclGst || "0") - li.totalExGst) < 1
+          );
+          items.push({
+            ...li,
+            id: `scan-${idx++}`,
+            selected: !isDuplicate,
+            employeeId,
+            clientId,
+            month,
+            year,
+            isDuplicate,
+            sourceFile: scan.fileName,
+            reference: scan.reference,
+          });
+        }
+      }
+      setReviewItems(items);
+      setStep("review");
+    } catch (err: any) {
+      toast({ title: "Scan Failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleCreateBatch = async (forceOverwrite = false) => {
+    const selected = reviewItems.filter(i => i.selected);
+    if (selected.length === 0) {
+      toast({ title: "No items selected", description: "Select at least one line item to create", variant: "destructive" });
+      return;
+    }
+
+    const missingClient = selected.filter(i => !i.clientId);
+    if (missingClient.length > 0) {
+      toast({ title: "Missing client", description: `${missingClient.length} item(s) have no client assigned`, variant: "destructive" });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const scanDateMap = new Map<string, string | null>();
+      for (const sr of scanResults) {
+        for (const li of sr.lineItems) {
+          const key = `${sr.fileName}-${li.contractorName}`;
+          scanDateMap.set(key, sr.date || null);
+        }
+      }
+
+      const items = selected.map(i => {
+        const exGst = i.totalExGst;
+        const gst = Math.round(exGst * 0.1 * 100) / 100;
+        const inclGst = Math.round((exGst + gst) * 100) / 100;
+        const scanDate = scanDateMap.get(`${i.sourceFile}-${i.contractorName}`);
+        return {
+          clientId: i.clientId,
+          employeeId: i.employeeId || null,
+          month: i.month,
+          year: i.year,
+          hours: i.hours > 0 ? i.hours.toFixed(2) : null,
+          hourlyRate: i.rateExGst > 0 ? i.rateExGst.toFixed(2) : null,
+          amountExclGst: exGst.toFixed(2),
+          gstAmount: gst.toFixed(2),
+          amountInclGst: inclGst.toFixed(2),
+          description: [i.contractorName, i.description].filter(Boolean).join(" — ") || null,
+          reference: i.reference,
+          receivedDate: scanDate || null,
+          status: "RECEIVED" as const,
+        };
+      });
+
+      const res = await apiRequest("POST", "/api/rctis/batch", { items, forceOverwrite });
+      const result = await res.json();
+      setBatchResult(result);
+      setStep("done");
+      queryClient.invalidateQueries({ queryKey: ["/api/rctis"] });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message || "Failed to create RCTIs", variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const toggleItem = (id: string) => {
+    setReviewItems(prev => prev.map(i => i.id === id ? { ...i, selected: !i.selected } : i));
+  };
+
+  const toggleAll = (checked: boolean) => {
+    setReviewItems(prev => prev.map(i => ({ ...i, selected: checked })));
+  };
+
+  const recomputeDuplicates = useCallback((items: ReviewLineItem[]): ReviewLineItem[] => {
+    return items.map(item => {
+      const isDuplicate = item.employeeId && item.clientId
+        ? existingRctis.some(r =>
+            r.employeeId === item.employeeId &&
+            r.clientId === item.clientId &&
+            r.month === item.month &&
+            r.year === item.year &&
+            Math.abs(parseFloat(r.amountExclGst || "0") - item.totalExGst) < 1
+          )
+        : false;
+      return { ...item, isDuplicate };
+    });
+  }, [existingRctis]);
+
+  const updateItemField = (id: string, field: keyof ReviewLineItem, value: any) => {
+    setReviewItems(prev => recomputeDuplicates(prev.map(i => i.id === id ? { ...i, [field]: value } : i)));
+  };
+
+  const selectedCount = reviewItems.filter(i => i.selected).length;
+  const totalWarnings = scanResults.reduce((s, r) => s + r.warnings.length, 0);
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto" data-testid="dialog-rcti-upload">
+        <DialogHeader>
+          <DialogTitle>
+            {step === "upload" && "Upload RCTI PDFs"}
+            {step === "review" && "Review Extracted Line Items"}
+            {step === "done" && "Upload Complete"}
+          </DialogTitle>
+          <DialogDescription>
+            {step === "upload" && "Upload one or more RCTI PDF files for automatic data extraction"}
+            {step === "review" && `${reviewItems.length} line item(s) extracted from ${scanResults.length} file(s). Review and confirm before creating records.`}
+            {step === "done" && (batchResult?.message || "RCTI records processed")}
+          </DialogDescription>
+        </DialogHeader>
+
+        {step === "upload" && (
+          <div className="space-y-4">
+            <div
+              className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+                dragActive ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
+              }`}
+              onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              data-testid="dropzone-rcti-upload"
+            >
+              <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+              <p className="text-sm font-medium">Drop RCTI PDF files here or click to browse</p>
+              <p className="text-xs text-muted-foreground mt-1">Supports multiple files. PDF format only.</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf"
+                multiple
+                className="hidden"
+                onChange={(e) => e.target.files && addFiles(e.target.files)}
+                data-testid="input-rcti-file"
+              />
+            </div>
+
+            {selectedFiles.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">{selectedFiles.length} file(s) selected</Label>
+                <div className="space-y-1">
+                  {selectedFiles.map((f, idx) => (
+                    <div key={idx} className="flex items-center justify-between bg-muted/50 rounded px-3 py-1.5 text-sm">
+                      <span className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-muted-foreground" />
+                        {f.name}
+                        <span className="text-xs text-muted-foreground">({(f.size / 1024).toFixed(0)} KB)</span>
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={(e) => { e.stopPropagation(); setSelectedFiles(prev => prev.filter((_, i) => i !== idx)); }}
+                        data-testid={`button-remove-file-${idx}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => handleOpenChange(false)} data-testid="button-cancel-upload">Cancel</Button>
+              <Button
+                onClick={handleScan}
+                disabled={selectedFiles.length === 0 || isScanning}
+                data-testid="button-scan-rctis"
+              >
+                {isScanning ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Scanning {selectedFiles.length} file(s)...
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4 mr-2" />
+                    Scan & Extract
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {step === "review" && (
+          <div className="space-y-4">
+            {totalWarnings > 0 && (
+              <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5 shrink-0" />
+                  <div className="text-sm">
+                    <p className="font-medium text-yellow-800 dark:text-yellow-200">Scan Warnings</p>
+                    {scanResults.map((sr, fi) =>
+                      sr.warnings.map((w, wi) => (
+                        <p key={`${fi}-${wi}`} className="text-yellow-700 dark:text-yellow-300 text-xs mt-1">{sr.fileName}: {w}</p>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {scanResults.map((sr, i) => (
+              <div key={i} className="flex items-center gap-3 text-xs text-muted-foreground bg-muted/30 rounded px-3 py-2">
+                <FileText className="w-4 h-4 shrink-0" />
+                <span className="font-medium">{sr.fileName}</span>
+                <span>{sr.clientName || "Unknown client"}</span>
+                {sr.reference && <span>Ref: {sr.reference}</span>}
+                <span>{sr.lineItems.length} line item(s)</span>
+                <Badge variant={sr.confidence >= 80 ? "default" : sr.confidence >= 60 ? "secondary" : "destructive"} className="text-[10px]">
+                  {sr.confidence}% confidence
+                </Badge>
+              </div>
+            ))}
+
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={reviewItems.length > 0 && reviewItems.every(i => i.selected)}
+                        onCheckedChange={(c) => toggleAll(!!c)}
+                        data-testid="checkbox-select-all"
+                      />
+                    </TableHead>
+                    <TableHead>Contractor</TableHead>
+                    <TableHead>Employee</TableHead>
+                    <TableHead>Client</TableHead>
+                    <TableHead>Period</TableHead>
+                    <TableHead className="text-right">Hours</TableHead>
+                    <TableHead className="text-right">Rate</TableHead>
+                    <TableHead className="text-right">Total ex GST</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {reviewItems.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-muted-foreground py-6">
+                        No line items extracted from the uploaded PDFs
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    reviewItems.map(item => (
+                      <TableRow
+                        key={item.id}
+                        className={item.isDuplicate ? "bg-yellow-50/50 dark:bg-yellow-950/20" : ""}
+                        data-testid={`row-review-${item.id}`}
+                      >
+                        <TableCell>
+                          <Checkbox
+                            checked={item.selected}
+                            onCheckedChange={() => toggleItem(item.id)}
+                            data-testid={`checkbox-item-${item.id}`}
+                          />
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          <div>{item.contractorName || "—"}</div>
+                          {item.contractorNo && <div className="text-xs text-muted-foreground">{item.contractorNo}</div>}
+                        </TableCell>
+                        <TableCell>
+                          <Select value={item.employeeId || "none"} onValueChange={(v) => updateItemField(item.id, "employeeId", v === "none" ? "" : v)}>
+                            <SelectTrigger className="h-8 text-xs w-40" data-testid={`select-employee-${item.id}`}>
+                              <SelectValue placeholder="Match employee" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">— Unassigned —</SelectItem>
+                              {employees.map(e => (
+                                <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell>
+                          <Select value={item.clientId || "none"} onValueChange={(v) => updateItemField(item.id, "clientId", v === "none" ? "" : v)}>
+                            <SelectTrigger className="h-8 text-xs w-36" data-testid={`select-client-${item.id}`}>
+                              <SelectValue placeholder="Match client" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">— None —</SelectItem>
+                              {clients.map(c => (
+                                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {MONTHS[item.month]} {item.year}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">{item.hours > 0 ? item.hours.toFixed(1) : "—"}</TableCell>
+                        <TableCell className="text-right text-sm">{item.rateExGst > 0 ? `$${item.rateExGst.toFixed(2)}` : "—"}</TableCell>
+                        <TableCell className="text-right text-sm font-medium">{formatCurrency(item.totalExGst)}</TableCell>
+                        <TableCell>
+                          {item.isDuplicate && (
+                            <Badge variant="outline" className="text-[10px] text-yellow-600 border-yellow-300">
+                              Duplicate
+                            </Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-muted-foreground">
+                {selectedCount} of {reviewItems.length} selected
+                {reviewItems.some(i => i.isDuplicate) && (
+                  <span className="ml-2 text-yellow-600">
+                    ({reviewItems.filter(i => i.isDuplicate).length} potential duplicate(s))
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => { setStep("upload"); setReviewItems([]); setScanResults([]); }} data-testid="button-back-to-upload">
+                  Back
+                </Button>
+                <Button
+                  onClick={() => handleCreateBatch(false)}
+                  disabled={isSubmitting || selectedCount === 0}
+                  data-testid="button-create-rctis"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 mr-2" />
+                      Create {selectedCount} RCTI(s)
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === "done" && batchResult && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-4">
+              <Card>
+                <CardContent className="pt-4 text-center">
+                  <div className="text-2xl font-bold text-green-600">{batchResult.created}</div>
+                  <p className="text-xs text-muted-foreground">Created</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4 text-center">
+                  <div className="text-2xl font-bold text-blue-600">{batchResult.updated}</div>
+                  <p className="text-xs text-muted-foreground">Updated</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4 text-center">
+                  <div className="text-2xl font-bold text-yellow-600">{batchResult.skipped}</div>
+                  <p className="text-xs text-muted-foreground">Skipped</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {batchResult.duplicates.length > 0 && (
+              <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-1">Duplicate Records Skipped</p>
+                {batchResult.duplicates.map((d, i) => (
+                  <p key={i} className="text-xs text-yellow-700 dark:text-yellow-300">{d}</p>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => handleCreateBatch(true)}
+                  disabled={isSubmitting}
+                  data-testid="button-force-overwrite"
+                >
+                  {isSubmitting ? "Overwriting..." : "Force Overwrite Duplicates"}
+                </Button>
+              </div>
+            )}
+
+            {batchResult.errors.length > 0 && (
+              <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                <p className="text-sm font-medium text-red-800 dark:text-red-200 mb-1">Errors</p>
+                {batchResult.errors.map((e, i) => (
+                  <p key={i} className="text-xs text-red-700 dark:text-red-300">{e}</p>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <Button onClick={() => handleOpenChange(false)} data-testid="button-close-upload">
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

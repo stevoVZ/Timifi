@@ -14,7 +14,7 @@ PORT = "5000"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["node", "./dist/index.cjs"]
+run = ["npm", "run", "start"]
 build = ["npm", "run", "build"]
 publicDir = "dist/public"
 
@@ -46,3 +46,7 @@ XERO_REDIRECT_URI = "https://64c76e7d-c2da-47fd-a369-6449747b2501-00-k04gkqhfhoq
 
 [agent]
 integrations = ["javascript_openai_ai_integrations:2.0.0"]
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000

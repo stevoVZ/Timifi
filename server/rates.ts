@@ -29,14 +29,31 @@ export function getSuperRateForFY(fy: number): number {
   return 9.5;
 }
 
+/**
+ * Derives the base wage (super-exclusive) from a charge-out rate.
+ * chargeOutRate = baseWage × (1 + super%), so baseWage = chargeOutRate / (1 + super%).
+ * NOTE: Placement/employee pay rates are already super-INCLUSIVE (total cost).
+ * This function is for deriving the base wage component, not for converting placement rates.
+ */
 export function calculatePayRate(chargeOutRateExGst: number, superPercent: number): number {
   return chargeOutRateExGst / (1 + superPercent / 100);
 }
 
+/**
+ * Calculates charge-out rate from a super-EXCLUSIVE base wage (e.g. Xero payslip ratePerHour).
+ * Result = baseWage × (1 + super%).
+ * WARNING: Do NOT pass placement/employee pay rates here — those are already super-inclusive
+ * and would result in double-counting super.
+ * Used primarily during payroll sync to derive charge-out from payslip base wages.
+ */
 export function calculateChargeOutFromPayRate(payRate: number, superPercent: number): number {
   return payRate * (1 + superPercent / 100);
 }
 
+/**
+ * Calculates the super component from a super-EXCLUSIVE base wage.
+ * For super-inclusive rates (placement/employee), use: rate / (1 + super%) × super%.
+ */
 export function calculateSuperAmount(payRate: number, superPercent: number): number {
   return payRate * (superPercent / 100);
 }

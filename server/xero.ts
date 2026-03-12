@@ -509,6 +509,23 @@ async function fetchPayRunDetail(payRunId: string, accessToken: string, tenantId
   }
 }
 
+async function fetchPayslipDetail(payslipId: string, accessToken: string, tenantId: string): Promise<any | null> {
+  try {
+    const response = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/Payslip/${payslipId}`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Accept": "application/json",
+      },
+    });
+    if (!response.ok) return null;
+    const data = await response.json() as { Payslip?: any; Payslips?: any[] };
+    return data.Payslip || data.Payslips?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 async function syncPayRunLines(payRunId: string, localPayRunId: string, accessToken: string, tenantId: string, errors: string[], periodStart?: string | null): Promise<number> {
   const detail = await fetchPayRunDetail(payRunId, accessToken, tenantId);
   if (!detail || !detail.Payslips || !Array.isArray(detail.Payslips) || detail.Payslips.length === 0) {
@@ -516,6 +533,9 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
   }
 
   await storage.deletePayRunLines(localPayRunId);
+
+  const payRun = await storage.getPayRun(localPayRunId);
+  const payRunDate = payRun?.periodEnd || payRun?.payDate || payRun?.paymentDate || null;
 
   let lineCount = 0;
   for (const slip of detail.Payslips) {
@@ -525,17 +545,31 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
         : null;
       if (!employee) continue;
 
+      let slipData = slip;
+      const hasEarnings = slipData.EarningsLines && Array.isArray(slipData.EarningsLines) && slipData.EarningsLines.length > 0;
+      const hasDeductions = slipData.DeductionLines && Array.isArray(slipData.DeductionLines) && slipData.DeductionLines.length > 0;
+      const hasSuper = slipData.SuperannuationLines && Array.isArray(slipData.SuperannuationLines) && slipData.SuperannuationLines.length > 0;
+      const hasLineData = hasEarnings || hasDeductions || hasSuper;
+
+      if ((!hasLineData || !hasDeductions) && slip.PayslipID) {
+        const payslipDetail = await fetchPayslipDetail(slip.PayslipID, accessToken, tenantId);
+        if (payslipDetail) {
+          slipData = { ...slip, ...payslipDetail };
+        }
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+
       let hoursWorked = "0";
       let ratePerHour = "0";
-      if (slip.EarningsLines && Array.isArray(slip.EarningsLines) && slip.EarningsLines.length > 0) {
-        const totalHours = slip.EarningsLines.reduce((sum: number, el: any) => sum + (el.NumberOfUnits || 0), 0);
+      if (slipData.EarningsLines && Array.isArray(slipData.EarningsLines) && slipData.EarningsLines.length > 0) {
+        const totalHours = slipData.EarningsLines.reduce((sum: number, el: any) => sum + (el.NumberOfUnits || 0), 0);
         hoursWorked = String(totalHours);
-        const primaryLine = slip.EarningsLines[0];
+        const primaryLine = slipData.EarningsLines[0];
         ratePerHour = String(primaryLine.RatePerUnit || 0);
       }
 
-      const grossEarnings = slip.EarningsLines
-        ? String(slip.EarningsLines.reduce((sum: number, el: any) => sum + (el.Amount || 0), 0))
+      const grossEarnings = slipData.EarningsLines
+        ? String(slipData.EarningsLines.reduce((sum: number, el: any) => sum + (el.Amount || 0), 0))
         : "0";
 
       const payRunLine = await storage.createPayRunLine({
@@ -544,16 +578,16 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
         hoursWorked,
         ratePerHour,
         grossEarnings,
-        paygWithheld: String(slip.Tax || 0),
-        superAmount: String(slip.Super || 0),
-        netPay: String(slip.NetPay || 0),
+        paygWithheld: String(slipData.Tax || slip.Tax || 0),
+        superAmount: String(slipData.Super || slip.Super || 0),
+        netPay: String(slipData.NetPay || slip.NetPay || 0),
         status: "INCLUDED",
       });
 
       const payslipDetailLines: InsertPayslipLine[] = [];
 
-      if (slip.EarningsLines && Array.isArray(slip.EarningsLines)) {
-        for (const el of slip.EarningsLines) {
+      if (slipData.EarningsLines && Array.isArray(slipData.EarningsLines)) {
+        for (const el of slipData.EarningsLines) {
           payslipDetailLines.push({
             payRunLineId: payRunLine.id,
             lineType: "EARNINGS",
@@ -566,20 +600,27 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
         }
       }
 
-      if (slip.DeductionLines && Array.isArray(slip.DeductionLines)) {
-        for (const dl of slip.DeductionLines) {
+      let payrollFeePercent: string | null = null;
+      if (slipData.DeductionLines && Array.isArray(slipData.DeductionLines)) {
+        for (const dl of slipData.DeductionLines) {
           payslipDetailLines.push({
             payRunLineId: payRunLine.id,
             lineType: "DEDUCTION",
             name: dl.DeductionTypeName || null,
             xeroRateId: dl.DeductionTypeID || null,
             amount: String(dl.Amount || 0),
+            percentage: dl.Percentage != null ? String(dl.Percentage) : null,
           });
+
+          const deductionName = (dl.DeductionTypeName || "").trim().toLowerCase();
+          if (deductionName === "payroll deductions" && dl.Percentage != null) {
+            payrollFeePercent = String(dl.Percentage);
+          }
         }
       }
 
-      if (slip.SuperannuationLines && Array.isArray(slip.SuperannuationLines)) {
-        for (const sl of slip.SuperannuationLines) {
+      if (slipData.SuperannuationLines && Array.isArray(slipData.SuperannuationLines)) {
+        for (const sl of slipData.SuperannuationLines) {
           payslipDetailLines.push({
             payRunLineId: payRunLine.id,
             lineType: "SUPER",
@@ -591,8 +632,8 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
         }
       }
 
-      if (slip.ReimbursementLines && Array.isArray(slip.ReimbursementLines)) {
-        for (const rl of slip.ReimbursementLines) {
+      if (slipData.ReimbursementLines && Array.isArray(slipData.ReimbursementLines)) {
+        for (const rl of slipData.ReimbursementLines) {
           payslipDetailLines.push({
             payRunLineId: payRunLine.id,
             lineType: "REIMBURSEMENT",
@@ -603,8 +644,8 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
         }
       }
 
-      if (slip.TaxLines && Array.isArray(slip.TaxLines)) {
-        for (const tl of slip.TaxLines) {
+      if (slipData.TaxLines && Array.isArray(slipData.TaxLines)) {
+        for (const tl of slipData.TaxLines) {
           payslipDetailLines.push({
             payRunLineId: payRunLine.id,
             lineType: "TAX",
@@ -614,8 +655,8 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
         }
       }
 
-      if (slip.LeaveAccrualLines && Array.isArray(slip.LeaveAccrualLines)) {
-        for (const ll of slip.LeaveAccrualLines) {
+      if (slipData.LeaveAccrualLines && Array.isArray(slipData.LeaveAccrualLines)) {
+        for (const ll of slipData.LeaveAccrualLines) {
           payslipDetailLines.push({
             payRunLineId: payRunLine.id,
             lineType: "LEAVE",
@@ -628,7 +669,25 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
       }
 
       if (payslipDetailLines.length > 0) {
-        await storage.createPayslipLines(payslipDetailLines);
+        try {
+          await storage.createPayslipLines(payslipDetailLines);
+        } catch (lineInsertErr: any) {
+          console.error(`Error inserting payslip lines for employee ${employee.id}: ${lineInsertErr.message}`);
+          errors.push(`Error inserting payslip lines for employee ${slip.EmployeeID}: ${lineInsertErr.message}`);
+        }
+      }
+
+      if (payrollFeePercent !== null) {
+        try {
+          const shouldUpdate = await shouldUpdatePayrollFee(employee.id, payRunDate);
+          if (shouldUpdate) {
+            await storage.updateEmployee(employee.id, {
+              payrollFeePercent,
+            });
+          }
+        } catch (feeErr: any) {
+          console.error(`Error updating payroll fee for employee ${employee.id}: ${feeErr.message}`);
+        }
       }
 
       if (ratePerHour !== "0" && parseFloat(ratePerHour) > 0) {
@@ -662,6 +721,29 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
     }
   }
   return lineCount;
+}
+
+async function shouldUpdatePayrollFee(employeeId: string, currentPayRunDate: string | null): Promise<boolean> {
+  if (!currentPayRunDate) return true;
+
+  const currentDate = new Date(currentPayRunDate);
+  if (isNaN(currentDate.getTime())) return true;
+
+  const empPayRunLines = await storage.getPayRunLinesByEmployee(employeeId);
+  if (empPayRunLines.length === 0) return true;
+
+  for (const prl of empPayRunLines) {
+    const pr = await storage.getPayRun(prl.payRunId);
+    if (!pr) continue;
+    const prDateStr = pr.periodEnd || pr.payDate || pr.paymentDate;
+    if (!prDateStr) continue;
+    const prDate = new Date(prDateStr);
+    if (isNaN(prDate.getTime())) continue;
+    if (prDate.getTime() > currentDate.getTime()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export async function syncPayRuns(): Promise<{
@@ -862,6 +944,8 @@ export async function syncTimesheets(): Promise<{
   let updated = 0;
   const errors: string[] = [];
 
+  const monthBuckets: Map<string, { employeeId: string; month: number; year: number; hours: number; status: string }> = new Map();
+
   for (const ts of xeroTimesheets) {
     try {
       const employee = ts.EmployeeID
@@ -873,19 +957,7 @@ export async function syncTimesheets(): Promise<{
       }
 
       const startDate = parseXeroDate(ts.StartDate);
-      const endDate = parseXeroDate(ts.EndDate);
       const startDateObj = startDate ? new Date(startDate) : new Date();
-      const year = startDateObj.getFullYear();
-      const month = startDateObj.getMonth() + 1;
-
-      let totalHours = 0;
-      if (ts.TimesheetLines && Array.isArray(ts.TimesheetLines)) {
-        for (const line of ts.TimesheetLines) {
-          if (line.NumberOfUnits && Array.isArray(line.NumberOfUnits)) {
-            totalHours += line.NumberOfUnits.reduce((s: number, u: any) => s + (Number(u.NumberOfUnits) || 0), 0);
-          }
-        }
-      }
 
       let xeroStatus = (ts.Status || "").toUpperCase();
       let localStatus: "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED" = "DRAFT";
@@ -893,36 +965,82 @@ export async function syncTimesheets(): Promise<{
       else if (xeroStatus === "SUBMITTED" || xeroStatus === "PENDING") localStatus = "SUBMITTED";
       else if (xeroStatus === "REJECTED") localStatus = "REJECTED";
 
-      const rate = employee.hourlyRate ? parseFloat(employee.hourlyRate) : 0;
-      const grossValue = totalHours * rate;
+      if (ts.TimesheetLines && Array.isArray(ts.TimesheetLines)) {
+        for (const line of ts.TimesheetLines) {
+          if (line.NumberOfUnits && Array.isArray(line.NumberOfUnits)) {
+            for (let dayIdx = 0; dayIdx < line.NumberOfUnits.length; dayIdx++) {
+              const dayHours = Number(line.NumberOfUnits[dayIdx]?.NumberOfUnits) || 0;
+              if (dayHours === 0) continue;
+              const dayDate = new Date(startDateObj);
+              dayDate.setDate(dayDate.getDate() + dayIdx);
+              const dayMonth = dayDate.getMonth() + 1;
+              const dayYear = dayDate.getFullYear();
+              const key = `${employee.id}|${dayYear}|${dayMonth}`;
+              const bucket = monthBuckets.get(key);
+              if (bucket) {
+                bucket.hours += dayHours;
+                if (localStatus === "APPROVED") bucket.status = "APPROVED";
+              } else {
+                monthBuckets.set(key, {
+                  employeeId: employee.id,
+                  month: dayMonth,
+                  year: dayYear,
+                  hours: dayHours,
+                  status: localStatus,
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      errors.push(`Error processing timesheet ${ts.TimesheetID}: ${err.message}`);
+    }
+  }
 
-      const existingTimesheets = await storage.getTimesheetsByEmployee(employee.id);
+  for (const [, bucket] of monthBuckets) {
+    try {
+      const employee = await storage.getEmployee(bucket.employeeId);
+      if (!employee) continue;
+      const rate = employee.hourlyRate ? parseFloat(employee.hourlyRate) : 0;
+      const grossValue = bucket.hours * rate;
+
+      const existingTimesheets = await storage.getTimesheetsByEmployee(bucket.employeeId);
       const existing = existingTimesheets.find(
-        et => et.year === year && et.month === month
+        et => et.year === bucket.year && et.month === bucket.month && et.source === "XERO_SYNC"
       );
 
       if (existing) {
         await storage.updateTimesheet(existing.id, {
-          totalHours: String(totalHours.toFixed(2)),
+          totalHours: String(bucket.hours.toFixed(2)),
+          regularHours: String(bucket.hours.toFixed(2)),
           grossValue: String(grossValue.toFixed(2)),
-          status: localStatus,
+          status: bucket.status as any,
         });
         updated++;
       } else {
+        const hasManual = existingTimesheets.find(
+          et => et.year === bucket.year && et.month === bucket.month && et.source !== "XERO_SYNC"
+        );
+        if (hasManual) {
+          errors.push(`Skipped ${bucket.year}-${bucket.month} for employee ${bucket.employeeId} — manual timesheet exists (source: ${hasManual.source})`);
+          continue;
+        }
         await storage.createTimesheet({
-          employeeId: employee.id,
-          year,
-          month,
-          totalHours: String(totalHours.toFixed(2)),
-          regularHours: String(totalHours.toFixed(2)),
+          employeeId: bucket.employeeId,
+          year: bucket.year,
+          month: bucket.month,
+          totalHours: String(bucket.hours.toFixed(2)),
+          regularHours: String(bucket.hours.toFixed(2)),
           overtimeHours: "0.00",
           grossValue: String(grossValue.toFixed(2)),
-          status: localStatus,
+          status: bucket.status as any,
+          source: "XERO_SYNC",
         });
         created++;
       }
     } catch (err: any) {
-      errors.push(`Error syncing timesheet ${ts.TimesheetID}: ${err.message}`);
+      errors.push(`Error saving bucket ${bucket.employeeId} ${bucket.year}-${bucket.month}: ${err.message}`);
     }
   }
 
@@ -1372,6 +1490,60 @@ export async function syncContacts(): Promise<{
   await saveSetting(await tenantSyncKey("xero.lastContactSyncAt"), new Date().toISOString());
 
   return { total: allContacts.length, created, updated, errors };
+}
+
+export async function syncBankTransactionsForTenant(overrideTenantId: string): Promise<{
+  tenantId: string;
+  tenantName: string;
+  total: number;
+  created: number;
+  updated: number;
+  errors: string[];
+}> {
+  const originalTenantId = await getSettingValue("xero.tenantId");
+  const { setActiveTenantId } = await import("./storage");
+
+  try {
+    await saveSetting("xero.tenantId", overrideTenantId);
+    setActiveTenantId(overrideTenantId);
+
+    const tenantsJson = await getSettingValue("xero.tenants");
+    let tenants: Array<{ tenantId: string; tenantName: string }> = [];
+    try { tenants = JSON.parse(tenantsJson || "[]"); } catch {}
+    const tenantName = tenants.find(t => t.tenantId === overrideTenantId)?.tenantName || overrideTenantId;
+
+    const result = await syncBankTransactions();
+    return { tenantId: overrideTenantId, tenantName, ...result };
+  } finally {
+    if (originalTenantId) {
+      await saveSetting("xero.tenantId", originalTenantId);
+      setActiveTenantId(originalTenantId);
+    }
+  }
+}
+
+export async function syncBankTransactionsAllTenants(): Promise<{
+  results: Array<{ tenantId: string; tenantName: string; total: number; created: number; updated: number; errors: string[] }>;
+}> {
+  const tenantsJson = await getSettingValue("xero.tenants");
+  let tenants: Array<{ tenantId: string; tenantName: string }> = [];
+  try { tenants = JSON.parse(tenantsJson || "[]"); } catch {}
+
+  const results = [];
+  for (const tenant of tenants) {
+    try {
+      const result = await syncBankTransactionsForTenant(tenant.tenantId);
+      results.push(result);
+    } catch (err: any) {
+      results.push({
+        tenantId: tenant.tenantId,
+        tenantName: tenant.tenantName,
+        total: 0, created: 0, updated: 0,
+        errors: [err.message || "Sync failed"],
+      });
+    }
+  }
+  return { results };
 }
 
 export async function syncBankTransactions(): Promise<{

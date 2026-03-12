@@ -16,6 +16,7 @@ import {
   Search, CheckCircle, XCircle, ChevronDown, ChevronUp, Wallet,
   Landmark, CreditCard, Link2, Unlink, FileText, Receipt,
   Wand2, Check, X, Edit3, User, RotateCcw, Tag, AlertCircle,
+  RefreshCw, Database, Clock,
 } from "lucide-react";
 import type { BankTransaction } from "@shared/schema";
 
@@ -112,6 +113,7 @@ export default function BankStatementsPage() {
   const [linkTab, setLinkTab] = useState<"invoice" | "employee" | "category">("invoice");
   const [expandedLinked, setExpandedLinked] = useState(true);
   const [expandedUnlinked, setExpandedUnlinked] = useState(true);
+  const [showCoverage, setShowCoverage] = useState(false);
   const { toast } = useToast();
 
   const { data: latestPeriod } = useQuery<{ month: number; year: number }>({
@@ -214,6 +216,53 @@ export default function BankStatementsPage() {
     },
     onError: (err: Error) => {
       toast({ title: "Unlink Failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  interface CoverageAccount {
+    tenantId: string;
+    tenantName: string;
+    bankAccountId: string;
+    bankAccountName: string;
+    earliestDate: string;
+    latestDate: string;
+    totalTransactions: number;
+    monthsWithData: number;
+    expectedMonths: number;
+    gapMonths: string[];
+    daysSinceLatest: number;
+  }
+  interface CoverageData {
+    accounts: CoverageAccount[];
+    lastSync: Record<string, string | null>;
+    summary: { totalAccounts: number; accountsWithGaps: number; totalGapMonths: number; oldestLatestDate: string | null };
+  }
+
+  const { data: coverageData, isLoading: coverageLoading } = useQuery<CoverageData>({
+    queryKey: ["/api/bank-transactions/coverage"],
+    queryFn: async () => {
+      const res = await fetch("/api/bank-transactions/coverage", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+    enabled: showCoverage,
+  });
+
+  const syncAllMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/xero/sync-bank-transactions-all");
+      return res.json();
+    },
+    onSuccess: (data: { results: Array<{ tenantName: string; created: number; updated: number; errors: string[] }> }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-transactions/coverage"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-transactions/latest-period"] });
+      invalidateLinkage();
+      const summary = data.results.map(r => `${r.tenantName}: ${r.created} new, ${r.updated} updated${r.errors.length > 0 ? `, ${r.errors.length} errors` : ""}`).join("; ");
+      toast({ title: "Bank Sync Complete", description: summary });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Sync Failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -365,10 +414,9 @@ export default function BankStatementsPage() {
         title="Bank Statements"
         subtitle={`${MONTHS[month]} ${year}`}
       />
-      <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
-        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5">
-
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <main className="flex-1 overflow-auto bg-muted/30">
+        <div className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border-b px-3 sm:px-6 py-2.5">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={prevMonth} data-testid="button-prev-month">
                 <ChevronLeft className="w-4 h-4" />
@@ -453,6 +501,9 @@ export default function BankStatementsPage() {
               </div>
             </div>
           </div>
+        </div>
+        <div className="p-3 sm:p-6">
+        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-5">
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div className="p-3 rounded-lg border bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800" data-testid="kpi-income">
@@ -495,6 +546,115 @@ export default function BankStatementsPage() {
               {suggestedTxns.length > 0 && <div className="text-[10px] text-amber-600 dark:text-amber-400">{suggestedTxns.length} suggested</div>}
             </div>
           </div>
+
+          <Card className="border-border" data-testid="section-coverage">
+            <CardHeader className="pb-2 px-4 pt-3">
+              <button
+                className="flex items-center justify-between w-full"
+                onClick={() => setShowCoverage(!showCoverage)}
+                data-testid="button-toggle-coverage"
+              >
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-muted-foreground" />
+                  <CardTitle className="text-sm">Data Coverage</CardTitle>
+                  {coverageData?.summary && (
+                    <div className="flex items-center gap-2">
+                      {coverageData.summary.totalGapMonths > 0 && (
+                        <Badge variant="outline" className="text-[10px] bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-300">
+                          {coverageData.summary.totalGapMonths} gap{coverageData.summary.totalGapMonths !== 1 ? "s" : ""}
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    onClick={(e) => { e.stopPropagation(); syncAllMutation.mutate(); }}
+                    disabled={syncAllMutation.isPending}
+                    data-testid="button-sync-all"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${syncAllMutation.isPending ? "animate-spin" : ""}`} />
+                    {syncAllMutation.isPending ? "Syncing..." : "Sync All Tenants"}
+                  </Button>
+                  {showCoverage ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </div>
+              </button>
+            </CardHeader>
+            {showCoverage && (
+              <CardContent className="px-4 pb-3 pt-1">
+                {coverageLoading ? (
+                  <Skeleton className="h-32 w-full" />
+                ) : !coverageData ? (
+                  <div className="text-xs text-muted-foreground py-4 text-center flex items-center justify-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                    Failed to load coverage data. Try again later.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                      <div className="p-2 rounded border bg-muted/30">
+                        <div className="text-muted-foreground mb-0.5">Accounts</div>
+                        <div className="font-semibold">{coverageData.summary.totalAccounts}</div>
+                      </div>
+                      <div className={`p-2 rounded border ${coverageData.summary.totalGapMonths > 0 ? "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800" : "bg-muted/30"}`}>
+                        <div className="text-muted-foreground mb-0.5">Gap Months</div>
+                        <div className="font-semibold">{coverageData.summary.totalGapMonths}</div>
+                      </div>
+                      {Object.entries(coverageData.lastSync).map(([name, ts]) => (
+                        <div key={name} className="p-2 rounded border bg-muted/30">
+                          <div className="text-muted-foreground mb-0.5">{name} Sync</div>
+                          <div className="font-semibold">{ts ? new Date(ts).toLocaleDateString() : "Never"}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="border rounded overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-muted/50 border-b">
+                            <th className="text-left px-3 py-1.5 font-medium">Account</th>
+                            <th className="text-left px-3 py-1.5 font-medium">Org</th>
+                            <th className="text-left px-3 py-1.5 font-medium">From</th>
+                            <th className="text-left px-3 py-1.5 font-medium">To</th>
+                            <th className="text-right px-3 py-1.5 font-medium">Txns</th>
+                            <th className="text-right px-3 py-1.5 font-medium">Months</th>
+                            <th className="text-left px-3 py-1.5 font-medium">Gaps</th>
+                            <th className="text-right px-3 py-1.5 font-medium">Stale</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {coverageData.accounts.map((acct) => (
+                            <tr key={`${acct.tenantId}-${acct.bankAccountId}`} className="border-b last:border-b-0 hover:bg-muted/30" data-testid={`row-coverage-${acct.bankAccountId}`}>
+                              <td className="px-3 py-1.5 font-medium">{acct.bankAccountName}</td>
+                              <td className="px-3 py-1.5 text-muted-foreground">{acct.tenantName.length > 12 ? acct.tenantName.slice(0, 12) + "..." : acct.tenantName}</td>
+                              <td className="px-3 py-1.5">{acct.earliestDate}</td>
+                              <td className="px-3 py-1.5">{acct.latestDate}</td>
+                              <td className="px-3 py-1.5 text-right">{acct.totalTransactions.toLocaleString()}</td>
+                              <td className="px-3 py-1.5 text-right">{acct.monthsWithData}/{acct.expectedMonths}</td>
+                              <td className="px-3 py-1.5">
+                                {acct.gapMonths.length > 0 ? (
+                                  <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                    {acct.gapMonths.length <= 3 ? acct.gapMonths.join(", ") : `${acct.gapMonths.length} gaps`}
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-600 dark:text-emerald-400">None</span>
+                                )}
+                              </td>
+                              <td className={`px-3 py-1.5 text-right ${acct.daysSinceLatest > 14 ? "text-amber-600 dark:text-amber-400 font-medium" : ""}`}>
+                                {acct.daysSinceLatest}d
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            )}
+          </Card>
 
           {transactions.length === 0 ? (
             <Card>
@@ -622,6 +782,7 @@ export default function BankStatementsPage() {
               )}
             </div>
           )}
+        </div>
         </div>
       </main>
 

@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, desc, sql, and, inArray } from "drizzle-orm";
+import { eq, desc, sql, and, inArray, or, isNull } from "drizzle-orm";
 import {
   employees, timesheets, invoices, payRuns, payRunLines, documents,
   notifications, messages, settings, users,
@@ -192,6 +192,7 @@ export interface IStorage {
   getInvoiceIdsByEmployee(employeeId: string): Promise<string[]>;
 
   getInvoiceLineItems(invoiceId: string): Promise<InvoiceLineItem[]>;
+  getInvoiceLineItemsByInvoiceIds(invoiceIds: string[]): Promise<InvoiceLineItem[]>;
   setInvoiceLineItems(invoiceId: string, items: InsertInvoiceLineItem[]): Promise<InvoiceLineItem[]>;
 
   getInvoicePayments(invoiceId: string): Promise<InvoicePayment[]>;
@@ -1067,6 +1068,14 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(invoiceLineItems).where(and(...conds));
   }
 
+  async getInvoiceLineItemsByInvoiceIds(invoiceIds: string[]): Promise<InvoiceLineItem[]> {
+    if (invoiceIds.length === 0) return [];
+    const t = await this.tid();
+    const conds: any[] = [inArray(invoiceLineItems.invoiceId, invoiceIds)];
+    if (t) conds.push(eq(invoiceLineItems.tenantId, t));
+    return db.select().from(invoiceLineItems).where(and(...conds));
+  }
+
   async setInvoiceLineItems(invoiceId: string, items: InsertInvoiceLineItem[]): Promise<InvoiceLineItem[]> {
     await db.delete(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, invoiceId));
     if (items.length === 0) return [];
@@ -1135,7 +1144,7 @@ export class DatabaseStorage implements IStorage {
 
   async getPayrollTaxRates(): Promise<PayrollTaxRate[]> {
     const t = await this.tid();
-    if (t) return db.select().from(payrollTaxRates).where(eq(payrollTaxRates.tenantId, t)).orderBy(desc(payrollTaxRates.createdAt));
+    if (t) return db.select().from(payrollTaxRates).where(or(eq(payrollTaxRates.tenantId, t), isNull(payrollTaxRates.tenantId))).orderBy(desc(payrollTaxRates.createdAt));
     return db.select().from(payrollTaxRates).orderBy(desc(payrollTaxRates.createdAt));
   }
 

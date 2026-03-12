@@ -23,6 +23,22 @@ import {
 } from "lucide-react";
 import type { Employee, Timesheet, Invoice, Document, Client, Placement } from "@shared/schema";
 
+function getCurrentSuperRate(): number {
+  const now = new Date();
+  const fy = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear();
+  const rates: { fyStart: number; rate: number }[] = [
+    { fyStart: 2026, rate: 12.0 },
+    { fyStart: 2025, rate: 11.5 },
+    { fyStart: 2024, rate: 11.0 },
+    { fyStart: 2023, rate: 10.5 },
+    { fyStart: 2022, rate: 10.0 },
+  ];
+  for (const entry of rates) {
+    if (fy >= entry.fyStart) return entry.rate / 100;
+  }
+  return 0.095;
+}
+
 interface ReconciliationPeriod {
   month: number;
   year: number;
@@ -489,101 +505,113 @@ export default function EmployeeDetailPage() {
                   <CardTitle className="text-base">Rates & Billing</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
-                    <EditableField
-                      icon={DollarSign}
-                      label="Charge-Out Rate (Ex GST)"
-                      field="chargeOutRate"
-                      value={employee.chargeOutRate ? `$${parseFloat(employee.chargeOutRate).toFixed(2)}/hr` : "Not set"}
-                      rawValue={employee.chargeOutRate || ""}
-                      editingField={editingField}
-                      editValues={editValues}
-                      setEditValues={setEditValues}
-                      onStartEdit={startEdit}
-                      onSave={saveEdit}
-                      onCancel={cancelEdit}
-                      isPending={updateMutation.isPending}
-                      testId="text-charge-out-rate"
-                    />
-                    <EditableField
-                      icon={DollarSign}
-                      label="Pay Rate / Rate to Them (Ex GST)"
-                      field="hourlyRate"
-                      value={employee.hourlyRate ? `$${parseFloat(employee.hourlyRate).toFixed(2)}/hr` : "Not set"}
-                      rawValue={employee.hourlyRate || ""}
-                      editingField={editingField}
-                      editValues={editValues}
-                      setEditValues={setEditValues}
-                      onStartEdit={startEdit}
-                      onSave={saveEdit}
-                      onCancel={cancelEdit}
-                      isPending={updateMutation.isPending}
-                      testId="text-pay-rate"
-                    />
-                    <EditableField
-                      icon={Percent}
-                      label="Payroll Service Fee %"
-                      field="payrollFeePercent"
-                      value={employee.payrollFeePercent ? `${parseFloat(employee.payrollFeePercent).toFixed(2)}%` : "0%"}
-                      rawValue={employee.payrollFeePercent || "0"}
-                      editingField={editingField}
-                      editValues={editValues}
-                      setEditValues={setEditValues}
-                      onStartEdit={startEdit}
-                      onSave={saveEdit}
-                      onCancel={cancelEdit}
-                      isPending={updateMutation.isPending}
-                      testId="text-payroll-fee-percent"
-                    />
-                    <div className="flex items-center gap-3 py-2" data-testid="field-payroll-tax-applicable">
-                      <Calculator className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[11px] text-muted-foreground mb-0.5">Payroll Tax Applicable</div>
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={employee.payrollTaxApplicable}
-                            onCheckedChange={(checked) => {
-                              updateMutation.mutate({ payrollTaxApplicable: checked });
-                            }}
-                            data-testid="switch-payroll-tax-applicable"
+                  {(() => {
+                    const activePls = (placementsList || []).filter(p => p.status === "ACTIVE");
+                    const hasMultiple = activePls.length > 1;
+                    const activePl = activePls.length === 1 ? activePls[0] : null;
+                    const displayChargeOut = activePl ? activePl.chargeOutRate : (hasMultiple ? null : employee.chargeOutRate);
+                    const displayPayRate = activePl ? activePl.payRate : (hasMultiple ? null : employee.hourlyRate);
+                    const displayFee = activePl ? activePl.payrollFeePercent : (hasMultiple ? null : employee.payrollFeePercent);
+                    return (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+                          <InfoRow
+                            icon={DollarSign}
+                            label="Charge-Out Rate (Ex GST)"
+                            value={hasMultiple ? "Multiple placements" : (displayChargeOut ? `$${parseFloat(displayChargeOut).toFixed(2)}/hr` : "Not set")}
+                            testId="text-charge-out-rate"
                           />
-                          <span className="text-sm text-foreground" data-testid="text-payroll-tax-status">
-                            {employee.payrollTaxApplicable ? "Yes" : "No"}
-                          </span>
+                          <InfoRow
+                            icon={DollarSign}
+                            label="Pay Rate (Incl Super, Ex GST)"
+                            value={hasMultiple ? "Multiple placements" : (displayPayRate ? `$${parseFloat(displayPayRate).toFixed(2)}/hr` : "Not set")}
+                            testId="text-pay-rate"
+                          />
+                          <InfoRow
+                            icon={Percent}
+                            label="Payroll Service Fee %"
+                            value={hasMultiple ? "See placements" : (displayFee ? `${parseFloat(displayFee).toFixed(2)}%` : "0%")}
+                            testId="text-payroll-fee-percent"
+                          />
+                          <div className="flex items-center gap-3 py-2" data-testid="field-payroll-tax-applicable">
+                            <Calculator className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] text-muted-foreground mb-0.5">Payroll Tax Applicable</div>
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={employee.payrollTaxApplicable}
+                                  onCheckedChange={(checked) => {
+                                    updateMutation.mutate({ payrollTaxApplicable: checked });
+                                  }}
+                                  data-testid="switch-payroll-tax-applicable"
+                                />
+                                <span className="text-sm text-foreground" data-testid="text-payroll-tax-status">
+                                  {employee.payrollTaxApplicable ? "Yes" : "No"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </div>
-                  {(employee.chargeOutRate || employee.hourlyRate) && (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 p-3 rounded-lg bg-muted/50 border border-border">
-                      <div>
-                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Total Rate (Inc GST)</span>
-                        <div className="text-sm font-bold text-foreground" data-testid="text-total-rate-inc-gst">
-                          {employee.chargeOutRate ? `$${(parseFloat(employee.chargeOutRate) * 1.1).toFixed(2)}` : "—"}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Billable Rate (Ex GST)</span>
-                        <div className="text-sm font-bold text-foreground" data-testid="text-billable-rate-ex-gst">
-                          {employee.chargeOutRate ? `$${parseFloat(employee.chargeOutRate).toFixed(2)}` : "—"}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">GST</span>
-                        <div className="text-sm font-bold text-foreground" data-testid="text-gst-amount">
-                          {employee.chargeOutRate ? `$${(parseFloat(employee.chargeOutRate) * 0.1).toFixed(2)}` : "—"}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Margin</span>
-                        <div className="text-sm font-bold text-foreground" data-testid="text-margin">
-                          {employee.chargeOutRate && employee.hourlyRate
-                            ? `$${(parseFloat(employee.chargeOutRate) - parseFloat(employee.hourlyRate)).toFixed(2)}/hr`
-                            : "—"}
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                        {activePls.length > 0 && (
+                          <p className="text-[10px] text-muted-foreground mt-2 italic" data-testid="text-rates-placement-hint">
+                            Rates are managed via Placements below
+                          </p>
+                        )}
+                        {!hasMultiple && (displayChargeOut || displayPayRate) && (() => {
+                          const superRate = getCurrentSuperRate();
+                          const payRateNum = displayPayRate ? parseFloat(displayPayRate) : 0;
+                          const baseWage = payRateNum / (1 + superRate);
+                          const superAmount = payRateNum - baseWage;
+                          return (
+                          <div className={`grid grid-cols-2 ${displayPayRate ? "md:grid-cols-3" : "md:grid-cols-4"} gap-3 mt-4 p-3 rounded-lg bg-muted/50 border border-border`}>
+                            <div>
+                              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Total Rate (Inc GST)</span>
+                              <div className="text-sm font-bold text-foreground" data-testid="text-total-rate-inc-gst">
+                                {displayChargeOut ? `$${(parseFloat(displayChargeOut) * 1.1).toFixed(2)}` : "—"}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Billable Rate (Ex GST)</span>
+                              <div className="text-sm font-bold text-foreground" data-testid="text-billable-rate-ex-gst">
+                                {displayChargeOut ? `$${parseFloat(displayChargeOut).toFixed(2)}` : "—"}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">GST</span>
+                              <div className="text-sm font-bold text-foreground" data-testid="text-gst-amount">
+                                {displayChargeOut ? `$${(parseFloat(displayChargeOut) * 0.1).toFixed(2)}` : "—"}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Margin</span>
+                              <div className="text-sm font-bold text-foreground" data-testid="text-margin">
+                                {displayChargeOut && displayPayRate
+                                  ? `$${(parseFloat(displayChargeOut) - parseFloat(displayPayRate)).toFixed(2)}/hr`
+                                  : "—"}
+                              </div>
+                            </div>
+                            {displayPayRate && (
+                              <>
+                                <div>
+                                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Base Wage</span>
+                                  <div className="text-sm font-bold text-foreground" data-testid="text-base-wage">
+                                    ${baseWage.toFixed(2)}/hr
+                                  </div>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Super ({(superRate * 100).toFixed(1)}%)</span>
+                                  <div className="text-sm font-bold text-foreground" data-testid="text-super-amount">
+                                    ${superAmount.toFixed(2)}/hr
+                                  </div>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                          );
+                        })()}
+                      </>
+                    );
+                  })()}
                 </CardContent>
               </Card>
 
@@ -912,7 +940,7 @@ function FinancialsTab({ reconciliation, employeeId }: { reconciliation: Reconci
                   <tr className="border-b border-border">
                     <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Effective Date</th>
                     <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Client</th>
-                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Pay Rate (Ex GST)</th>
+                    <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Pay Rate (Incl Super, Ex GST)</th>
                     <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Charge-Out (Ex GST)</th>
                     <th className="text-right py-2.5 px-2 text-xs font-semibold text-muted-foreground">Super %</th>
                     <th className="text-left py-2.5 px-2 text-xs font-semibold text-muted-foreground">Source</th>
@@ -1244,6 +1272,7 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
     endDate: "",
     chargeOutRate: "",
     payRate: "",
+    payrollFeePercent: "",
     notes: "",
     status: "ACTIVE" as "ACTIVE" | "ENDED",
   });
@@ -1278,7 +1307,7 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
       queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId] });
       toast({ title: "Placement Added", description: "New placement created." });
       setShowForm(false);
-      setFormData({ clientId: "", clientName: "", startDate: new Date().toISOString().split("T")[0], endDate: "", chargeOutRate: "", payRate: "", notes: "", status: "ACTIVE" });
+      setFormData({ clientId: "", clientName: "", startDate: new Date().toISOString().split("T")[0], endDate: "", chargeOutRate: "", payRate: "", payrollFeePercent: "", notes: "", status: "ACTIVE" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -1351,6 +1380,7 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
       endDate: formData.status === "ACTIVE" ? null : formData.endDate || null,
       chargeOutRate: formData.chargeOutRate || null,
       payRate: formData.payRate || null,
+      payrollFeePercent: formData.payrollFeePercent || "0",
       notes: formData.notes || null,
       status: formData.status,
     });
@@ -1421,8 +1451,12 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
                 <Input type="number" className="h-8 text-sm" placeholder="$/hr" value={formData.chargeOutRate} onChange={(e) => setFormData(prev => ({ ...prev, chargeOutRate: e.target.value }))} data-testid="input-placement-charge-rate" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Pay Rate (Ex GST)</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Pay Rate (Incl Super, Ex GST)</label>
                 <Input type="number" className="h-8 text-sm" placeholder="$/hr" value={formData.payRate} onChange={(e) => setFormData(prev => ({ ...prev, payRate: e.target.value }))} data-testid="input-placement-pay-rate" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Payroll Fee %</label>
+                <Input type="number" className="h-8 text-sm" placeholder="%" value={formData.payrollFeePercent} onChange={(e) => setFormData(prev => ({ ...prev, payrollFeePercent: e.target.value }))} data-testid="input-placement-fee" />
               </div>
             </div>
             <Button size="sm" onClick={handleSubmit} disabled={createMutation.isPending} data-testid="button-save-placement">
