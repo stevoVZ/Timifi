@@ -1,6 +1,6 @@
 # Timesheet Page Redesign — Design Specification
 
-> Status: **Proposed — not yet built**  
+> Status: **Approved — ready to build**  
 > Last updated: March 2026  
 > Supersedes: existing three-tab `timesheets.tsx` (Upload / Submissions / Monthly Hours)
 
@@ -101,6 +101,7 @@ Inbox items:
 - Timesheets in `REJECTED` status (need re-submission or admin correction)
 - Approved timesheets with no invoice and non-RCTI client (ready to invoice)
 - Active placements with no timesheet at all past the 5th of the following month
+- **RCTI discrepancy alerts** — RCTI hours differ from linked timesheet hours (see Section 12)
 
 Each card shows the issue, the employee/client, and a primary action button. This is the "things to do today" view.
 
@@ -131,20 +132,18 @@ Actions shown depend on the row state:
 - **View Document** (if attached)
 
 ### Timesheet approved — non-RCTI client
-- **Create Invoice** → pre-fills invoice form with hours, rate, client, period
-- **Add to Existing Invoice** → if a draft invoice already exists for this client/period, shows a prompt:
-  > "You have a draft invoice for TechCorp — March 2026 (#INV-0042).  
-  > **Add these hours** · **View draft** · **Create separate invoice**"
-- **View Invoice** → if invoice already exists
+- **Create Invoice** → opens invoice form pre-filled (see Section 10)
+- **View Invoice** → if invoice already exists (shows status badge)
 
 ### Timesheet approved — RCTI client
 - **Log RCTI Reference** → link to an existing RCTI record (or create new RCTI stub)
-- The invoice column shows `RCTI [ref]` once linked
-- No "Create Invoice" option shown — RCTI is the billing instrument
+- Invoice column shows `RCTI [ref]` once linked
+- No "Create Invoice" option — RCTI is the billing instrument
 
-### Included in payroll
-- Lock icon on hours — timesheet hours are read-only once in a pay run
-- **View Pay Run** → links to the Xero pay run
+### Included in payroll (admin-confirmed lock)
+- Lock icon on hours — hours become read-only
+- **View Pay Run** → links to Xero pay run
+- Lock is set manually via **"Lock for Payroll"** action button; admin confirms in a dialog before it applies
 
 ---
 
@@ -166,7 +165,7 @@ Add `billingType` to the `clients` table:
 billingType: 'INVOICE' (default) | 'RCTI'
 ```
 
-Most of the time the client setting drives everything. An optional `rctiOverride` on `placements` handles the edge case where one placement at an INVOICE client still uses RCTI.
+An optional `rctiOverride` boolean on `placements` handles the edge case where one placement at an INVOICE client still uses RCTI billing.
 
 ### Where RCTI shows in the UI
 - **Client profile page**: "Billing Type" field. Changing to RCTI shows a note explaining the flow difference.
@@ -178,44 +177,78 @@ Most of the time the client setting drives everything. An optional `rctiOverride
 
 ## 10. Invoice Creation From Timesheet
 
+### Decision: Separate invoice per placement, multi-line-item support
+
+Each placement produces its own invoice. However, a single timesheet/invoice can contain **multiple line items** with different rates — for example, the same employee billed at standard rate for regular hours and a different rate for a specific deliverable.
+
 ### Trigger
 Approved timesheet row → Actions → "Create Invoice"
 
-### Pre-filled fields
+### Invoice form pre-fill
 - Client, Employee, Period
-- Hours (from approved timesheet)
-- Rate (from placement `chargeOutRate`, falls back to employee `hourlyRate`)
-- GST auto-calculated
-- Description: "[Employee Name] — [Month Year] — [X]h"
+- **Line items** (not just a single hours field):
+  - Line 1: Regular hours × chargeOut rate (from placement)
+  - Line 2: Overtime hours × OT rate (if OT rate is set on placement) — auto-added if OT hours > 0
+  - User can add/remove/edit additional lines before creating
+- GST auto-calculated on total
+- Description: "[Employee Name] — [Month Year]"
 
-### If a draft invoice already exists for this client this period
-Show an inline banner before opening the form:
-> "You have a draft invoice for TechCorp — March 2026 (#INV-0042) with 2 line items.  
-> **Add these hours** · **View draft** · **Create separate invoice**"
-
-This prevents duplicate invoices for clients with multiple placements.
+### Existing draft detection
+Before opening the form, check: does a DRAFT invoice already exist for this placement this period?
+- If yes: show a prompt — "A draft invoice already exists for this placement (#INV-0042). Open it to add lines, or create a separate invoice?"
+- If no: open fresh form
 
 ### After creation
-The invoice column on the timesheet row updates to `DRAFT` with a link.
+Invoice column on the timesheet row updates to `DRAFT` with a link.
 
 ---
 
-## 11. RCTI as Source of Truth
+## 11. Timesheet Locking for Payroll
 
-When an RCTI is received from a client:
-1. It is logged on the RCTIs page as usual
-2. From the RCTI record, user can **"Link to Timesheet"** → sets `rctiId` on the timesheet
-3. The timesheet row shows `RCTI [ref]` in the invoice column
-4. If RCTI hours differ from timesheet hours, a warning is shown (discrepancy, not a block)
-5. Bank reconciliation: RCTI amount matches bank transaction when received (same as invoice payment matching)
+### Rule: Admin must confirm the lock
 
-If an RCTI arrives and there is no timesheet for that employee/period:
-- RCTIs page flags this: "No timesheet found for [Employee] — [Period]"
-- Admin can create a timesheet stub from the RCTI (source: `RCTI`, hours from RCTI)
+Timesheets are **not** automatically locked when added to a Xero pay run. The pay run can reference the timesheet hours, but the lock is a separate deliberate action.
+
+### Lock flow
+1. On the timesheet row, after it has been included in a Xero pay run, an action button appears: **"Lock for Payroll"**
+2. Clicking it shows a confirmation dialog:
+   > "Lock [Employee]'s timesheet for [Month Year]?  
+   > Hours: 152h regular + 8h OT  
+   > Pay run: #XPR-2026-03  
+   > **Once locked, hours cannot be edited without admin override.**  
+   > [Cancel] [Lock Timesheet]"
+3. On confirm: `lockedByPayRunId` is set on the timesheet, hours fields become read-only in the grid
+4. An audit log entry is created: `field: "locked"`, `changeSource: "PAYROLL_LOCK"`, `changedBy: admin`
+
+### Unlock (emergency)
+A separate admin-only action "Unlock" exists but requires a reason field. Unlock also creates an audit log entry.
 
 ---
 
-## 12. Where Estimated Hours Go (Out of Timesheets)
+## 12. RCTI Discrepancy Detection
+
+### When a discrepancy occurs
+A discrepancy is detected when:
+- An RCTI is linked to a timesheet AND
+- `rcti.hours` differs from `timesheet.totalHours` by more than 0.5h (configurable threshold)
+
+### What happens
+1. A **discrepancy notification** is created (type: `RCTI_DISCREPANCY`, priority: `HIGH`)
+2. The timesheet row in the grid shows an amber warning icon with a tooltip: "RCTI hours (160h) differ from timesheet hours (152h)"
+3. The discrepancy appears in the **Inbox** tab as an action item
+4. Payroll: the timesheet is **not blocked** from payroll — admin decides which figure is correct
+
+### Resolution options (from the Inbox card)
+- **Use timesheet hours** — the PDF/portal submission is authoritative; log a note on the RCTI
+- **Use RCTI hours** — update timesheet total to match the RCTI; log reason and audit entry
+- **Flag for client clarification** — marks as `DISPUTED`, removes from payroll queue until resolved
+
+### Discrepancy log
+All resolutions are written to the timesheet audit trail with `changeSource: "RCTI_DISCREPANCY_RESOLUTION"`.
+
+---
+
+## 13. Where Estimated Hours Go (Out of Timesheets)
 
 Estimated/forecasted hours are **planning data**, not operational data. They move to the **Placement** record.
 
@@ -232,59 +265,65 @@ On the Timesheets page, the "Expected" column from the old Monthly Hours tab is 
 
 ---
 
-## 13. Schema Changes Summary
+## 14. Schema Changes Summary
 
 | Table | Change | Reason |
 |---|---|---|
-| `clients` | Add `billingType: 'INVOICE' \| 'RCTI'` | Drive RCTI vs invoice flow |
-| `placements` | Add `forecastedHoursPerMonth: numeric` | Move estimates out of timesheets |
-| `timesheets` | Add `rctiId: FK → rctis.id` (nullable) | Link RCTI to timesheet |
-| `timesheets` | Add `lockedByPayRunId` (nullable) | Lock hours once in payroll |
+| `clients` | Add `billingType: 'INVOICE' \| 'RCTI'` | Drive RCTI vs invoice flow per client |
+| `placements` | Add `forecastedHoursPerMonth: numeric` (nullable) | Move estimates out of timesheets |
+| `placements` | Add `rctiOverride: boolean` default false | Per-placement RCTI override for mixed clients |
+| `timesheets` | Add `rctiId: FK → rctis.id` (nullable) | Link received RCTI to timesheet |
+| `timesheets` | Add `lockedByPayRunId: text` (nullable) | Lock hours once admin confirms payroll lock |
+| `timesheets` | Add `discrepancyStatus: 'NONE' \| 'FLAGGED' \| 'DISPUTED' \| 'RESOLVED'` default 'NONE' | Track RCTI discrepancy state |
 | `timesheets` | Formalise `source` as enum: `PORTAL \| PDF_UPLOAD \| ADMIN_ENTRY \| RCTI` | Consistent source typing |
 
-All additions are nullable columns — no breaking changes.
+All additions are nullable or have defaults — no breaking changes to existing rows.
 
 ---
 
-## 14. What Stays the Same
+## 15. What Stays the Same
 
 - AI PDF scan endpoint (`/api/timesheets/scan`) — no changes needed
 - Batch submit endpoint (`/api/timesheets/batch`) — no changes needed
 - Audit history trail — keep as-is, shown in row expand
 - Portal timesheet submission (`portal-timesheets.tsx`) — no changes
 - Approve/reject status flow — same logic, new UI surface
-- Xero payrun dialog (recently built) — feeds from this grid's approved hours
+- Xero payrun dialog — feeds from this grid's approved hours
 
 ---
 
-## 15. Build Order
+## 16. Build Order
 
-**Phase 1 — Schema + data layer (no UI)**
-1. Add `billingType` to clients table + migration
-2. Add `rctiId` FK to timesheets + migration
-3. Add `forecastedHoursPerMonth` to placements + migration
-4. Update client profile UI with billing type field
+**Phase 1 — Schema + data layer (no UI changes)**
+1. Add `billingType` to clients + migration
+2. Add `rctiId`, `lockedByPayRunId`, `discrepancyStatus` to timesheets + migration
+3. Add `forecastedHoursPerMonth`, `rctiOverride` to placements + migration
+4. Update client profile UI: billing type field
+5. Update RCTI link endpoint: detect discrepancy, create notification, set `discrepancyStatus`
 
 **Phase 2 — Reconciliation grid**
-5. New `timesheets.tsx` with month selector + reconciliation grid
-6. Row states, source badges, invoice column, payroll column
-7. RCTI badge rendering for RCTI clients
-8. Inbox tab
+6. New `timesheets.tsx`: month selector + reconciliation grid replacing three-tab layout
+7. Row states (red/amber/white/green), source badges, invoice column, payroll column
+8. RCTI badge + discrepancy warning rendering
+9. Inbox tab with action cards
 
 **Phase 3 — Action flows**
-9. Upload PDF triggered from row (pre-filled)
-10. "Create Invoice from Timesheet" dialog
-11. "Add to existing invoice" detection + prompt
-12. "Link RCTI" action on RCTI-client rows
+10. Upload PDF from specific row (pre-filled employee/month)
+11. "Create Invoice from Timesheet" — multi-line-item form, existing draft detection
+12. "Log RCTI" action for RCTI-client rows
+13. Payroll lock flow (confirm dialog → lock → audit entry)
+14. RCTI discrepancy resolution flow (use TS / use RCTI / dispute)
 
-**Phase 4 — Forecasting (separate work)**
-13. Forecasted hours on placements
-14. Revenue forecast widget on dashboard
+**Phase 4 — Forecasting (separate, lower priority)**
+15. Forecasted hours on placements
+16. Revenue forecast widget on dashboard
 
 ---
 
-## 16. Open Questions (Confirm Before Building)
+## 17. Decisions Locked (No Longer Open Questions)
 
-1. **Multiple placements, one client, one month** — one consolidated invoice or separate invoices per placement?
-2. **RCTI hours discrepancy** — warning only, or does it block payroll?
-3. **Timesheet lock** — auto-lock on adding to Xero pay run, or manual confirmation?
+| # | Question | Decision |
+|---|---|---|
+| 1 | Multiple placements, one client, one month | **Separate invoice per placement.** One invoice can have multiple line items (e.g. regular + OT at different rates, or different deliverables). No consolidated multi-placement invoices. |
+| 2 | RCTI hours discrepancy | **Detect, notify, don't block.** Discrepancy creates a HIGH priority notification and Inbox card. Admin resolves by choosing which figure is authoritative or flagging as disputed. Not a payroll block. |
+| 3 | Timesheet lock | **Admin confirms.** Lock is a deliberate action after pay run inclusion. Confirmation dialog required. Audit logged. Unlock also possible with reason. |
