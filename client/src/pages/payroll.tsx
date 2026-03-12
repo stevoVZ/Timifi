@@ -32,8 +32,10 @@ import {
   CalendarDays,
   FileText,
   Download,
+  Send,
 } from "lucide-react";
 import type { PayRun } from "@shared/schema";
+import { XeroPayrunDialog } from "@/components/xero-payrun-dialog";
 
 const MONTHS = [
   "",
@@ -90,6 +92,7 @@ export default function PayrollPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sortField, setSortField] = useState<string>("period");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [xeroDialogOpen, setXeroDialogOpen] = useState(false);
 
   const { data: payRunsList, isLoading } = useQuery<PayRun[]>({
     queryKey: ["/api/pay-runs"],
@@ -160,10 +163,21 @@ export default function PayrollPage() {
         title="Payroll"
         subtitle={`${payRunsList?.length || 0} pay runs`}
         actions={
-          <Button variant="outline" onClick={() => downloadCSV(sorted)} data-testid="button-export-csv">
-            <Download className="w-4 h-4" />
-            Export CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="default"
+              onClick={() => setXeroDialogOpen(true)}
+              data-testid="button-create-xero-payrun"
+              className="gap-2"
+            >
+              <Send className="w-4 h-4" />
+              Create in Xero
+            </Button>
+            <Button variant="outline" onClick={() => downloadCSV(sorted)} data-testid="button-export-csv">
+              <Download className="w-4 h-4" />
+              Export CSV
+            </Button>
+          </div>
         }
       />
       <main className="flex-1 overflow-auto p-3 sm:p-6 bg-muted/30">
@@ -333,6 +347,8 @@ export default function PayrollPage() {
           )}
         </div>
       </main>
+
+      <XeroPayrunDialog open={xeroDialogOpen} onOpenChange={setXeroDialogOpen} />
     </div>
   );
 }
