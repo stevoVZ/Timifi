@@ -6129,6 +6129,19 @@ export async function registerRoutes(
         e => e.status === "ACTIVE" && e.paymentMethod === "PAYROLL"
       );
 
+      const allInvoices = await storage.getInvoices();
+      const periodInvoiceIds = allInvoices
+        .filter(inv => inv.year === year && inv.month === month && inv.status !== "VOIDED" && inv.status !== "DELETED")
+        .map(inv => inv.id);
+      const allLineItems = periodInvoiceIds.length > 0
+        ? await storage.getInvoiceLineItemsByInvoiceIds(periodInvoiceIds)
+        : [];
+      const lineItemsByInvoice: Record<string, typeof allLineItems> = {};
+      for (const li of allLineItems) {
+        if (!lineItemsByInvoice[li.invoiceId]) lineItemsByInvoice[li.invoiceId] = [];
+        lineItemsByInvoice[li.invoiceId].push(li);
+      }
+
       const { getSuperRate } = await import("./rates");
       const superRate = getSuperRate(new Date(year, month - 1, 1));
       const superFraction = superRate / 100;
@@ -6137,10 +6150,43 @@ export async function registerRoutes(
       for (const emp of activePayroll) {
         const timesheets = await storage.getTimesheetsByEmployee(emp.id);
         const ts = timesheets.find(t => t.year === year && t.month === month);
-        const hours = ts ? parseFloat(ts.totalHours) : 0;
+        const tsHours = ts ? parseFloat(ts.totalHours) : 0;
+
+        let invoiceHours = 0;
+        let invoiceRef = "";
+        const empInvoices = allInvoices.filter(inv =>
+          inv.employeeId === emp.id && inv.year === year && inv.month === month &&
+          inv.status !== "VOIDED" && inv.status !== "DELETED"
+        );
+        for (const inv of empInvoices) {
+          const lines = lineItemsByInvoice[inv.id] || [];
+          if (lines.length > 0) {
+            const liHours = lines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
+            invoiceHours += liHours;
+          } else if (inv.hours) {
+            invoiceHours += parseFloat(inv.hours);
+          }
+          if (!invoiceRef && inv.invoiceNumber) invoiceRef = inv.invoiceNumber;
+        }
+
+        let hours = 0;
+        let hoursSource: "TIMESHEET" | "INVOICE" | "NONE" = "NONE";
+        let hoursDetail = "";
+        if (tsHours > 0) {
+          hours = tsHours;
+          hoursSource = "TIMESHEET";
+          hoursDetail = `Timesheet: ${tsHours}hrs (${ts!.source || "unknown"}, ${ts!.status})`;
+        } else if (invoiceHours > 0) {
+          hours = invoiceHours;
+          hoursSource = "INVOICE";
+          hoursDetail = `Invoice: ${invoiceHours}hrs (${invoiceRef || "no ref"})`;
+        } else {
+          hoursDetail = "No timesheet or invoice data for this period";
+        }
+
         const rate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
         const gross = Math.round(hours * rate * 100) / 100;
-        const payg = ts ? Math.round(gross * 0.19 * 100) / 100 : 0;
+        const payg = hours > 0 ? Math.round(gross * 0.19 * 100) / 100 : 0;
         const superAmt = Math.round(gross * superFraction * 100) / 100;
         const net = Math.round((gross - payg) * 100) / 100;
 
@@ -6156,11 +6202,12 @@ export async function registerRoutes(
             status: ts.status,
           } : null,
           calculated: { hours, rate, gross, payg, super: superAmt, net },
+          hoursSource,
+          hoursDetail,
           included: hours > 0 && !!emp.xeroEmployeeId,
         });
       }
 
-      // Fetch Xero calendars
       let calendars: any[] = [];
       try {
         const { getXeroPayrollCalendars } = await import("./xero-payrun");

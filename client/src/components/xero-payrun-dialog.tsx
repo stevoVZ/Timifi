@@ -30,7 +30,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertTriangle, CheckCircle2, Send, Loader2, Building2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AlertTriangle, CheckCircle2, Send, Loader2, Building2, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June",
@@ -55,6 +56,8 @@ interface PreparedEmployee {
   hourlyRate: number;
   timesheet: { id: string; totalHours: number; status: string } | null;
   calculated: { hours: number; rate: number; gross: number; payg: number; super: number; net: number };
+  hoursSource: "TIMESHEET" | "INVOICE" | "NONE";
+  hoursDetail: string;
   included: boolean;
 }
 
@@ -378,7 +381,26 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm">
-                            {emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : <span className="text-muted-foreground">—</span>}
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className={`inline-flex items-center gap-1 cursor-help ${emp.hoursSource === "INVOICE" ? "text-blue-600" : emp.hoursSource === "NONE" ? "text-muted-foreground" : ""}`}>
+                                    {emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : "—"}
+                                    {emp.calculated.hours > 0 && emp.hoursSource !== "TIMESHEET" && (
+                                      <Info className="w-3 h-3" />
+                                    )}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="max-w-xs">
+                                  <div className="text-xs space-y-1">
+                                    <div className="font-medium">
+                                      Source: {emp.hoursSource === "TIMESHEET" ? "Timesheet" : emp.hoursSource === "INVOICE" ? "Invoice (fallback)" : "No data"}
+                                    </div>
+                                    <div className="text-muted-foreground">{emp.hoursDetail}</div>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm">{emp.calculated.rate > 0 ? fmt(emp.calculated.rate) : "—"}</TableCell>
                           <TableCell className="text-right font-mono text-sm font-medium">{emp.calculated.gross > 0 ? fmt(emp.calculated.gross) : "—"}</TableCell>
