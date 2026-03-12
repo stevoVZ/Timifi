@@ -535,7 +535,7 @@ async function syncPayRunLines(payRunId: string, localPayRunId: string, accessTo
   await storage.deletePayRunLines(localPayRunId);
 
   const payRun = await storage.getPayRun(localPayRunId);
-  const payRunDate = payRun?.periodEnd || payRun?.payDate || payRun?.paymentDate || null;
+  const payRunDate = payRun?.periodStart || payRun?.periodEnd || payRun?.payDate || payRun?.paymentDate || null;
 
   let lineCount = 0;
   for (const slip of detail.Payslips) {
@@ -735,7 +735,7 @@ async function shouldUpdatePayrollFee(employeeId: string, currentPayRunDate: str
   for (const prl of empPayRunLines) {
     const pr = await storage.getPayRun(prl.payRunId);
     if (!pr) continue;
-    const prDateStr = pr.periodEnd || pr.payDate || pr.paymentDate;
+    const prDateStr = pr.periodStart || pr.periodEnd || pr.payDate || pr.paymentDate;
     if (!prDateStr) continue;
     const prDate = new Date(prDateStr);
     if (isNaN(prDate.getTime())) continue;
@@ -812,7 +812,7 @@ export async function syncPayRuns(): Promise<{
       const periodStart = parseXeroDate(pr.PayRunPeriodStartDate);
       const periodEnd = parseXeroDate(pr.PayRunPeriodEndDate);
 
-      const workPeriodDate = periodEnd || payDate;
+      const workPeriodDate = periodStart || periodEnd || payDate;
       const workPeriodObj = workPeriodDate ? new Date(workPeriodDate) : new Date();
       const year = workPeriodObj.getFullYear();
       const month = workPeriodObj.getMonth() + 1;
