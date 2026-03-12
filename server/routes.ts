@@ -2194,31 +2194,78 @@ export async function registerRoutes(
         }
       }
 
-      const xeroSyncTimesheets = (await storage.getTimesheets()).filter(t => t.source === "XERO_SYNC");
+      const allTimesheets = await storage.getTimesheets();
+      const xeroSyncTimesheets = allTimesheets.filter(t => t.source === "XERO_SYNC");
+      const nonXeroTimesheets = allTimesheets.filter(t => t.source !== "XERO_SYNC");
+
+      const nonXeroKeys = new Set(
+        nonXeroTimesheets.map(t => `${t.employeeId}|${t.year}|${t.month}`)
+      );
+
+      const existingXeroKeys = new Map<string, typeof xeroSyncTimesheets[0]>();
       for (const ts of xeroSyncTimesheets) {
-        await storage.deleteTimesheet(ts.id);
+        existingXeroKeys.set(`${ts.employeeId}|${ts.year}|${ts.month}`, ts);
       }
-      const deleted = xeroSyncTimesheets.length;
 
+      let deleted = 0;
       let created = 0;
+      let updated = 0;
+      let skippedConflict = 0;
+      const processedKeys = new Set<string>();
+
       for (const [, bucket] of buckets) {
-        await storage.createTimesheetWithTenant({
-          employeeId: bucket.employeeId,
-          clientId: bucket.clientId,
-          placementId: bucket.placementId,
-          year: bucket.year,
-          month: bucket.month,
-          totalHours: String(bucket.hours.toFixed(2)),
-          regularHours: String(bucket.hours.toFixed(2)),
-          overtimeHours: "0.00",
-          grossValue: "0.00",
-          status: "APPROVED",
-          source: "XERO_SYNC",
-        }, bucket.tenantId);
-        created++;
+        const key = `${bucket.employeeId}|${bucket.year}|${bucket.month}`;
+        processedKeys.add(key);
+
+        if (nonXeroKeys.has(key)) {
+          skippedConflict++;
+          const existingXero = existingXeroKeys.get(key);
+          if (existingXero) {
+            await storage.deleteTimesheet(existingXero.id);
+            deleted++;
+          }
+          continue;
+        }
+
+        const existingXero = existingXeroKeys.get(key);
+        if (existingXero) {
+          await storage.updateTimesheet(existingXero.id, {
+            totalHours: String(bucket.hours.toFixed(2)),
+            regularHours: String(bucket.hours.toFixed(2)),
+            clientId: bucket.clientId,
+            placementId: bucket.placementId,
+          });
+          updated++;
+        } else {
+          await storage.createTimesheetWithTenant({
+            employeeId: bucket.employeeId,
+            clientId: bucket.clientId,
+            placementId: bucket.placementId,
+            year: bucket.year,
+            month: bucket.month,
+            totalHours: String(bucket.hours.toFixed(2)),
+            regularHours: String(bucket.hours.toFixed(2)),
+            overtimeHours: "0.00",
+            grossValue: "0.00",
+            status: "APPROVED",
+            source: "XERO_SYNC",
+          }, bucket.tenantId);
+          created++;
+        }
       }
 
-      res.json({ deleted, created, message: `Rebuilt ${created} timesheets from pay run data using period_start month` });
+      for (const ts of xeroSyncTimesheets) {
+        const key = `${ts.employeeId}|${ts.year}|${ts.month}`;
+        if (!processedKeys.has(key)) {
+          await storage.deleteTimesheet(ts.id);
+          deleted++;
+        }
+      }
+
+      res.json({
+        deleted, created, updated, skippedConflict,
+        message: `Rebuilt timesheets: ${created} created, ${updated} updated, ${deleted} stale deleted, ${skippedConflict} skipped (non-XERO source exists)`
+      });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to rebuild timesheets" });
     }
