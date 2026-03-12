@@ -2124,6 +2124,106 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/xero/rebuild-timesheets", async (_req, res) => {
+    try {
+      const allPayRuns = await storage.getPayRuns();
+      const allPayRunLines = await storage.getAllPayRunLines();
+      const allPlacements = await storage.getAllPlacements();
+
+      const payRunMap = new Map(allPayRuns.map(pr => [pr.id, pr]));
+
+      const placementsByEmployee = new Map<string, typeof allPlacements>();
+      for (const p of allPlacements) {
+        if (!p.employeeId) continue;
+        const list = placementsByEmployee.get(p.employeeId) || [];
+        list.push(p);
+        placementsByEmployee.set(p.employeeId, list);
+      }
+
+      function findPlacementForPeriod(employeeId: string, year: number, month: number) {
+        const placements = placementsByEmployee.get(employeeId) || [];
+        const periodDate = new Date(year, month - 1, 15);
+        const active = placements.find(p => {
+          if (p.status !== "ACTIVE") return false;
+          if (p.startDate && new Date(p.startDate) > periodDate) return false;
+          if (p.endDate && new Date(p.endDate) < new Date(year, month - 1, 1)) return false;
+          return true;
+        });
+        return active || placements.find(p => p.status === "ACTIVE") || null;
+      }
+
+      type TimesheetBucket = {
+        employeeId: string;
+        year: number;
+        month: number;
+        hours: number;
+        clientId: string | null;
+        placementId: string | null;
+        tenantId: string | null;
+      };
+
+      const buckets = new Map<string, TimesheetBucket>();
+
+      for (const line of allPayRunLines) {
+        const pr = payRunMap.get(line.payRunId);
+        if (!pr || !pr.periodStart) continue;
+        const hours = parseFloat(line.hoursWorked || "0");
+        if (hours <= 0) continue;
+
+        const parts = String(pr.periodStart).split("-");
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        if (isNaN(year) || isNaN(month) || month < 1 || month > 12) continue;
+
+        const placement = findPlacementForPeriod(line.employeeId, year, month);
+        const key = `${line.employeeId}|${year}|${month}`;
+
+        const existing = buckets.get(key);
+        if (existing) {
+          existing.hours += hours;
+        } else {
+          buckets.set(key, {
+            employeeId: line.employeeId,
+            year,
+            month,
+            hours,
+            clientId: placement?.clientId || null,
+            placementId: placement?.id || null,
+            tenantId: pr.tenantId || null,
+          });
+        }
+      }
+
+      const xeroSyncTimesheets = (await storage.getTimesheets()).filter(t => t.source === "XERO_SYNC");
+      for (const ts of xeroSyncTimesheets) {
+        await storage.deleteTimesheet(ts.id);
+      }
+      const deleted = xeroSyncTimesheets.length;
+
+      let created = 0;
+      for (const [, bucket] of buckets) {
+        await storage.createTimesheetWithTenant({
+          employeeId: bucket.employeeId,
+          clientId: bucket.clientId,
+          placementId: bucket.placementId,
+          year: bucket.year,
+          month: bucket.month,
+          totalHours: String(bucket.hours.toFixed(2)),
+          regularHours: String(bucket.hours.toFixed(2)),
+          overtimeHours: "0.00",
+          grossValue: "0.00",
+          status: "APPROVED",
+          source: "XERO_SYNC",
+        }, bucket.tenantId);
+        created++;
+      }
+
+      res.json({ deleted, created, message: `Rebuilt ${created} timesheets from pay run data using period_start month` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to rebuild timesheets" });
+    }
+  });
+
   app.post("/api/xero/sync-invoices", async (_req, res) => {
     try {
       const result = await syncInvoices();

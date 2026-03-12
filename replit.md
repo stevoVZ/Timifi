@@ -43,6 +43,7 @@ The Recruitment Portal is a full-stack application designed for scalability and 
 -   **CSV Export:** Available for Payroll and Invoices pages.
 -   **Portal PDF Upload:** Employees can upload timesheet PDFs for OCR processing and auto-filling forms.
 -   **Timesheet Source Tracking:** `timesheets` table tracks `source` (XERO_SYNC, PDF_UPLOAD, ADMIN_ENTRY, MANUAL_ENTRY) to manage different input methods.
+-   **Timesheet Month Mapping:** XERO_SYNC timesheets use the pay run's `period_start` month (work period) — NOT the `payment_date` month. `POST /api/xero/rebuild-timesheets` deletes all XERO_SYNC timesheets and rebuilds them from pay_run_lines grouped by `period_start` month, with placement/client attribution.
 -   **RCTI Auto-Match Logic:** `POST /api/rctis/auto-match` creates RCTI records from bank RECEIVE transactions for `is_rcti=true` clients. Bank amount is always source of truth. Rate hierarchy for deriving hours: placement `chargeOutRate` → employee `chargeOutRate` → null. Multi-employee attribution: uses placement active dates, name matching in description, and rate-based amount prediction. Unattributable multi-employee payments are flagged `[UNATTRIBUTED - manual review needed]`. Currently DFAT and ACIC are RCTI clients.
 -   **Key Rate Data:** Ben Sharman DFAT charge-out rate is $154.32/hr (not pay rate of $140). Roozbeh Pooladvand ACIC rate is $180/hr. Steven Diep ACIC rate is $210/hr.
 

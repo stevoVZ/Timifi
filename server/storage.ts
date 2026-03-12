@@ -62,6 +62,7 @@ export interface IStorage {
   getTimesheetsByEmployee(employeeId: string): Promise<Timesheet[]>;
   getTimesheet(id: string): Promise<Timesheet | undefined>;
   createTimesheet(data: InsertTimesheet): Promise<Timesheet>;
+  createTimesheetWithTenant(data: InsertTimesheet, tenantId: string | null): Promise<Timesheet>;
   updateTimesheet(id: string, data: Partial<InsertTimesheet>): Promise<Timesheet | undefined>;
   deleteTimesheet(id: string): Promise<void>;
 
@@ -83,6 +84,7 @@ export interface IStorage {
   updatePayRun(id: string, data: Partial<InsertPayRun>): Promise<PayRun | undefined>;
 
   getPayRunLines(payRunId: string): Promise<PayRunLine[]>;
+  getAllPayRunLines(): Promise<PayRunLine[]>;
   getPayRunLinesByEmployee(employeeId: string): Promise<PayRunLine[]>;
   getPayRunLine(id: string): Promise<PayRunLine | undefined>;
   createPayRunLine(data: InsertPayRunLine): Promise<PayRunLine>;
@@ -301,6 +303,11 @@ export class DatabaseStorage implements IStorage {
     return timesheet;
   }
 
+  async createTimesheetWithTenant(data: InsertTimesheet, tenantId: string | null): Promise<Timesheet> {
+    const [timesheet] = await db.insert(timesheets).values({ ...data, tenantId }).returning();
+    return timesheet;
+  }
+
   async updateTimesheet(id: string, data: Partial<InsertTimesheet>): Promise<Timesheet | undefined> {
     const [timesheet] = await db
       .update(timesheets)
@@ -423,6 +430,10 @@ export class DatabaseStorage implements IStorage {
     const conds = [eq(payRunLines.payRunId, payRunId)];
     if (t) conds.push(eq(payRunLines.tenantId, t));
     return db.select().from(payRunLines).where(and(...conds)).orderBy(desc(payRunLines.createdAt));
+  }
+
+  async getAllPayRunLines(): Promise<PayRunLine[]> {
+    return db.select().from(payRunLines).orderBy(desc(payRunLines.createdAt));
   }
 
   async getPayRunLinesByEmployee(employeeId: string): Promise<PayRunLine[]> {
