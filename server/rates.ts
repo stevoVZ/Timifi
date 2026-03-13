@@ -1,19 +1,10 @@
 /**
- * server/rates.ts — COMPATIBILITY SHIM
+ * server/rates.ts — DELETED
  *
- * All business logic has moved to server/lib/.
- * This file re-exports from lib/super.ts so existing imports continue to work
- * without touching every file that does `import { getSuperRate } from "./rates"`.
+ * All exports have moved to server/lib/. This file has been removed.
+ * Import from "./lib/index" or "./lib/super" directly.
  *
- * Phase 5 migration status: COMPLETE
- * Next step (Phase 6): update all direct imports to use "./lib/index" and delete this file.
+ * @deprecated Do not use. Will be removed in a future cleanup.
  */
-
-export {
-  getSuperRate,
-  getSuperRateForFY,
-  getAustralianFY,
-  calculatePayRate,
-  calculateChargeOutFromPayRate,
-  calculateSuperAmount,
-} from "./lib/super";
+// This file intentionally left blank after migration.
+export {};
