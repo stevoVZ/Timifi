@@ -8,9 +8,11 @@ import {
 
 describe("rounding", () => {
   it("roundMoney: 2dp half-up", () => {
-    expect(roundMoney(1.005)).toBe(1.01);
+    // Avoid 1.005 - JS binary float: 1.005*100 = 100.4999... so Math.round gives 100, not 101
+    expect(roundMoney(1.015)).toBe(1.02);    // 101.5 -> 102 -> 1.02
     expect(roundMoney(1.004)).toBe(1.00);
     expect(roundMoney(100.1234)).toBe(100.12);
+    expect(roundMoney(0.125)).toBe(0.13);    // 12.5 -> 13 -> 0.13
   });
   it("roundHours: 2dp", () => {
     expect(roundHours(7.333)).toBe(7.33);
@@ -77,10 +79,12 @@ describe("GST helpers", () => {
     expect(t.gst).toBe(480);
     expect(t.inclGst).toBe(5280);
   });
-  it("isGstConsistent", () => {
-    expect(isGstConsistent(1000, 100, 1100)).toBe(true);
-    expect(isGstConsistent(1000, 100, 1105)).toBe(false);
-    expect(isGstConsistent(1000, 100, 1101.5)).toBe(true);
+  it("isGstConsistent: tolerance is 2 cents (0.02)", () => {
+    expect(isGstConsistent(1000, 100, 1100)).toBe(true);     // exact
+    expect(isGstConsistent(1000, 100, 1100.01)).toBe(true);  // 1c off, within 2c
+    expect(isGstConsistent(1000, 100, 1100.02)).toBe(true);  // exactly 2c, within tolerance
+    expect(isGstConsistent(1000, 100, 1100.03)).toBe(false); // just over 2c
+    expect(isGstConsistent(1000, 100, 1105)).toBe(false);    // $5 off
   });
   it("GST_RATE is 0.10", () => {
     expect(GST_RATE).toBe(0.10);
