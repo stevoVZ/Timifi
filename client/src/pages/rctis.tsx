@@ -48,6 +48,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   X,
+  Pencil,
+  Info,
 } from "lucide-react";
 import type { Employee } from "@shared/schema";
 
@@ -76,6 +78,7 @@ type RctiRecord = {
   status: string;
   clientName: string | null;
   employeeName: string | null;
+  source: string | null;
 };
 
 type ClientRecord = {
@@ -102,6 +105,7 @@ export default function RctisPage() {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRcti, setEditingRcti] = useState<RctiRecord | null>(null);
+  const [selectedRctiId, setSelectedRctiId] = useState<string | null>(null);
   const [sortField, setSortField] = useState<SortField>("period");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [showAllClients, setShowAllClients] = useState(false);
@@ -426,36 +430,61 @@ export default function RctisPage() {
                   </TableRow>
                 ) : (
                   filtered.map(r => (
-                    <TableRow
-                      key={r.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => { setEditingRcti(r); setDialogOpen(true); }}
-                      data-testid={`row-rcti-${r.id}`}
-                    >
-                      <TableCell className="font-medium" data-testid={`text-rcti-period-${r.id}`}>
-                        {MONTHS[r.month]} {r.year}
-                      </TableCell>
-                      <TableCell data-testid={`text-rcti-client-${r.id}`}>{r.clientName || "—"}</TableCell>
-                      <TableCell data-testid={`text-rcti-employee-${r.id}`}>{r.employeeName || "—"}</TableCell>
-                      <TableCell className="text-right">{r.hours ? parseFloat(r.hours).toFixed(1) : "—"}</TableCell>
-                      <TableCell className="text-right font-medium">{formatCurrency(r.amountExclGst)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(r.amountInclGst)}</TableCell>
-                      <TableCell><StatusBadge status={r.status} /></TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {r.receivedDate ? new Date(r.receivedDate).toLocaleDateString("en-AU") : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(r.id); }}
-                          data-testid={`button-delete-rcti-${r.id}`}
-                        >
-                          <Trash2 className="w-4 h-4 text-destructive" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
+                    <>
+                      <TableRow
+                        key={r.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => setSelectedRctiId(prev => prev === r.id ? null : r.id)}
+                        data-testid={`row-rcti-${r.id}`}
+                      >
+                        <TableCell className="font-medium" data-testid={`text-rcti-period-${r.id}`}>
+                          <div className="flex items-center gap-1">
+                            {selectedRctiId === r.id
+                              ? <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                              : <ChevronDown className="w-3 h-3 text-muted-foreground opacity-0" />}
+                            {MONTHS[r.month]} {r.year}
+                          </div>
+                        </TableCell>
+                        <TableCell data-testid={`text-rcti-client-${r.id}`}>{r.clientName || "—"}</TableCell>
+                        <TableCell data-testid={`text-rcti-employee-${r.id}`}>{r.employeeName || "—"}</TableCell>
+                        <TableCell className="text-right">{r.hours ? parseFloat(r.hours).toFixed(1) : "—"}</TableCell>
+                        <TableCell className="text-right font-medium">{formatCurrency(r.amountExclGst)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(r.amountInclGst)}</TableCell>
+                        <TableCell><StatusBadge status={r.status} /></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {r.receivedDate ? new Date(r.receivedDate).toLocaleDateString("en-AU") : "—"}
+                        </TableCell>
+                        <TableCell onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={(e) => { e.stopPropagation(); setEditingRcti(r); setDialogOpen(true); }}
+                              data-testid={`button-edit-rcti-${r.id}`}
+                            >
+                              <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(r.id); }}
+                              data-testid={`button-delete-rcti-${r.id}`}
+                            >
+                              <Trash2 className="w-4 h-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {selectedRctiId === r.id && (
+                        <TableRow key={`${r.id}-detail`}>
+                          <TableCell colSpan={9} className="p-0 border-b">
+                            <RctiProvenancePanel rcti={r} />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </>
                   ))
                 )}
               </TableBody>
@@ -482,6 +511,153 @@ export default function RctisPage() {
     </>
   );
 }
+
+// ─── Data provenance helpers ───────────────────────────────────────────────────
+
+type ProvenanceTag = {
+  label: string;
+  color: "blue" | "violet" | "purple" | "green" | "teal" | "amber" | "gray";
+  tooltip: string;
+};
+
+const PROVENANCE_COLORS: Record<ProvenanceTag["color"], string> = {
+  blue:   "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  violet: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  purple: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+  green:  "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
+  teal:   "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
+  amber:  "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  gray:   "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+};
+
+function getFieldProvenance(field: string, rcti: RctiRecord): ProvenanceTag {
+  const src = rcti.source || (rcti.bankTransactionId ? "AUTO_MATCH" : "UNKNOWN");
+
+  const map: Record<string, Record<string, ProvenanceTag>> = {
+    AUTO_MATCH: {
+      period:         { label: "Bank txn date",   color: "blue",   tooltip: "Month/year of the Xero bank transaction — this is the payment date, not necessarily the work period." },
+      receivedDate:   { label: "Bank txn date",   color: "blue",   tooltip: "The date the bank transaction was received, as synced from Xero." },
+      amountInclGst:  { label: "Bank txn amount", color: "blue",   tooltip: "The gross amount from the Xero bank transaction — this is the authoritative figure." },
+      amountExclGst:  { label: "Calculated",      color: "purple", tooltip: "Derived from the bank amount: inclGST ÷ 11 × 10. Small rounding (±$0.01) is expected." },
+      gstAmount:      { label: "Calculated",      color: "purple", tooltip: "Derived from the bank amount: inclGST ÷ 11. ATO standard formula for GST-inclusive receipts." },
+      hours:          { label: "Derived",         color: "amber",  tooltip: "Estimated: exGST amount ÷ employee charge-out rate from placement. May be null if no rate was found." },
+      hourlyRate:     { label: "Placement rate",  color: "green",  tooltip: "The employee's charge-out rate at this client, taken from their active placement record at the time of auto-match." },
+      reference:      { label: "Bank txn",        color: "blue",   tooltip: "The reference field from the Xero bank transaction." },
+      description:    { label: "Bank txn",        color: "blue",   tooltip: "The description or reference from the bank transaction. '[UNATTRIBUTED]' suffix added when employee could not be determined." },
+      clientId:       { label: "Contact match",   color: "teal",   tooltip: "Matched by normalising the Xero contact name on the bank transaction to an RCTI-flagged client record." },
+      employeeId:     { label: "Auto-attributed", color: "teal",   tooltip: "Attribution algorithm: (1) single active placement → direct match; (2) employee name found in description → name match; (3) exGST ÷ rate rounds to quarter-hour → rate check. Null if all three fail." },
+      bankTxn:        { label: "Source link",     color: "blue",   tooltip: "The internal ID of the Xero bank transaction this RCTI was created from. Used to prevent duplicate auto-matches." },
+    },
+    PDF_SCAN: {
+      period:         { label: "AI OCR",          color: "violet", tooltip: "Derived from the line item end date (preferred), then start date, then RCTI document date, then current month as fallback." },
+      receivedDate:   { label: "AI OCR",          color: "violet", tooltip: "The RCTI document date extracted by GPT-4o Vision. This is the issue date on the document, not the bank receipt date." },
+      amountExclGst:  { label: "AI OCR",          color: "violet", tooltip: "Extracted directly from the PDF line item total ex-GST by GPT-4o Vision OCR." },
+      amountInclGst:  { label: "Calculated",      color: "purple", tooltip: "Calculated from the AI-extracted ex-GST figure: exGST × 1.10. May differ from printed incl-GST if rounding differs." },
+      gstAmount:      { label: "Calculated",      color: "purple", tooltip: "Calculated: exGST × 10%. GST component is always derived, never read directly from the PDF." },
+      hours:          { label: "AI OCR",          color: "violet", tooltip: "Hours extracted from the PDF line item by GPT-4o Vision. Verify against the printed document." },
+      hourlyRate:     { label: "AI OCR",          color: "violet", tooltip: "Rate per hour extracted from the PDF line item. This is what the client stated on the RCTI, not the system's placement rate." },
+      reference:      { label: "AI OCR",          color: "violet", tooltip: "Reference or invoice number extracted from the PDF document." },
+      description:    { label: "AI OCR",          color: "violet", tooltip: "Contractor name + line item description from the PDF, joined by ' — '." },
+      clientId:       { label: "User selected",   color: "green",  tooltip: "The client was either auto-matched by name during the scan review, or manually selected by the user before saving." },
+      employeeId:     { label: "User matched",    color: "green",  tooltip: "The employee was either auto-matched from the contractor name extracted by AI, or manually selected by the user during the review step." },
+      bankTxn:        { label: "Not linked",      color: "gray",   tooltip: "PDF-scanned RCTIs are not linked to a bank transaction. If you receive payment later, use the Bank Statements page to link the transaction to this RCTI." },
+    },
+    MANUAL: {
+      period:         { label: "Manual entry",    color: "gray",   tooltip: "Month and year entered manually by admin." },
+      receivedDate:   { label: "Manual entry",    color: "gray",   tooltip: "Received date entered manually by admin." },
+      amountExclGst:  { label: "Manual entry",    color: "gray",   tooltip: "Amount ex-GST entered manually. Use the auto-calculate button to derive GST from this figure." },
+      amountInclGst:  { label: "Manual/Calc",     color: "gray",   tooltip: "Entered manually or auto-calculated from ex-GST. Check both figures are consistent." },
+      gstAmount:      { label: "Manual/Calc",     color: "gray",   tooltip: "Entered manually or auto-calculated as ex-GST × 10%." },
+      hours:          { label: "Manual entry",    color: "gray",   tooltip: "Hours entered manually by admin." },
+      hourlyRate:     { label: "Manual entry",    color: "gray",   tooltip: "Rate entered manually by admin. May differ from the placement charge-out rate." },
+      reference:      { label: "Manual entry",    color: "gray",   tooltip: "Reference entered manually." },
+      description:    { label: "Manual entry",    color: "gray",   tooltip: "Description entered manually." },
+      clientId:       { label: "Manual entry",    color: "gray",   tooltip: "Client selected manually." },
+      employeeId:     { label: "Manual entry",    color: "gray",   tooltip: "Employee selected manually (optional)." },
+      bankTxn:        { label: "Not linked",      color: "gray",   tooltip: "No bank transaction link. Set one via the Bank Statements page if needed." },
+    },
+  };
+
+  const fallback: ProvenanceTag = { label: "Unknown", color: "gray", tooltip: "Source of this RCTI is unknown — it predates provenance tracking." };
+  const srcMap = map[src] || map["MANUAL"];
+  return srcMap[field] || fallback;
+}
+
+function PTag({ field, rcti }: { field: string; rcti: RctiRecord }) {
+  const p = getFieldProvenance(field, rcti);
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex items-center">
+      <button
+        type="button"
+        className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium cursor-pointer ${PROVENANCE_COLORS[p.color]}`}
+        onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
+        title={p.tooltip}
+      >
+        <Info className="w-2.5 h-2.5" />
+        {p.label}
+      </button>
+      {open && (
+        <span
+          className="absolute z-50 bottom-full left-0 mb-1 w-64 rounded-md border bg-popover text-popover-foreground shadow-md text-xs p-2 leading-relaxed"
+          onClick={e => e.stopPropagation()}
+        >
+          {p.tooltip}
+          <button className="block mt-1 text-[10px] text-muted-foreground hover:underline" onClick={() => setOpen(false)}>close</button>
+        </span>
+      )}
+    </span>
+  );
+}
+
+function RctiProvenancePanel({ rcti }: { rcti: RctiRecord }) {
+  const src = rcti.source || (rcti.bankTransactionId ? "AUTO_MATCH" : "UNKNOWN");
+  const srcLabel: Record<string, { label: string; color: string }> = {
+    AUTO_MATCH: { label: "Auto-matched from bank transaction", color: "bg-blue-50 border-blue-200 text-blue-900 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-200" },
+    PDF_SCAN:   { label: "Created from PDF scan (AI OCR)",     color: "bg-violet-50 border-violet-200 text-violet-900 dark:bg-violet-950/30 dark:border-violet-800 dark:text-violet-200" },
+    MANUAL:     { label: "Manually entered by admin",           color: "bg-gray-50 border-gray-200 text-gray-700 dark:bg-gray-900/30 dark:border-gray-700 dark:text-gray-300" },
+    UNKNOWN:    { label: "Source unknown (predates tracking)",  color: "bg-gray-50 border-gray-200 text-gray-700 dark:bg-gray-900/30 dark:border-gray-700 dark:text-gray-300" },
+  };
+  const badge = srcLabel[src] || srcLabel["UNKNOWN"];
+
+  const row = (label: string, value: React.ReactNode, field: string) => (
+    <div className="flex items-start justify-between py-2 border-b last:border-b-0 gap-4">
+      <div className="text-xs text-muted-foreground w-32 flex-shrink-0 pt-0.5">{label}</div>
+      <div className="flex-1 text-sm font-medium">{value || <span className="text-muted-foreground">—</span>}</div>
+      <div className="flex-shrink-0"><PTag field={field} rcti={rcti} /></div>
+    </div>
+  );
+
+  return (
+    <div className="p-4 bg-muted/30 border-t">
+      <div className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium mb-4 ${badge.color}`}>
+        <Info className="w-3 h-3" />
+        {badge.label}
+      </div>
+      <div className="grid grid-cols-2 gap-x-8">
+        <div>
+          {row("Period", `${MONTHS[rcti.month]} ${rcti.year}`, "period")}
+          {row("Client", rcti.clientName, "clientId")}
+          {row("Employee", rcti.employeeName, "employeeId")}
+          {row("Description", rcti.description, "description")}
+          {row("Reference", rcti.reference, "reference")}
+          {row("Received date", rcti.receivedDate ? new Date(rcti.receivedDate).toLocaleDateString("en-AU") : null, "receivedDate")}
+        </div>
+        <div>
+          {row("Amount ex GST", formatCurrency(rcti.amountExclGst), "amountExclGst")}
+          {row("GST", formatCurrency(rcti.gstAmount), "gstAmount")}
+          {row("Amount inc GST", formatCurrency(rcti.amountInclGst), "amountInclGst")}
+          {row("Hours", rcti.hours ? `${parseFloat(rcti.hours).toFixed(2)} hrs` : null, "hours")}
+          {row("Hourly rate", rcti.hourlyRate ? formatCurrency(rcti.hourlyRate) + "/hr" : null, "hourlyRate")}
+          {row("Bank txn ID", rcti.bankTransactionId
+            ? <span className="font-mono text-xs text-muted-foreground">{rcti.bankTransactionId.slice(0, 16)}…</span>
+            : null, "bankTxn")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function RctiDialog({
   open,
