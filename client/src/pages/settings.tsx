@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff, Calculator, CalendarDays, DollarSign, ArrowRightLeft, AlertTriangle } from "lucide-react";
+import { Save, Palette, Building2, Banknote, RefreshCw, Globe, UserCog, Link2, Unlink, CheckCircle, XCircle, Clock, Loader2, Plus, Pencil, Trash2, Eye, EyeOff, Calculator, CalendarDays, DollarSign, ArrowRightLeft, AlertTriangle, Sliders } from "lucide-react";
 import type { Setting } from "@shared/schema";
 
 function useSettings() {
@@ -1895,6 +1895,192 @@ function EmployeeMergeTab() {
   );
 }
 
+// ── Business Rules Tab ───────────────────────────────────────────────────────
+
+function BusinessRulesTab({ settings }: { settings: Setting[] | undefined }) {
+  const { toast } = useToast();
+
+  const getVal = (key: string, def = "") =>
+    settings?.find(s => s.key === key)?.value ?? def;
+
+  const [threshold, setThreshold] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
+  const [accountCode, setAccountCode] = useState("");
+  const [taxType, setTaxType] = useState("");
+  const [lockConfirm, setLockConfirm] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!settings) return;
+    setThreshold(getVal("rcti_discrepancy_threshold_hours", "0.5"));
+    setPaymentTerms(getVal("invoice_payment_terms_days", "14"));
+    setAccountCode(getVal("default_invoice_account_code", "200"));
+    setTaxType(getVal("invoice_default_tax_type", "OUTPUT"));
+    setLockConfirm(getVal("payroll_lock_requires_confirmation", "true") === "true");
+  }, [settings]);
+
+  const save = async (key: string, value: string) => {
+    setSaving(key);
+    try {
+      await apiRequest("PUT", `/api/settings/${key}`, { value });
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Saved" });
+    } catch {
+      toast({ title: "Failed to save", variant: "destructive" });
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const rules: {
+    key: string;
+    label: string;
+    description: string;
+    type: "number" | "text" | "toggle";
+    value: string | boolean;
+    setter: (v: any) => void;
+    unit?: string;
+  }[] = [
+    {
+      key: "rcti_discrepancy_threshold_hours",
+      label: "RCTI Discrepancy Threshold",
+      description: "Hours delta between an RCTI and its matched timesheet that triggers a HIGH priority discrepancy notification.",
+      type: "number",
+      value: threshold,
+      setter: setThreshold,
+      unit: "hours",
+    },
+    {
+      key: "invoice_payment_terms_days",
+      label: "Invoice Payment Terms",
+      description: "Default number of days from the invoice date to the due date on newly created invoices.",
+      type: "number",
+      value: paymentTerms,
+      setter: setPaymentTerms,
+      unit: "days",
+    },
+    {
+      key: "default_invoice_account_code",
+      label: "Default Invoice Account Code",
+      description: "Default Xero account code applied to new invoice line items (e.g. 200 = Sales).",
+      type: "text",
+      value: accountCode,
+      setter: setAccountCode,
+    },
+    {
+      key: "invoice_default_tax_type",
+      label: "Default Invoice Tax Type",
+      description: "Default GST tax type applied to new invoice line items. OUTPUT = GST on Income.",
+      type: "text",
+      value: taxType,
+      setter: setTaxType,
+    },
+    {
+      key: "payroll_lock_requires_confirmation",
+      label: "Payroll Lock Requires Confirmation",
+      description: "When enabled, admins must confirm before a timesheet is locked for payroll. Recommended: on.",
+      type: "toggle",
+      value: lockConfirm,
+      setter: setLockConfirm,
+    },
+  ];
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground mb-1">Business Rules</h3>
+        <p className="text-xs text-muted-foreground">
+          Configuration values that drive automated behaviour across timesheets, invoicing, and payroll.
+          Changes take effect immediately — no restart required.
+        </p>
+      </div>
+
+      <div className="space-y-6">
+        {rules.map(rule => (
+          <div key={rule.key} className="flex items-start justify-between gap-6 pb-6 border-b last:border-b-0">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium">{rule.label}</div>
+              <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{rule.description}</div>
+              <div className="text-[10px] font-mono text-muted-foreground/60 mt-1">{rule.key}</div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {rule.type === "toggle" ? (
+                <>
+                  <Switch
+                    checked={rule.value as boolean}
+                    onCheckedChange={(v) => {
+                      rule.setter(v);
+                      save(rule.key, v ? "true" : "false");
+                    }}
+                    data-testid={`toggle-${rule.key}`}
+                  />
+                  <span className="text-xs text-muted-foreground w-6">{(rule.value as boolean) ? "On" : "Off"}</span>
+                </>
+              ) : (
+                <>
+                  <div className="relative">
+                    <Input
+                      type={rule.type}
+                      value={rule.value as string}
+                      onChange={e => rule.setter(e.target.value)}
+                      className="w-28 text-right pr-10 text-sm"
+                      step={rule.type === "number" ? "0.1" : undefined}
+                      min={rule.type === "number" ? "0" : undefined}
+                      data-testid={`input-${rule.key}`}
+                    />
+                    {rule.unit && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground pointer-events-none">
+                        {rule.unit}
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => save(rule.key, rule.value as string)}
+                    disabled={saving === rule.key}
+                    data-testid={`button-save-${rule.key}`}
+                  >
+                    {saving === rule.key ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Formula reference */}
+      <div className="rounded-lg border bg-muted/30 p-4">
+        <div className="flex items-center gap-1.5 text-xs font-semibold mb-3">
+          <Calculator className="w-3.5 h-3.5" />
+          Canonical Formulas (read-only reference)
+        </div>
+        <div className="grid grid-cols-1 gap-1.5 text-xs">
+          {[
+            ["GST component", "amount incl GST ÷ 11"],
+            ["Amount ex GST", "amount incl GST × 10/11"],
+            ["Amount incl GST", "amount ex GST × 1.10"],
+            ["Gross (super-inclusive rate)", "hours × (rate ÷ (1 + super%))"],
+            ["Gross (super-exclusive rate)", "hours × rate"],
+            ["Super", "gross × super%"],
+            ["Net pay", "gross − PAYG withholding"],
+            ["Total employer cost", "gross + super"],
+            ["Margin", "(revenue − cost) ÷ revenue × 100"],
+            ["Payroll fee revenue", "gross × fee%"],
+          ].map(([label, formula]) => (
+            <div key={label} className="flex items-baseline gap-2">
+              <span className="text-muted-foreground w-48 flex-shrink-0">{label}</span>
+              <span className="font-mono text-[11px] text-foreground/80">{formula}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 const tabs = [
   { id: "branding", label: "Branding", icon: Palette },
   { id: "company", label: "Company", icon: Building2 },
@@ -1905,6 +2091,7 @@ const tabs = [
   { id: "users", label: "Users", icon: UserCog },
   { id: "data", label: "Data", icon: CalendarDays },
   { id: "merge", label: "Merge", icon: ArrowRightLeft },
+  { id: "business-rules", label: "Business Rules", icon: Sliders },
 ];
 
 export default function SettingsPage() {
@@ -1969,6 +2156,9 @@ export default function SettingsPage() {
                 </TabsContent>
                 <TabsContent value="merge" className="mt-0">
                   <EmployeeMergeTab />
+                </TabsContent>
+                <TabsContent value="business-rules" className="mt-0">
+                  {isLoading ? <SettingsTabSkeleton /> : <BusinessRulesTab settings={settings} />}
                 </TabsContent>
               </CardContent>
             </Card>
