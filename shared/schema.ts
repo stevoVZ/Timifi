@@ -81,6 +81,9 @@ export const timesheets = pgTable("timesheets", {
   rctiId: varchar("rcti_id").references(() => rctis.id),
   lockedByPayRunId: text("locked_by_pay_run_id"),
   discrepancyStatus: text("discrepancy_status").default("NONE"),
+  discrepancyNotes: text("discrepancy_notes"),
+  periodStart: date("period_start"),
+  periodEnd: date("period_end"),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -663,3 +666,9 @@ export const insertInvoicePaymentSchema = createInsertSchema(invoicePayments).om
 export type InvoicePayment = typeof invoicePayments.$inferSelect;
 export type InsertInvoicePayment = z.infer<typeof insertInvoicePaymentSchema>;
 
+// Session table for connect-pg-simple (managed externally, preserved to avoid data loss)
+export const sessions = pgTable("session", {
+  sid: varchar("sid").primaryKey(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire", { precision: 6 }).notNull(),
+});
