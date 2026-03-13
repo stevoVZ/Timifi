@@ -19,7 +19,7 @@ export const GST_RATE = 0.10;
 
 /** Round to 2dp — money. Half-up. */
 export function roundMoney(n: number): number {
-  return Math.round(n * 100) / 100;
+  return Number(Math.round(parseFloat(n + 'e2')) + 'e-2');
 }
 
 /** Round to 2dp — hours. */
