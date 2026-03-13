@@ -10,7 +10,6 @@ import { buildABAFromPayRun, type ABAHeader } from "./aba";
 import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, syncBankTransactionsAllTenants, syncBankTransactionsForTenant, pushInvoiceToXero } from "./xero";
 import { requireAuth, hashPassword, comparePasswords } from "./auth";
 import { scanTimesheetPdf, scanRctiPdf } from "./ocr";
-import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from "./rates";
 import {
   gstTripletFromIncl,
   calculatePayg,
@@ -18,7 +17,9 @@ import {
   decomposeCostRate,
   calculatePayrollFeeRevenue,
   calculatePayrollTax,
+  calculateMargin,
   roundMoney, roundPercent,
+  getSuperRate, calculateChargeOutFromPayRate, calculatePayRate,
 } from "./lib/index";
 import { getACTWorkingDays, getACTExpectedHours } from "./act-working-days";
 
@@ -654,6 +655,24 @@ export async function registerRoutes(
           body: `${empName}'s timesheet for ${periodLabel} has been ${newStatus.toLowerCase()}.`,
           actionLabel: "View Timesheet",
           actionRoute: `/timesheets`,
+          employeeId: existing.employeeId,
+        });
+      }
+
+      // Fire HIGH-priority RCTI notification when a discrepancy is detected on link
+      if (updateData.rctiId && updateData.discrepancyStatus &&
+          updateData.discrepancyStatus !== "NONE" && updateData.discrepancyStatus !== "RESOLVED") {
+        const empForRcti = await storage.getEmployee(existing.employeeId);
+        const empRctiName = empForRcti ? `${empForRcti.firstName} ${empForRcti.lastName}` : existing.employeeId;
+        const _mths = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        const _period = `${_mths[(existing.month || 1) - 1]} ${existing.year || ""}`.trim();
+        await storage.createNotification({
+          type: "RCTI",
+          priority: "HIGH",
+          title: "RCTI discrepancy detected",
+          body: `${empRctiName}'s RCTI for ${_period} does not match their timesheet hours. Admin review required.`,
+          actionLabel: "Review Reconciliation",
+          actionRoute: "/timesheets",
           employeeId: existing.employeeId,
         });
       }
@@ -2006,6 +2025,96 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to delete document" });
+    }
+  });
+
+
+  // ── CSV Export ──────────────────────────────────────────────────────────────
+
+  app.get("/api/export/timesheets.csv", async (req, res) => {
+    try {
+      const [allTs, allEmployees, allPlacements] = await Promise.all([
+        storage.getTimesheets(),
+        storage.getEmployees(),
+        storage.getAllPlacements(),
+      ]);
+      const empMap = Object.fromEntries(allEmployees.map(e => [e.id, e]));
+      const plMap: Record<string, typeof allPlacements[0]> = {};
+      for (const p of allPlacements) plMap[p.employeeId] = p;
+
+      const rows = allTs.map(ts => {
+        const emp = empMap[ts.employeeId];
+        const pl = plMap[ts.employeeId];
+        return [
+          ts.id,
+          emp ? `${emp.firstName} ${emp.lastName}` : ts.employeeId,
+          (ts as any).month ?? "",
+          (ts as any).year ?? "",
+          ts.totalHours ?? "",
+          ts.regularHours ?? "",
+          ts.overtimeHours ?? "",
+          ts.grossValue ?? "",
+          ts.status,
+          (ts as any).source ?? "",
+          pl?.clientName ?? emp?.clientName ?? "",
+          (ts as any).discrepancyStatus ?? "",
+          (ts as any).lockedByPayRunId ? "LOCKED" : "",
+          ts.createdAt ? String(ts.createdAt).slice(0, 10) : "",
+        ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",");
+      });
+
+      const header = ["ID","Employee","Month","Year","Total Hours","Regular Hours","OT Hours","Gross Value","Status","Source","Client","Discrepancy","Lock","Created"].join(",");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=\"timesheets.csv\"");
+      res.send([header, ...rows].join("\n"));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Export failed" });
+    }
+  });
+
+  app.get("/api/export/profitability.csv", async (req, res) => {
+    try {
+      const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+      const year = parseInt(req.query.year as string) || new Date().getFullYear();
+      const [allEmployees, allPlacements, allInvoices, allRctis] = await Promise.all([
+        storage.getEmployees(),
+        storage.getAllPlacements(),
+        storage.getInvoices(),
+        storage.getRctis(),
+      ]);
+
+      const periodInvoices = allInvoices.filter(i => i.month === month && i.year === year && i.status !== "VOIDED");
+      const periodRctis = allRctis.filter(r => r.month === month && r.year === year);
+
+      const rows = allPlacements
+        .filter(p => p.status === "ACTIVE")
+        .map(p => {
+          const emp = allEmployees.find(e => e.id === p.employeeId);
+          if (!emp) return null;
+          const empInvs = periodInvoices.filter(i => i.employeeId === emp.id);
+          const empRctis = periodRctis.filter(r => r.employeeId === emp.id);
+          const revenue = empInvs.reduce((s, i) => s + parseFloat(i.amountExclGst || "0"), 0)
+                        + empRctis.reduce((s, r) => s + parseFloat(r.amountExclGst || "0"), 0);
+          const payRate = parseFloat(p.payRate || emp.hourlyRate || "0");
+          const chargeOut = parseFloat(p.chargeOutRate || emp.chargeOutRate || "0");
+          return [
+            emp.firstName + " " + emp.lastName,
+            p.clientName || emp.clientName || "",
+            month, year,
+            chargeOut.toFixed(2),
+            payRate.toFixed(2),
+            revenue.toFixed(2),
+            empInvs.length + empRctis.length,
+          ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",");
+        })
+        .filter(Boolean) as string[];
+
+      const header = ["Employee","Client","Month","Year","Charge-out Rate","Pay Rate","Revenue ex-GST","Invoice/RCTI Count"].join(",");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="profitability-${year}-${String(month).padStart(2,'0')}.csv"`);
+      res.send([header, ...rows].join("\n"));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Export failed" });
     }
   });
 
@@ -3881,10 +3990,16 @@ export async function registerRoutes(
         const costExPayrollTax = totalEmployeeCost;
         const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
 
-        const profitExPayrollTax = roundMoney(revenue - costExPayrollTax);
-        const profitIncPayrollTax = roundMoney(revenue - costIncPayrollTax);
-        const marginExPT = revenue > 0 ? roundPercent((profitExPayrollTax / revenue) * 100) : 0;
-        const marginIncPT = revenue > 0 ? roundPercent((profitIncPayrollTax / revenue) * 100) : 0;
+        const _margin = calculateMargin({
+          revenue,
+          employeeCost: totalEmployeeCost,
+          payrollTaxAmount,
+          payrollFeeRevenue,
+        });
+        const profitExPayrollTax = _margin.profitExPayrollTax;
+        const profitIncPayrollTax = _margin.profitIncPayrollTax;
+        const marginExPT = _margin.marginExPT;
+        const marginIncPT = _margin.marginIncPT;
 
         const clientBankTxns = periodBankTxns.filter(t =>
           !claimedBankTxnIds.has(t.id) &&
@@ -4264,10 +4379,16 @@ export async function registerRoutes(
 
         const costExPayrollTax = totalEmployeeCost;
         const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
-        const profitExPayrollTax = roundMoney(revenue - costExPayrollTax);
-        const profitIncPayrollTax = roundMoney(revenue - costIncPayrollTax);
-        const marginExPT = revenue > 0 ? roundPercent((profitExPayrollTax / revenue) * 100) : 0;
-        const marginIncPT = revenue > 0 ? roundPercent((profitIncPayrollTax / revenue) * 100) : 0;
+        const _margin = calculateMargin({
+          revenue,
+          employeeCost: totalEmployeeCost,
+          payrollTaxAmount,
+          payrollFeeRevenue,
+        });
+        const profitExPayrollTax = _margin.profitExPayrollTax;
+        const profitIncPayrollTax = _margin.profitIncPayrollTax;
+        const marginExPT = _margin.marginExPT;
+        const marginIncPT = _margin.marginIncPT;
 
         const client = clientId ? allClients.find(c => c.id === clientId) : null;
         const clientBankTxns = periodBankTxns.filter(t =>
@@ -6094,7 +6215,6 @@ export async function registerRoutes(
         lineItemsByInvoice[li.invoiceId].push(li);
       }
 
-      const { getSuperRate } = await import("./rates");
       const superRate = getSuperRate(new Date(year, month - 1, 1));
       const superFraction = superRate / 100;
 
@@ -6138,7 +6258,7 @@ export async function registerRoutes(
 
         const rate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
         const gross = Math.round(hours * rate * 100) / 100;
-        const payg = hours > 0 ? Math.round(gross * 0.19 * 100) / 100 : 0;
+        const payg = hours > 0 ? calculatePayg(gross, 'MONTHLY') : 0; // lib/payg.ts
         const superAmt = Math.round(gross * superFraction * 100) / 100;
         const net = Math.round((gross - payg) * 100) / 100;
 
