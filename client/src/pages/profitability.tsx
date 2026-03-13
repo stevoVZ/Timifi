@@ -28,7 +28,7 @@ import {
   DollarSign, Percent, Users, FileText, Wallet, Link2,
   ArrowUpRight, ArrowDownRight, Minus, X, Calculator,
   CreditCard, Receipt, Clock, Plus, Activity, Landmark,
-  ExternalLink, CheckCircle2, AlertCircle, Eye, Paperclip, Loader2,
+  ExternalLink, CheckCircle2, AlertCircle, Eye, Paperclip, Loader2, Download,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -309,16 +309,33 @@ export default function ProfitabilityPage() {
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => autoLinkMutation.mutate()}
-              disabled={autoLinkMutation.isPending}
-              data-testid="button-auto-link"
-            >
-              <Link2 className="w-4 h-4 mr-2" />
-              {autoLinkMutation.isPending ? "Linking..." : "Auto-Link Invoices"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => autoLinkMutation.mutate()}
+                disabled={autoLinkMutation.isPending}
+                data-testid="button-auto-link"
+              >
+                <Link2 className="w-4 h-4 mr-2" />
+                {autoLinkMutation.isPending ? "Linking..." : "Auto-Link Invoices"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const url = `/api/export/profitability.csv?month=${month}&year=${year}`;
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `profitability-${year}-${String(month).padStart(2, "0")}.csv`;
+                  a.click();
+                }}
+                data-testid="button-export-csv"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Export CSV
+              </Button>
+            </div>
           </div>
         </div>
         <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
