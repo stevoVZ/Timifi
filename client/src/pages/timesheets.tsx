@@ -39,6 +39,7 @@ import {
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus, Users,
   ChevronLeft, ChevronRight, Trash2, LayoutGrid, Lock, AlertCircle, Receipt,
   MoreHorizontal, Link2 as LinkIcon, FileCheck, DollarSign,
+  Inbox, FolderOpen, LockOpen, Download,
 } from "lucide-react";
 import type { Timesheet, Employee, Document as DocType } from "@shared/schema";
 
@@ -135,6 +136,14 @@ export default function TimesheetsPage() {
                 <LayoutGrid className="w-3.5 h-3.5" />
                 Reconciliation
               </TabsTrigger>
+              <TabsTrigger value="inbox" className="gap-1.5" data-testid="tab-inbox">
+                <Inbox className="w-3.5 h-3.5" />
+                Inbox
+              </TabsTrigger>
+              <TabsTrigger value="documents" className="gap-1.5" data-testid="tab-documents">
+                <FolderOpen className="w-3.5 h-3.5" />
+                Documents
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="upload">
@@ -151,6 +160,14 @@ export default function TimesheetsPage() {
 
             <TabsContent value="reconciliation">
               <ReconciliationView />
+            </TabsContent>
+
+            <TabsContent value="inbox">
+              <InboxView />
+            </TabsContent>
+
+            <TabsContent value="documents">
+              <DocumentsView />
             </TabsContent>
           </Tabs>
         </div>
@@ -3062,6 +3079,7 @@ function ReconciliationView() {
   const [linkRctiDialog, setLinkRctiDialog] = useState<string | null>(null);
   const [lockDialog, setLockDialog] = useState<string | null>(null);
   const [discrepancyDialog, setDiscrepancyDialog] = useState<string | null>(null);
+  const [unlockDialog, setUnlockDialog] = useState<string | null>(null);
 
   const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
   const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
@@ -3289,6 +3307,7 @@ function ReconciliationView() {
                   const canCreateInvoice = !!(ts && ts.status === "APPROVED" && !inv && !row.isRctiClient);
                   const canLinkRcti = !!(ts && row.isRctiClient && !(ts as any).rctiId);
                   const canLock = !!(ts && ts.status === "APPROVED" && !isLocked);
+                  const canUnlock = !!(ts && isLocked);
                   const canResolveDiscrepancy = !!(hasDiscrepancy && ts && rcti);
 
                   return (
@@ -3390,7 +3409,7 @@ function ReconciliationView() {
 
                         {/* Actions */}
                         <td className="px-3 py-2.5 text-right">
-                          {(canCreateInvoice || canLinkRcti || canLock || canResolveDiscrepancy) ? (
+                          {(canCreateInvoice || canLinkRcti || canLock || canUnlock || canResolveDiscrepancy) ? (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="h-6 w-6">
@@ -3492,5 +3511,359 @@ function ReconciliationView() {
         <div className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-amber-500" /> RCTI discrepancy</div>
       </div>
     </div>
+  );
+}
+
+// ── Inbox View ────────────────────────────────────────────────────────────────
+
+function InboxView() {
+  const { toast } = useToast();
+  const now = new Date();
+  const prevMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+  const prevYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  const pastFifth = now.getDate() > 5;
+
+  const { data: timesheets } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
+  const { data: employees }  = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
+  const { data: placements } = useQuery<any[]>({ queryKey: ["/api/placements"] });
+
+  const approveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/timesheets/${id}`, { status: "APPROVED", changeSource: "INBOX_APPROVE" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      toast({ title: "Timesheet approved" });
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/timesheets/${id}`, { status: "REJECTED", changeSource: "INBOX_REJECT" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      toast({ title: "Timesheet rejected" });
+    },
+  });
+
+  const submitted = useMemo(() => {
+    if (!timesheets) return [];
+    return timesheets.filter(t => t.status === "SUBMITTED");
+  }, [timesheets]);
+
+  const discrepancies = useMemo(() => {
+    if (!timesheets) return [];
+    return timesheets.filter(t => {
+      const ds = (t as any).discrepancyStatus;
+      return ds && ds !== "NONE" && ds !== "RESOLVED";
+    });
+  }, [timesheets]);
+
+  const missing = useMemo(() => {
+    if (!employees || !timesheets || !placements || !pastFifth) return [];
+    const activeEmps = employees.filter(e => e.status === "ACTIVE");
+    const result: { employee: Employee; clientName: string }[] = [];
+    for (const emp of activeEmps) {
+      const hasTs = timesheets.some(t =>
+        t.employeeId === emp.id &&
+        (t as any).month === prevMonth &&
+        (t as any).year === prevYear
+      );
+      if (!hasTs) {
+        const pl = (placements || []).find((p: any) => p.employeeId === emp.id && p.status === "ACTIVE");
+        result.push({ employee: emp, clientName: pl?.clientName || "\u2014" });
+      }
+    }
+    return result;
+  }, [employees, timesheets, placements, pastFifth, prevMonth, prevYear]);
+
+  const empName = (id: string) => {
+    const e = employees?.find(e => e.id === id);
+    return e ? `${e.firstName} ${e.lastName}` : id;
+  };
+
+  const total = submitted.length + discrepancies.length + missing.length;
+
+  return (
+    <div className="space-y-6">
+      {total === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <CheckCircle className="w-10 h-10 mb-3 text-green-500 opacity-60" />
+          <p className="text-sm font-medium">All clear \u2014 no items need attention</p>
+        </div>
+      ) : (
+        <>
+          {submitted.length > 0 && (
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <Clock className="w-4 h-4 text-amber-500" />
+                <h2 className="text-sm font-semibold">Awaiting Approval ({submitted.length})</h2>
+              </div>
+              <div className="border rounded-lg overflow-hidden divide-y">
+                {submitted.map(ts => (
+                  <div key={ts.id} className="flex items-center justify-between px-4 py-3 bg-card hover:bg-muted/30">
+                    <div>
+                      <p className="text-sm font-medium">{empName(ts.employeeId)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {MONTHS[(ts as any).month || 0]} {(ts as any).year} \u00b7 {(ts as any).totalHours ?? "\u2014"} hrs
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" className="h-7 text-xs text-green-700 border-green-300 hover:bg-green-50 dark:hover:bg-green-950"
+                        disabled={approveMutation.isPending} onClick={() => approveMutation.mutate(ts.id)}>
+                        <CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7 text-xs text-red-700 border-red-300 hover:bg-red-50 dark:hover:bg-red-950"
+                        disabled={rejectMutation.isPending} onClick={() => rejectMutation.mutate(ts.id)}>
+                        <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {discrepancies.length > 0 && (
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <AlertCircle className="w-4 h-4 text-amber-500" />
+                <h2 className="text-sm font-semibold">RCTI Discrepancies ({discrepancies.length})</h2>
+              </div>
+              <div className="border rounded-lg overflow-hidden divide-y">
+                {discrepancies.map(ts => (
+                  <div key={ts.id} className="flex items-center justify-between px-4 py-3 bg-amber-50/50 dark:bg-amber-900/10">
+                    <div>
+                      <p className="text-sm font-medium">{empName(ts.employeeId)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {MONTHS[(ts as any).month || 0]} {(ts as any).year} \u00b7 {(ts as any).discrepancyStatus}
+                      </p>
+                    </div>
+                    <span className="text-xs text-amber-600 font-medium">Resolve in Reconciliation</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {missing.length > 0 && (
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle className="w-4 h-4 text-red-500" />
+                <h2 className="text-sm font-semibold">Missing for {MONTHS[prevMonth]} {prevYear} ({missing.length})</h2>
+              </div>
+              <div className="border rounded-lg overflow-hidden divide-y">
+                {missing.map(({ employee, clientName }) => (
+                  <div key={employee.id} className="flex items-center justify-between px-4 py-3 bg-red-50/40 dark:bg-red-900/10">
+                    <div>
+                      <p className="text-sm font-medium">{employee.firstName} {employee.lastName}</p>
+                      <p className="text-xs text-muted-foreground">{clientName}</p>
+                    </div>
+                    <span className="text-xs text-red-500 font-medium">No timesheet submitted</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Documents View ─────────────────────────────────────────────────────────────
+
+function DocumentsView() {
+  const [search, setSearch] = useState("");
+  const [viewerData, setViewerData] = useState<string | null>(null);
+  const [viewerTitle, setViewerTitle] = useState("");
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  const { data: timesheets } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
+  const { data: employees }  = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
+
+  const tsIds = useMemo(() => (timesheets || []).map(t => t.id), [timesheets]);
+
+  const { data: allDocs, isLoading } = useQuery<Record<string, DocType[]>>({
+    queryKey: ["/api/docs-all-batch", tsIds.length],
+    queryFn: async () => {
+      if (tsIds.length === 0) return {};
+      const results: Record<string, DocType[]> = {};
+      await Promise.all(tsIds.map(async id => {
+        try {
+          const res = await fetch(`/api/timesheets/${id}/documents`, { credentials: "include" });
+          if (res.ok) { const docs = await res.json(); if (docs.length > 0) results[id] = docs; }
+        } catch {}
+      }));
+      return results;
+    },
+    enabled: tsIds.length > 0,
+    staleTime: 60_000,
+  });
+
+  const empName = (id: string) => {
+    const e = employees?.find(e => e.id === id);
+    return e ? `${e.firstName} ${e.lastName}` : id;
+  };
+
+  const rows = useMemo(() => {
+    if (!allDocs || !timesheets) return [];
+    const out: { ts: Timesheet; doc: DocType; employee: string; label: string }[] = [];
+    for (const [tsId, docs] of Object.entries(allDocs)) {
+      const ts = timesheets.find(t => t.id === tsId);
+      if (!ts) continue;
+      const emp = empName(ts.employeeId);
+      const label = `${emp} \u2014 ${MONTHS[(ts as any).month || 0]} ${(ts as any).year}`;
+      for (const doc of docs) out.push({ ts, doc, employee: emp, label });
+    }
+    out.sort((a, b) => {
+      const yDiff = ((b.ts as any).year || 0) - ((a.ts as any).year || 0);
+      if (yDiff !== 0) return yDiff;
+      const mDiff = ((b.ts as any).month || 0) - ((a.ts as any).month || 0);
+      if (mDiff !== 0) return mDiff;
+      return a.employee.localeCompare(b.employee);
+    });
+    return out;
+  }, [allDocs, timesheets, employees]);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return rows;
+    const q = search.toLowerCase();
+    return rows.filter(r => r.label.toLowerCase().includes(q) || (r.doc.name || "").toLowerCase().includes(q));
+  }, [rows, search]);
+
+  const openDoc = (doc: DocType) => {
+    setViewerData(doc.fileUrl);
+    setViewerTitle(doc.name || "Document");
+    setViewerOpen(true);
+  };
+
+  const downloadDoc = (doc: DocType) => {
+    const href = doc.fileUrl.startsWith("data:") ? doc.fileUrl : `data:application/pdf;base64,${doc.fileUrl}`;
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = doc.name || "document.pdf";
+    a.click();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-muted-foreground" />
+          <Input className="pl-8 h-8 text-sm" placeholder="Search by employee or period\u2026"
+            value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <span className="text-xs text-muted-foreground">{filtered.length} document{filtered.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <FolderOpen className="w-10 h-10 mb-3 opacity-30" />
+          <p className="text-sm">{search ? "No documents match your search" : "No documents uploaded yet"}</p>
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden divide-y">
+          {filtered.map(({ ts, doc, label }, idx) => (
+            <div key={`${ts.id}-${idx}`} className="flex items-center justify-between px-4 py-3 hover:bg-muted/30">
+              <div className="flex items-center gap-3">
+                <FileText className="w-4 h-4 text-violet-500 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">{doc.name || "Document"}</p>
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                </div>
+              </div>
+              <div className="flex gap-1">
+                <Button size="icon" variant="ghost" className="h-7 w-7" title="View" onClick={() => openDoc(doc)}>
+                  <Eye className="w-3.5 h-3.5" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" title="Download" onClick={() => downloadDoc(doc)}>
+                  <Download className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <PdfViewerDialog open={viewerOpen} onClose={() => setViewerOpen(false)} pdfData={viewerData} title={viewerTitle} />
+    </div>
+  );
+}
+
+// ── Unlock Timesheet Dialog ────────────────────────────────────────────────────
+
+function UnlockTimesheetDialog({
+  employee, ts, open, onClose,
+}: {
+  employee: Employee;
+  ts: Timesheet;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleUnlock = async () => {
+    if (!reason.trim()) {
+      toast({ title: "Reason required", description: "Please provide a reason for unlocking.", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiRequest("PATCH", `/api/timesheets/${ts.id}`, {
+        lockedByPayRunId: null,
+        changeSource: "PAYROLL_UNLOCK",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      toast({ title: "Timesheet unlocked", description: `Reason: ${reason}` });
+      onClose();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message || "Failed to unlock", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Unlock Timesheet</DialogTitle>
+          <DialogDescription>
+            {employee.firstName} {employee.lastName} \u2014 {(ts as any).month ? MONTHS[(ts as any).month] : ""} {(ts as any).year}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <p className="text-sm text-muted-foreground">
+            This timesheet is locked for payroll. A reason is required before unlocking.
+          </p>
+          <div className="space-y-1.5">
+            <Label>Reason for unlocking <span className="text-red-500">*</span></Label>
+            <Input
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              placeholder="e.g. Hours correction required"
+              className="text-sm"
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button size="sm" onClick={handleUnlock} disabled={saving || !reason.trim()}
+            className="bg-amber-600 hover:bg-amber-700 text-white">
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <LockOpen className="w-3.5 h-3.5 mr-1" />}
+            Unlock
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
