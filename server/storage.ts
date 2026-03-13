@@ -105,10 +105,12 @@ export interface IStorage {
     paidInvoiceCount: number;
     outstandingInvoiceAmount: string;
     overdueAmount: string;
+    overdueInvoices: number;
     payRunCount: number;
     payRunTotalGross: string;
     latestPayRunDate: string | null;
     submittedTimesheets: number;
+    rctiDiscrepancies: number;
     ytdBillings: string;
   }>;
 
@@ -572,6 +574,19 @@ export class DatabaseStorage implements IStorage {
         )
       );
 
+    const [overdueInvoicesResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(invoices)
+      .where(and(eq(invoices.status, "OVERDUE"), tCond(invoices)));
+
+    const [rctiDiscrepanciesResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(timesheets)
+      .where(and(
+        sql`discrepancy_status NOT IN ('NONE', 'RESOLVED') AND discrepancy_status IS NOT NULL`,
+        tCond(timesheets)
+      ));
+
     return {
       activeEmployees: activeResult?.count || 0,
       pendingEmployees: pendingResult?.count || 0,
@@ -581,10 +596,12 @@ export class DatabaseStorage implements IStorage {
       paidInvoiceCount: paidResult?.count || 0,
       outstandingInvoiceAmount: outstandingResult?.total || "0",
       overdueAmount: overdueResult?.total || "0",
+      overdueInvoices: overdueInvoicesResult?.count || 0,
       payRunCount: payRunFYResult?.count || 0,
       payRunTotalGross: payRunFYResult?.totalGross || "0",
       latestPayRunDate: latestPayRun[0]?.payDate || null,
       submittedTimesheets: submittedResult?.count || 0,
+      rctiDiscrepancies: rctiDiscrepanciesResult?.count || 0,
       ytdBillings: ytdBillingsResult?.total || "0",
     };
   }
