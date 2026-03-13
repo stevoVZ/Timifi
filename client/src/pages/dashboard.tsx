@@ -7,7 +7,7 @@ import { Link } from "wouter";
 import {
   Users, Clock, FileText, CreditCard, ArrowRight,
   Upload, Receipt, UserPlus, Briefcase,
-  Bell, ShieldCheck, DollarSign,
+  Bell, ShieldCheck, DollarSign, AlertTriangle,
 } from "lucide-react";
 import type { Employee, Notification, Invoice, PayRun } from "@shared/schema";
 
@@ -24,6 +24,8 @@ interface DashboardStats {
   payRunTotalGross: string;
   latestPayRunDate: string | null;
   submittedTimesheets: number;
+  rctiDiscrepancies: number;
+  overdueInvoices: number;
   ytdBillings: string;
 }
 
@@ -146,6 +148,28 @@ export default function DashboardPage() {
     },
   ] : [];
 
+  // Urgency alerts derived from stats
+  const urgencyAlerts = stats ? [
+    stats.submittedTimesheets > 0 && {
+      label: `${stats.submittedTimesheets} timesheet${stats.submittedTimesheets !== 1 ? "s" : ""} awaiting approval`,
+      href: "/timesheets",
+      color: "text-amber-700 dark:text-amber-400",
+      bg: "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800",
+    },
+    stats.rctiDiscrepancies > 0 && {
+      label: `${stats.rctiDiscrepancies} RCTI discrepanc${stats.rctiDiscrepancies !== 1 ? "ies" : "y"} need review`,
+      href: "/timesheets",
+      color: "text-red-700 dark:text-red-400",
+      bg: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800",
+    },
+    stats.overdueInvoices > 0 && {
+      label: `${stats.overdueInvoices} overdue invoice${stats.overdueInvoices !== 1 ? "s" : ""} (${formatCurrency(stats.overdueAmount)})`,
+      href: "/invoices",
+      color: "text-red-700 dark:text-red-400",
+      bg: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800",
+    },
+  ].filter(Boolean) as { label: string; href: string; color: string; bg: string }[] : [];
+
   const quickLinks = [
     { title: "Upload timesheets", desc: "Drop PDFs for one or more employees", href: "/timesheets", icon: Upload, color: "text-primary", bgColor: "bg-primary/10" },
     { title: "View invoices", desc: "Browse all synced Xero invoices", href: "/invoices", icon: Receipt, color: "text-amber-600", bgColor: "bg-amber-50 dark:bg-amber-900/20" },
@@ -190,6 +214,19 @@ export default function DashboardPage() {
                   </Link>
                 ))}
           </div>
+
+          {urgencyAlerts.length > 0 && (
+            <div className="space-y-2" data-testid="urgency-alerts">
+              {urgencyAlerts.map((alert) => (
+                <Link key={alert.label} href={alert.href}>
+                  <div className={`flex items-center gap-2.5 rounded-lg border px-4 py-2.5 text-sm font-medium cursor-pointer hover:opacity-80 transition-opacity ${alert.bg}`}>
+                    <AlertTriangle className={`w-4 h-4 shrink-0 ${alert.color}`} />
+                    <span className={alert.color}>{alert.label}</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-6">
