@@ -1,6 +1,6 @@
 import { XeroClient } from "xero-node";
 import { storage } from "./storage";
-import { getSuperRate, calculateChargeOutFromPayRate } from "./rates";
+import { getSuperRate, calculateChargeOutFromPayRate } from "./lib/index";
 import crypto from "crypto";
 import type { InsertPayslipLine } from "@shared/schema";
 
