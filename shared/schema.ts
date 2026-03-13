@@ -598,6 +598,7 @@ export const rctis = pgTable("rctis", {
   receivedDate: date("received_date"),
   bankTransactionId: varchar("bank_transaction_id"),
   status: rctiStatusEnum("status").notNull().default("DRAFT"),
+  source: text("source").default("MANUAL"),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
