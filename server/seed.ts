@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { users, settings, employees, timesheets, invoices, payRuns, payRunLines, documents, notifications, messages, leaveRequests, payItems } from "@shared/schema";
-import { sql, isNull } from "drizzle-orm";
+import { sql, isNull, eq } from "drizzle-orm";
 import { hashPassword } from "./auth";
 
 export async function seedDatabase() {
@@ -29,6 +29,25 @@ export async function seedDatabase() {
       { key: "portal_enabled", value: "true" },
       { key: "portal_self_service", value: "true" },
     ]);
+  }
+
+  // ── Business rules config keys (upsert — safe to run on every startup) ──────
+  // These are additive: only inserted if the key doesn't already exist.
+  const businessRulesKeys = [
+    { key: "rcti_discrepancy_threshold_hours", value: "0.5",    description: "Hours delta between RCTI and timesheet that triggers a discrepancy notification" },
+    { key: "invoice_payment_terms_days",       value: "14",     description: "Default number of days from invoice date to due date" },
+    { key: "default_invoice_account_code",     value: "200",    description: "Default Xero account code applied to new invoice line items" },
+    { key: "invoice_default_tax_type",         value: "OUTPUT", description: "Default GST tax type on invoice line items (OUTPUT = GST on Income)" },
+    { key: "payroll_lock_requires_confirmation", value: "true", description: "Whether admin must confirm before locking a timesheet for payroll" },
+  ];
+
+  const existingKeys = await db.select({ key: settings.key }).from(settings);
+  const existingKeySet = new Set(existingKeys.map(s => s.key));
+
+  const toInsert = businessRulesKeys.filter(k => !existingKeySet.has(k.key));
+  if (toInsert.length > 0) {
+    console.log(`Seeding ${toInsert.length} business rules settings key(s):`, toInsert.map(k => k.key));
+    await db.insert(settings).values(toInsert.map(({ key, value }) => ({ key, value })));
   }
 }
 
