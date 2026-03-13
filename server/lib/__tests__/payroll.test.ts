@@ -46,9 +46,13 @@ describe("calculatePayrollFeeRevenue", () => {
 });
 
 describe("calculatePayrollTax", () => {
-  const rates = { ACT: 6.85, NSW: 5.45 };
+  // ratesByState uses DECIMAL rates (0.0685 = 6.85%) — matches lib signature
+  const rates = { ACT: 0.0685, NSW: 0.0545 };
   it("ACT 6.85% on 100000 = 6850", () => {
     expect(calculatePayrollTax({ taxableBase: 100000, state: "ACT", ratesByState: rates })).toBe(6850);
+  });
+  it("NSW 5.45% on 50000 = 2725", () => {
+    expect(calculatePayrollTax({ taxableBase: 50000, state: "NSW", ratesByState: rates })).toBe(2725);
   });
   it("null state => 0", () => {
     expect(calculatePayrollTax({ taxableBase: 100000, state: null, ratesByState: rates })).toBe(0);
