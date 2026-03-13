@@ -37,7 +37,7 @@ import {
   Plus, Search, Clock, FileText, CheckCircle, AlertTriangle, XCircle,
   Mail, Upload, UserCheck, Monitor, Paperclip, ChevronDown, ChevronUp,
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus, Users,
-  ChevronLeft, ChevronRight, Trash2,
+  ChevronLeft, ChevronRight, Trash2, LayoutGrid, Lock, AlertCircle, Receipt,
 } from "lucide-react";
 import type { Timesheet, Employee, Document as DocType } from "@shared/schema";
 
@@ -130,6 +130,10 @@ export default function TimesheetsPage() {
                 <Users className="w-3.5 h-3.5" />
                 Monthly Hours
               </TabsTrigger>
+              <TabsTrigger value="reconciliation" className="gap-1.5" data-testid="tab-reconciliation">
+                <LayoutGrid className="w-3.5 h-3.5" />
+                Reconciliation
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="upload">
@@ -142,6 +146,10 @@ export default function TimesheetsPage() {
 
             <TabsContent value="monthly">
               <MonthlyHoursView />
+            </TabsContent>
+
+            <TabsContent value="reconciliation">
+              <ReconciliationView />
             </TabsContent>
           </Tabs>
         </div>
@@ -2514,6 +2522,469 @@ function MonthlyHoursView() {
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ── Reconciliation Grid ───────────────────────────────────────────────────────
+
+type InvoiceRow = {
+  id: string;
+  timesheetId: string | null;
+  status: string;
+  invoiceNumber: string | null;
+  amountDue: string | null;
+  invoiceType: string | null;
+};
+
+type RctiRow = {
+  id: string;
+  employeeId: string | null;
+  clientId: string | null;
+  month: number;
+  year: number;
+  hours: string | null;
+  amountExclGst: string;
+  status: string;
+  reference: string | null;
+};
+
+type ClientRow = {
+  id: string;
+  name: string;
+  isRcti: boolean;
+};
+
+const SOURCE_BADGES: Record<string, { label: string; cls: string }> = {
+  XERO_SYNC:   { label: "Xero",   cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" },
+  PDF_UPLOAD:  { label: "PDF",    cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300" },
+  ADMIN_ENTRY: { label: "Admin",  cls: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400" },
+  PORTAL:      { label: "Portal", cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" },
+  RCTI:        { label: "RCTI",   cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" },
+};
+
+const STATUS_NEXT: Record<string, string | null> = {
+  DRAFT: "SUBMITTED",
+  SUBMITTED: null,
+  APPROVED: null,
+  REJECTED: "DRAFT",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  DRAFT:     "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+  SUBMITTED: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+  APPROVED:  "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
+  REJECTED:  "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+};
+
+function RowStatusBadge({ ts, onApprove, onReject, isPending }: {
+  ts: Timesheet | null;
+  onApprove: () => void;
+  onReject: () => void;
+  isPending: boolean;
+}) {
+  if (!ts) return <span className="text-xs text-muted-foreground">—</span>;
+  const status = ts.status as string;
+  const cls = STATUS_COLORS[status] || STATUS_COLORS.DRAFT;
+
+  return (
+    <div className="flex items-center gap-1">
+      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>
+        {isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+        {status}
+      </span>
+      {status === "SUBMITTED" && (
+        <>
+          <button
+            title="Approve"
+            onClick={onApprove}
+            disabled={isPending}
+            className="h-5 w-5 rounded flex items-center justify-center text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 disabled:opacity-40"
+          >
+            <CheckCircle className="w-3.5 h-3.5" />
+          </button>
+          <button
+            title="Reject"
+            onClick={onReject}
+            disabled={isPending}
+            className="h-5 w-5 rounded flex items-center justify-center text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReconciliationView() {
+  const { toast } = useToast();
+  const now = new Date();
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState<"all" | "missing" | "needs-action" | "done">("all");
+
+  const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
+  const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
+  const { data: placements } = useQuery<PlacementData[]>({ queryKey: ["/api/placements"] });
+  const { data: clients } = useQuery<ClientRow[]>({ queryKey: ["/api/clients"] });
+  const { data: invoices } = useQuery<InvoiceRow[]>({ queryKey: ["/api/invoices"] });
+  const { data: rctis } = useQuery<RctiRow[]>({ queryKey: ["/api/rctis"] });
+
+  const prevMonth = () => { if (month === 1) { setMonth(12); setYear(y => y - 1); } else setMonth(m => m - 1); };
+  const nextMonth = () => { if (month === 12) { setMonth(1); setYear(y => y + 1); } else setMonth(m => m + 1); };
+
+  const periodStart = new Date(year, month - 1, 1);
+  const periodEnd   = new Date(year, month, 0);
+
+  const activeEmployees = (employees || []).filter(e => e.status === "ACTIVE");
+
+  // Build placement rows for this period — same logic as MonthlyHoursView
+  const rows = useMemo(() => {
+    const result: {
+      employee: Employee;
+      placement: PlacementData | null;
+      clientName: string;
+      clientId: string | null;
+      isRctiClient: boolean;
+      rowKey: string;
+    }[] = [];
+
+    for (const emp of activeEmployees) {
+      const empPlacements = (placements || []).filter(p => {
+        if (p.employeeId !== emp.id) return false;
+        if (p.status !== "ACTIVE" && p.status !== "ENDED") return false;
+        if (p.startDate && new Date(p.startDate) > periodEnd) return false;
+        if (p.endDate && new Date(p.endDate) < periodStart) return false;
+        return true;
+      });
+
+      if (empPlacements.length > 0) {
+        for (const p of empPlacements) {
+          const client = (clients || []).find(c => c.id === p.clientId);
+          result.push({
+            employee: emp,
+            placement: p,
+            clientName: p.clientName || client?.name || "Unknown",
+            clientId: p.clientId,
+            isRctiClient: client?.isRcti ?? false,
+            rowKey: `${emp.id}__${p.id}`,
+          });
+        }
+      } else {
+        result.push({
+          employee: emp,
+          placement: null,
+          clientName: "",
+          clientId: null,
+          isRctiClient: false,
+          rowKey: emp.id,
+        });
+      }
+    }
+
+    return result.sort((a, b) => {
+      const na = `${a.employee.firstName} ${a.employee.lastName}`;
+      const nb = `${b.employee.firstName} ${b.employee.lastName}`;
+      return na !== nb ? na.localeCompare(nb) : a.clientName.localeCompare(b.clientName);
+    });
+  }, [activeEmployees, placements, clients, month, year]);
+
+  const getTimesheet = useCallback((empId: string, placementId: string | null, hasMultiple: boolean): Timesheet | null => {
+    if (!timesheets) return null;
+    if (placementId) {
+      const byP = timesheets.find(t => t.employeeId === empId && (t as any).placementId === placementId && t.month === month && t.year === year);
+      if (byP) return byP;
+      if (!hasMultiple) {
+        return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
+      }
+      return null;
+    }
+    return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
+  }, [timesheets, month, year]);
+
+  const getRcti = (empId: string, clientId: string | null): RctiRow | null => {
+    if (!clientId || !rctis) return null;
+    return rctis.find(r => r.employeeId === empId && r.clientId === clientId && r.month === month && r.year === year) || null;
+  };
+
+  const getInvoice = (tsId: string | undefined): InvoiceRow | null => {
+    if (!tsId || !invoices) return null;
+    return invoices.find(inv => inv.timesheetId === tsId) || null;
+  };
+
+  // Status mutation
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      setPendingIds(s => new Set(s).add(id));
+      const res = await apiRequest("PATCH", `/api/timesheets/${id}`, { status, changeSource: "STATUS_CHANGE" });
+      return res.json();
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      setPendingIds(s => { const n = new Set(s); n.delete(vars.id); return n; });
+    },
+    onError: (err: Error, vars) => {
+      setPendingIds(s => { const n = new Set(s); n.delete(vars.id); return n; });
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const empHasMultiplePlacements = (empId: string) =>
+    rows.filter(r => r.employee.id === empId && r.placement).length > 1;
+
+  // Row state classification
+  const classify = (ts: Timesheet | null, rcti: RctiRow | null, isRctiClient: boolean): "missing" | "needs-action" | "in-progress" | "done" => {
+    if (!ts && !rcti) return "missing";
+    if (ts?.status === "SUBMITTED") return "needs-action";
+    if (ts?.status === "REJECTED") return "needs-action";
+    if (ts?.status === "DRAFT") return "in-progress";
+    if (ts?.status === "APPROVED") return "done";
+    if (isRctiClient && rcti) return "done";
+    return "in-progress";
+  };
+
+  const ROW_COLORS: Record<string, string> = {
+    missing:      "bg-red-50/60 dark:bg-red-950/20 hover:bg-red-50 dark:hover:bg-red-950/30",
+    "needs-action": "bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/30",
+    "in-progress": "hover:bg-muted/50",
+    done:         "bg-green-50/40 dark:bg-green-950/10 hover:bg-green-50/60 dark:hover:bg-green-950/20",
+  };
+
+  const filteredRows = rows.filter(row => {
+    if (filter === "all") return true;
+    const ts = getTimesheet(row.employee.id, row.placement?.id || null, empHasMultiplePlacements(row.employee.id));
+    const rcti = getRcti(row.employee.id, row.clientId);
+    const state = classify(ts, rcti, row.isRctiClient);
+    if (filter === "missing") return state === "missing";
+    if (filter === "needs-action") return state === "needs-action";
+    if (filter === "done") return state === "done";
+    return true;
+  });
+
+  // Counts for filter badges
+  const counts = useMemo(() => {
+    const c = { missing: 0, "needs-action": 0, done: 0 };
+    for (const row of rows) {
+      const ts = getTimesheet(row.employee.id, row.placement?.id || null, empHasMultiplePlacements(row.employee.id));
+      const rcti = getRcti(row.employee.id, row.clientId);
+      const state = classify(ts, rcti, row.isRctiClient);
+      if (state === "missing") c.missing++;
+      else if (state === "needs-action") c["needs-action"]++;
+      else if (state === "done") c.done++;
+    }
+    return c;
+  }, [rows, timesheets, rctis, month, year]);
+
+  const INVOICE_STATUS_COLORS: Record<string, string> = {
+    DRAFT:    "bg-gray-100 text-gray-600",
+    SENT:     "bg-blue-100 text-blue-700",
+    AUTHORISED: "bg-blue-100 text-blue-700",
+    PAID:     "bg-green-100 text-green-700",
+    VOIDED:   "bg-red-100 text-red-700",
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Period selector */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={prevMonth} className="h-8 w-8">
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <span className="text-sm font-semibold min-w-[110px] text-center">
+            {MONTHS[month]} {year}
+          </span>
+          <Button variant="outline" size="icon" onClick={nextMonth} className="h-8 w-8">
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
+
+        {/* Filter buttons */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {([
+            ["all",          "All",          null,                     ""],
+            ["missing",      "Missing",      counts.missing,           "text-red-600"],
+            ["needs-action", "Needs Action", counts["needs-action"],   "text-amber-600"],
+            ["done",         "Done",         counts.done,              "text-green-600"],
+          ] as const).map(([val, label, count, cls]) => (
+            <button
+              key={val}
+              onClick={() => setFilter(val)}
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium border transition-colors
+                ${filter === val
+                  ? "bg-foreground text-background border-foreground"
+                  : "bg-background border-border hover:bg-muted"}`}
+            >
+              {label}
+              {count !== null && count > 0 && (
+                <span className={`text-[10px] font-bold ${filter === val ? "" : cls}`}>{count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Grid */}
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-12 rounded-md bg-muted animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-md border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/60 border-b text-xs text-muted-foreground">
+                <th className="text-left px-3 py-2.5 font-medium">Employee</th>
+                <th className="text-left px-3 py-2.5 font-medium">Client</th>
+                <th className="text-left px-3 py-2.5 font-medium">Source</th>
+                <th className="text-right px-3 py-2.5 font-medium">Hours</th>
+                <th className="text-left px-3 py-2.5 font-medium">Status</th>
+                <th className="text-left px-3 py-2.5 font-medium">Invoice / RCTI</th>
+                <th className="text-left px-3 py-2.5 font-medium">Flags</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-center py-12 text-sm text-muted-foreground">
+                    {filter === "all" ? "No active employees with placements this period." : `No ${filter} rows this period.`}
+                  </td>
+                </tr>
+              ) : (
+                filteredRows.map(row => {
+                  const hasMultiple = empHasMultiplePlacements(row.employee.id);
+                  const ts = getTimesheet(row.employee.id, row.placement?.id || null, hasMultiple);
+                  const rcti = getRcti(row.employee.id, row.clientId);
+                  const inv = ts ? getInvoice(ts.id) : null;
+                  const state = classify(ts, rcti, row.isRctiClient);
+                  const src = ts ? ((ts as any).source as string | null) : null;
+                  const srcBadge = src ? SOURCE_BADGES[src] : null;
+                  const isLocked = !!(ts && (ts as any).lockedByPayRunId);
+                  const hasDiscrepancy = ts && (ts as any).discrepancyStatus && (ts as any).discrepancyStatus !== "NONE";
+                  const isPending = !!(ts && pendingIds.has(ts.id));
+
+                  return (
+                    <tr key={row.rowKey} className={`border-b last:border-b-0 ${ROW_COLORS[state]}`}>
+                      {/* Employee */}
+                      <td className="px-3 py-2.5">
+                        <div className="font-medium text-sm">
+                          {row.employee.firstName} {row.employee.lastName}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                          {row.employee.paymentMethod === "INVOICE" ? "Contractor" : "Payroll"}
+                        </div>
+                      </td>
+
+                      {/* Client */}
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-1">
+                          <span className="text-sm">{row.clientName || "—"}</span>
+                          {row.isRctiClient && (
+                            <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                              RCTI
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Source */}
+                      <td className="px-3 py-2.5">
+                        {srcBadge ? (
+                          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${srcBadge.cls}`}>
+                            {srcBadge.label}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
+
+                      {/* Hours */}
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {ts ? (
+                          <div>
+                            <span className="font-medium">{parseFloat(ts.totalHours || "0").toFixed(1)}</span>
+                            <span className="text-muted-foreground text-xs">h</span>
+                            {parseFloat(ts.overtimeHours || "0") > 0 && (
+                              <div className="text-[10px] text-muted-foreground">
+                                +{parseFloat(ts.overtimeHours || "0").toFixed(1)}h OT
+                              </div>
+                            )}
+                          </div>
+                        ) : rcti ? (
+                          <div>
+                            <span className="font-medium">{parseFloat(rcti.hours || "0").toFixed(1)}</span>
+                            <span className="text-muted-foreground text-xs">h</span>
+                            <div className="text-[10px] text-amber-600">via RCTI</div>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-3 py-2.5">
+                        <RowStatusBadge
+                          ts={ts}
+                          isPending={isPending}
+                          onApprove={() => ts && statusMutation.mutate({ id: ts.id, status: "APPROVED" })}
+                          onReject={() => ts && statusMutation.mutate({ id: ts.id, status: "REJECTED" })}
+                        />
+                      </td>
+
+                      {/* Invoice / RCTI */}
+                      <td className="px-3 py-2.5">
+                        {inv ? (
+                          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${INVOICE_STATUS_COLORS[inv.status] || "bg-gray-100 text-gray-600"}`}>
+                            {inv.invoiceNumber || inv.status}
+                          </span>
+                        ) : rcti && row.isRctiClient ? (
+                          <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                            <Receipt className="w-2.5 h-2.5" />
+                            {rcti.reference || "RCTI"}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
+
+                      {/* Flags */}
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-1">
+                          {isLocked && (
+                            <span title="Locked for payroll" className="text-muted-foreground">
+                              <Lock className="w-3 h-3" />
+                            </span>
+                          )}
+                          {hasDiscrepancy && (
+                            <span title={`RCTI discrepancy: ${(ts as any).discrepancyStatus}`} className="text-amber-500">
+                              <AlertCircle className="w-3 h-3" />
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 text-[10px] text-muted-foreground flex-wrap">
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-200 dark:bg-red-900/40" /> Missing timesheet</div>
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-200 dark:bg-amber-900/40" /> Needs action (submitted or rejected)</div>
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-white border dark:bg-transparent" /> In progress</div>
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-green-200 dark:bg-green-900/40" /> Approved / complete</div>
+        <div className="flex items-center gap-1"><Lock className="w-3 h-3" /> Payroll locked</div>
+        <div className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-amber-500" /> RCTI discrepancy</div>
+      </div>
     </div>
   );
 }
