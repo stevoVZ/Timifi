@@ -1195,6 +1195,7 @@ function RctiUploadDialog({
           reference: i.reference,
           receivedDate: scanDate || null,
           status: "RECEIVED" as const,
+          source: "PDF_SCAN" as const,
         };
       });
 
