@@ -1,13 +1,13 @@
 # Timifi -- System State Reference
 
-> Last reconciled: March 2026 (sessions 1-5 complete)
+> Last reconciled: March 2026 (sessions 1-7 complete)
 > Single authoritative reference for what is built and what remains.
 
 ---
 
 ## 1. What Is Built
 
-### Schema -- 24 tables, Phase 1 additions applied via db:push
+### Schema -- 27 tables, all columns applied via db:push
 
 | Table | Column | Notes |
 |---|---|---|
@@ -16,6 +16,9 @@
 | `timesheets` | `discrepancy_status` | text, DEFAULT 'NONE' |
 | `rctis` | `timesheet_id` | FK -> timesheets.id, nullable |
 | `rctis` | `source` | text, DEFAULT 'MANUAL' |
+
+Enums updated:
+- `notificationTypeEnum`: added `RCTI` value (db:push required on next deploy)
 
 ### Settings keys (seeded via server/seed.ts, idempotent)
 
@@ -27,7 +30,7 @@
 | `invoice_default_tax_type` | `OUTPUT` |
 | `payroll_lock_requires_confirmation` | `true` |
 
-### Business Logic Layer -- server/lib/ (complete, wired into routes)
+### Business Logic Layer -- server/lib/ (complete, fully wired)
 
 | Module | Key exports |
 |---|---|
@@ -40,94 +43,98 @@
 | `timesheet.ts` | `hasRctiDiscrepancy()`, source precedence |
 | `invoice.ts` | `buildInvoiceLinesFromTimesheet()`, due date calc |
 
-`server/rates.ts` is now a re-export shim -> `server/lib/super.ts`.
-All inline formulas in `routes.ts` replaced with lib imports (Phase 5 complete).
+`server/rates.ts` is now a **tombstone** (blank export). All consumers import from `./lib/index` directly.
 
 ### Unit Tests -- server/lib/__tests__/ (npm test)
 
-Requires `npm install` on Replit to pull vitest.
+95/95 passing. All test bugs fixed (float rounding, GST tolerance, payroll tax rate units).
 
-| File | Coverage |
+### Routes -- server/routes.ts (6311 lines, Phase 5+6 complete)
+
+All inline business logic formulas replaced with lib calls:
+- PAYG: `calculatePayg(gross, 'MONTHLY')` (was `gross * 0.19`)
+- Margin: `calculateMargin({ revenue, employeeCost, payrollTaxAmount, payrollFeeRevenue })`
+- RCTI discrepancy fires `HIGH` priority `RCTI`-type notification when linked with hours mismatch
+
+### CSV Export Endpoints
+
+| Route | Description |
 |---|---|
-| `calc.test.ts` | Rounding, parsing, all GST helpers |
-| `super.test.ts` | FY calc, rate schedule, decomposeCostRate both modes |
-| `payg.test.ts` | Annual PAYG brackets, period annualisation |
-| `payroll.test.ts` | reconstructGross, resolveGrossEarnings, fee, payroll tax |
-| `margins.test.ts` | calculateMargin, aggregateMargins, DFAT scenario |
-| `timesheet.test.ts` | Discrepancy, source precedence, gross calcs |
-| `invoice.test.ts` | Line builder regular/OT/custom, labels, due dates |
-| `rates.test.ts` | Full fallback chain, super mode, history date filter |
+| `GET /api/export/timesheets.csv` | All timesheets with employee, period, hours, status, discrepancy |
+| `GET /api/export/profitability.csv?month=&year=` | Active placements revenue summary for a period |
 
-### UI -- Timesheets Reconciliation (Phases 3 + 4)
+### Dashboard Stats -- getDashboardStats
 
-Actions dropdown per row: Create Invoice, Link RCTI, Lock for Payroll, Resolve Discrepancy.
+Returns (in addition to existing fields):
+- `overdueInvoices: number` -- count of OVERDUE invoices
+- `rctiDiscrepancies: number` -- count of timesheets with unresolved discrepancy
 
-### UI -- Settings Business Rules tab (Phase 2)
+### UI Pages
 
-5 editable config keys + Formula Reference panel.
+| Page | Status |
+|---|---|
+| Settings > Business Rules | 5 editable config keys + Formula Reference |
+| Timesheets > Upload | PDF batch scan + manual entry |
+| Timesheets > Submissions | All timesheets list with status filter |
+| Timesheets > Monthly Hours | Expected hours vs actual grid |
+| Timesheets > Reconciliation | Full action grid: Create Invoice, Link RCTI, Lock, Unlock, Resolve Discrepancy, **View History** |
+| Timesheets > Inbox | Awaiting approval, RCTI discrepancies, Missing timesheets sections |
+| Timesheets > Documents | Searchable document viewer with download |
+| Profitability | Revenue vs cost per placement; **Export CSV** button |
+| Notifications | Full filter by type (incl. **RCTI**) and priority |
+| Dashboard | KPI cards + **Urgency alert banner** (submitted timesheets, RCTI discrepancies, overdue invoices) |
+
+### Audit Log History Drawer
+
+Available from Reconciliation row dropdown > **View History**.
+Fetches `GET /api/timesheets/:id/history` and renders field-level changes:
+- field name, old → new value, change source label, changed-by, timestamp
 
 ---
 
-## 2. Commit History
+## 2. Commit History (most recent first)
 
 | SHA | Description |
 |---|---|
-| Latest | feat(tests): Vitest unit test suite for server/lib |
+| `67fa3535` | feat(timesheets): audit log history drawer, Unlock + View History in row dropdown |
+| `bd124165` | feat(profitability): CSV export button |
+| `77b5a7bd` | feat(dashboard): urgency alert banner |
+| `4f02040c` | feat(notifications): add RCTI type to filter and icon map |
+| `36f347eb` | chore(rates): tombstone shim |
+| `4602684b` | feat(storage): urgency KPIs in getDashboardStats |
+| `8f735cc4` | refactor(routes): remove rates shim, fix flat PAYG, calculateMargin, RCTI notification, CSV exports |
+| `a0dbc20a` | feat(schema): add RCTI to notificationTypeEnum |
+| `b53ffbe9` | feat(timesheets): Inbox, Documents, Unlock flow |
 | `0560233a` | refactor(routes): Phase 5 -- wire server/lib into routes |
 | `a6fcdc14` | refactor(rates): convert to re-export shim |
 | `682bacfb` | feat(timesheets): Phase 4 -- action flows |
 | `8babf567` | feat(timesheets): Phase 3 -- Reconciliation grid |
 | `3caba8c6` | feat(settings): Phase 2 -- Business Rules tab |
-| `86fcb410` | seed: upsert business rules keys |
-| `3abb0e24` | schema(phase-1): new timesheet/rcti columns |
+| `86fcb410` | seed: upsert business rules settings keys on startup |
+| `3abb0e24` | schema(phase-1): add rctiId, lockedByPayRunId, discrepancyStatus |
 
 ---
 
-## 3. Decisions Locked
+## 3. Locked Decisions
 
 | Decision | Rule |
 |---|---|
-| RCTI clients | `clients.isRcti: boolean`. No `billingType` field. |
-| Expected hours | Keep `monthly_expected_hours` table. |
-| System config | Extend `settings` table. No new `system_rules` table. |
-| Invoices | Separate per placement, multi-line-item. |
-| RCTI discrepancy | Detect + notify. Admin resolves. Does NOT block payroll. |
-| Payroll lock | Admin confirms. Audit logged. |
-| Source values | Free text: XERO_SYNC, PDF_UPLOAD, ADMIN_ENTRY, PORTAL, RCTI |
-| Business logic | All calcs in `server/lib/`. No new inline formulas in routes. |
+| RCTI clients | Use `clients.isRcti: boolean`. No new `billingType` field. |
+| Expected hours | Keep `monthly_expected_hours` table. Do NOT move to placements. |
+| System config | Extend existing `settings` table. No new `system_rules` table. |
+| Invoices | Separate invoice per placement. Multi-line-item support. |
+| RCTI discrepancy | Detect (on link) and notify (HIGH priority RCTI notification). Admin resolves. Does NOT block payroll. |
+| Payroll lock | Admin confirms via dialog. Audit logged. |
+| Source values | `XERO_SYNC, PDF_UPLOAD, ADMIN_ENTRY, PORTAL, RCTI` -- free text, backward compat. |
+| Business logic | All calculations via `server/lib/`. No inline formulas in routes. |
 
 ---
 
-## 4. Key Rate Data (Locked)
+## 4. Known Remaining Items
 
-- Ben Sharman (DFAT): charge-out = **$154.32/hr** (pay rate = $140)
-- Roozbeh Pooladvand (ACIC): charge-out = **$180/hr**
-- Steven Diep (ACIC): charge-out = **$210/hr**
-
----
-
-## 5. What Remains
-
-### Immediate
-- [ ] `npm install` on Replit then `npm test` to verify all assertions pass
-- [ ] Timesheet Inbox tab (submitted needing approval, missing past 5th, discrepancy alerts)
-- [ ] Documents tab (searchable PDF library, bulk download)
-- [ ] Unlock flow (reason field + audit log)
-
-### Medium term
-- [ ] Replace remaining `gross * 0.19` flat PAYG estimate (~line 6191 routes.ts)
-- [ ] Remove `server/rates.ts` shim; update all imports to `./lib/index`
-- [ ] Wire `resolveRates()` into profitability routes (still uses ad-hoc resolution)
-- [ ] Wire `calculateMargin()` into profitability routes (still uses inline calc)
-- [ ] HIGH priority notification when RCTI discrepancy detected on link
-
----
-
-## 6. Files Not to Touch
-
-| File | Reason |
-|---|---|
-| `server/ocr.ts` | AI scan -- no changes needed |
-| `server/xero.ts` | Xero sync -- no changes needed |
-| `client/src/pages/portal/portal-timesheets.tsx` | Employee portal -- no changes needed |
-| `server/storage.ts` | Add query methods only, don't refactor existing |
+| Item | Priority | Notes |
+|---|---|---|
+| `db:push` to apply `RCTI` enum value | HIGH | Schema updated but Replit DB needs `npm run db:push` |
+| Unlock reason field persisted to audit log | MEDIUM | Currently only cleared + toast shown; reason not stored in DB |
+| Messages system | LOW | Table + routes exist, no frontend page |
+| Remove `server/rates.ts` tombstone entirely | LOW | After confirming no lingering imports |
