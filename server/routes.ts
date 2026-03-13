@@ -11,6 +11,15 @@ import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, 
 import { requireAuth, hashPassword, comparePasswords } from "./auth";
 import { scanTimesheetPdf, scanRctiPdf } from "./ocr";
 import { getSuperRate, calculateChargeOutFromPayRate, calculatePayRate } from "./rates";
+import {
+  gstTripletFromIncl,
+  calculatePayg,
+  resolveGrossEarnings,
+  decomposeCostRate,
+  calculatePayrollFeeRevenue,
+  calculatePayrollTax,
+  roundMoney, roundPercent,
+} from "./lib/index";
 import { getACTWorkingDays, getACTExpectedHours } from "./act-working-days";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -1167,20 +1176,9 @@ export async function registerRoutes(
           const accpayInvs = getContractorAccpayInvoices(allInvoices as any, emp, month, year);
           employeeCost = computeExGstFromSpend(contractorCost.total, accpayInvs);
         } else if (payLine) {
-          const plGross = parseFloat(payLine.grossEarnings || "0");
           const plSuper = parseFloat(payLine.superAmount || "0");
-          if (plGross > 0) {
-            employeeCost = plGross + plSuper;
-          } else {
-            const plNet = parseFloat(payLine.netPay || "0");
-            const plPayg = parseFloat(payLine.paygWithheld || "0");
-            if (plNet > 0 || plPayg > 0) {
-              const reconstructedGross = plPayg > 0 ? plNet + plPayg : plNet;
-              employeeCost = reconstructedGross + plSuper;
-            } else {
-              employeeCost = 0;
-            }
-          }
+          const { gross: resolvedGross } = resolveGrossEarnings(payLine.grossEarnings, payLine.netPay, payLine.paygWithheld);
+          employeeCost = resolvedGross > 0 ? resolvedGross + plSuper : 0;
         } else {
           employeeCost = totalHours * payRate;
         }
@@ -1188,15 +1186,10 @@ export async function registerRoutes(
         const marginPercent = expectedRevenue > 0 ? (margin / expectedRevenue) * 100 : 0;
 
         const feePercent = parseFloat(emp.payrollFeePercent || "0");
-        let grossForFee = payLine ? parseFloat(payLine.grossEarnings || "0") : 0;
-        if (payLine && grossForFee === 0) {
-          const plNet = parseFloat(payLine.netPay || "0");
-          const plPayg = parseFloat(payLine.paygWithheld || "0");
-          if (plNet > 0 || plPayg > 0) {
-            grossForFee = plPayg > 0 ? plNet + plPayg : plNet;
-          }
-        }
-        const payrollFeeRevenue = grossForFee * (feePercent / 100);
+        const { gross: grossForFee } = payLine
+          ? resolveGrossEarnings(payLine.grossEarnings, payLine.netPay, payLine.paygWithheld)
+          : { gross: 0 };
+        const payrollFeeRevenue = calculatePayrollFeeRevenue(grossForFee, feePercent);
 
         const ts = empTimesheets[0] || null;
         const inv = empInvoices[0] || null;
@@ -1744,37 +1737,17 @@ export async function registerRoutes(
 
       const superRate = Number(payRun.superRate || "0.115");
 
-      function estimatePayg(annualGross: number): number {
-        let tax = 0;
-        if (annualGross <= 18200) tax = 0;
-        else if (annualGross <= 45000) tax = (annualGross - 18200) * 0.19;
-        else if (annualGross <= 120000) tax = 5092 + (annualGross - 45000) * 0.325;
-        else if (annualGross <= 180000) tax = 29467 + (annualGross - 120000) * 0.37;
-        else tax = 51667 + (annualGross - 180000) * 0.45;
-
-        let lito = 0;
-        if (annualGross <= 37500) lito = 700;
-        else if (annualGross <= 45000) lito = 700 - (annualGross - 37500) * 0.05;
-        else if (annualGross <= 66667) lito = 325 - (annualGross - 45000) * 0.015;
-        tax = Math.max(0, tax - lito);
-
-        if (annualGross > 26000) tax += annualGross * 0.02;
-
-        return tax;
-      }
-
+      // estimatePayg replaced by lib/payg.ts calculatePayg
       const lineData = [];
       for (const ts of approved) {
         const employee = await storage.getEmployee(ts.employeeId);
         if (!employee) continue;
         const hours = parseFloat(ts.totalHours);
         const rate = parseFloat(employee.hourlyRate || "0");
-        const gross = hours * rate;
-        const annualised = gross * 12;
-        const paygAnnual = estimatePayg(annualised);
-        const payg = Math.round(paygAnnual / 12);
-        const superAmt = Math.round(gross * superRate * 100) / 100;
-        const net = gross - payg;
+        const gross = roundMoney(hours * rate);
+        const payg = calculatePayg(gross, "MONTHLY");
+        const superAmt = roundMoney(gross * superRate);
+        const net = roundMoney(gross - payg);
 
         lineData.push({
           payRunId: payRun.id,
@@ -3388,8 +3361,7 @@ export async function registerRoutes(
         const activeUniqueEmployeeIds = [...new Set(activePlacements.map(p => p.employeeId))];
 
         const amount = parseFloat(txn.amount || "0");
-        const gst = Math.round((amount / 11) * 100) / 100;
-        const exGst = Math.round((amount - gst) * 100) / 100;
+        const { exGst, gst } = gstTripletFromIncl(amount); // lib/calc.ts canonical
         const desc = txn.description || txn.reference || `Bank receipt from ${client.name}`;
 
         let employeeId: string | null = null;
@@ -3879,16 +3851,11 @@ export async function registerRoutes(
           const superRateDecimal = getSuperRate(periodDate) / 100;
           const placementPayRate = parseFloat(placement.payRate || "0") || payRate;
           if (placementPayRate > 0 && bestAvailableHours > 0) {
-            const rateIsSuperInclusive = payRateSource === "PLACEMENT" || payRateSource === "EMPLOYEE_DEFAULT";
-            if (rateIsSuperInclusive) {
-              estimatedGrossEarnings = (placementPayRate / (1 + superRateDecimal)) * bestAvailableHours;
-              estimatedSuperAmount = estimatedGrossEarnings * superRateDecimal;
-              totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
-            } else {
-              estimatedGrossEarnings = placementPayRate * bestAvailableHours;
-              estimatedSuperAmount = estimatedGrossEarnings * superRateDecimal;
-              totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
-            }
+            const superMode = (payRateSource === "PLACEMENT" || payRateSource === "EMPLOYEE_DEFAULT") ? "INCLUSIVE" : "EXCLUSIVE";
+            const decomp = decomposeCostRate(placementPayRate, bestAvailableHours, superMode, superRateDecimal);
+            estimatedGrossEarnings = decomp.grossEarnings;
+            estimatedSuperAmount = decomp.superAmount;
+            totalEmployeeCost = decomp.totalCost;
             costSource = "ESTIMATED";
           }
         }
@@ -3901,7 +3868,7 @@ export async function registerRoutes(
         const effectiveSuperAmount = costSource === "ESTIMATED" ? estimatedSuperAmount : superAmount;
 
         const feePercent = parseFloat(placement.payrollFeePercent || employee.payrollFeePercent || "0");
-        const payrollFeeRevenue = effectiveGrossEarnings * (feePercent / 100);
+        const payrollFeeRevenue = calculatePayrollFeeRevenue(effectiveGrossEarnings, feePercent);
 
         let payrollTaxRate = 0;
         let payrollTaxAmount = 0;
@@ -3914,10 +3881,10 @@ export async function registerRoutes(
         const costExPayrollTax = totalEmployeeCost;
         const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
 
-        const profitExPayrollTax = revenue - costExPayrollTax;
-        const profitIncPayrollTax = revenue - costIncPayrollTax;
-        const marginExPT = revenue > 0 ? (profitExPayrollTax / revenue) * 100 : 0;
-        const marginIncPT = revenue > 0 ? (profitIncPayrollTax / revenue) * 100 : 0;
+        const profitExPayrollTax = roundMoney(revenue - costExPayrollTax);
+        const profitIncPayrollTax = roundMoney(revenue - costIncPayrollTax);
+        const marginExPT = revenue > 0 ? roundPercent((profitExPayrollTax / revenue) * 100) : 0;
+        const marginIncPT = revenue > 0 ? roundPercent((profitIncPayrollTax / revenue) * 100) : 0;
 
         const clientBankTxns = periodBankTxns.filter(t =>
           !claimedBankTxnIds.has(t.id) &&
@@ -4268,16 +4235,11 @@ export async function registerRoutes(
           const periodDate = new Date(year, month - 1, 15);
           const superRateDecimal = getSuperRate(periodDate) / 100;
           if (payRate > 0 && bestAvailableHours > 0) {
-            const rateIsSuperInclusive = payRateSource === "PLACEMENT" || payRateSource === "EMPLOYEE_DEFAULT";
-            if (rateIsSuperInclusive) {
-              estimatedGrossEarnings = (payRate / (1 + superRateDecimal)) * bestAvailableHours;
-              estimatedSuperAmount = estimatedGrossEarnings * superRateDecimal;
-              totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
-            } else {
-              estimatedGrossEarnings = payRate * bestAvailableHours;
-              estimatedSuperAmount = estimatedGrossEarnings * superRateDecimal;
-              totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
-            }
+            const superMode = (payRateSource === "PLACEMENT" || payRateSource === "EMPLOYEE_DEFAULT") ? "INCLUSIVE" : "EXCLUSIVE";
+            const decomp = decomposeCostRate(payRate, bestAvailableHours, superMode, superRateDecimal);
+            estimatedGrossEarnings = decomp.grossEarnings;
+            estimatedSuperAmount = decomp.superAmount;
+            totalEmployeeCost = decomp.totalCost;
             costSource = "ESTIMATED";
           }
         }
@@ -4291,7 +4253,7 @@ export async function registerRoutes(
 
         const rateSpread = chargeOutRate - payRate;
         const feePercent = parseFloat(employee.payrollFeePercent || "0");
-        const payrollFeeRevenue = effectiveGrossEarnings * (feePercent / 100);
+        const payrollFeeRevenue = calculatePayrollFeeRevenue(effectiveGrossEarnings, feePercent);
 
         let payrollTaxRate = 0;
         let payrollTaxAmount = 0;
@@ -4302,10 +4264,10 @@ export async function registerRoutes(
 
         const costExPayrollTax = totalEmployeeCost;
         const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
-        const profitExPayrollTax = revenue - costExPayrollTax;
-        const profitIncPayrollTax = revenue - costIncPayrollTax;
-        const marginExPT = revenue > 0 ? (profitExPayrollTax / revenue) * 100 : 0;
-        const marginIncPT = revenue > 0 ? (profitIncPayrollTax / revenue) * 100 : 0;
+        const profitExPayrollTax = roundMoney(revenue - costExPayrollTax);
+        const profitIncPayrollTax = roundMoney(revenue - costIncPayrollTax);
+        const marginExPT = revenue > 0 ? roundPercent((profitExPayrollTax / revenue) * 100) : 0;
+        const marginIncPT = revenue > 0 ? roundPercent((profitIncPayrollTax / revenue) * 100) : 0;
 
         const client = clientId ? allClients.find(c => c.id === clientId) : null;
         const clientBankTxns = periodBankTxns.filter(t =>
@@ -4767,33 +4729,21 @@ export async function registerRoutes(
         for (const pr of placementResults) {
           const placementPayRate = parseFloat(pr.placement.payRate || "0") || effectiveRates.payRate;
           const source = parseFloat(pr.placement.payRate || "0") > 0 ? "PLACEMENT" : fallbackPayRateSource;
-          const rateIsSuperInclusive = source === "PLACEMENT" || source === "EMPLOYEE_DEFAULT";
+          const superMode = (source === "PLACEMENT" || source === "EMPLOYEE_DEFAULT") ? "INCLUSIVE" : "EXCLUSIVE";
           if (placementPayRate > 0 && pr.totalHours > 0) {
-            if (rateIsSuperInclusive) {
-              const ge = (placementPayRate / (1 + superRate)) * pr.totalHours;
-              const sa = ge * superRate;
-              estimatedGrossEarnings += ge;
-              estimatedSuperAmount += sa;
-            } else {
-              const ge = placementPayRate * pr.totalHours;
-              const sa = ge * superRate;
-              estimatedGrossEarnings += ge;
-              estimatedSuperAmount += sa;
-            }
+            const decomp = decomposeCostRate(placementPayRate, pr.totalHours, superMode, superRate);
+            estimatedGrossEarnings += decomp.grossEarnings;
+            estimatedSuperAmount += decomp.superAmount;
           }
         }
         if (estimatedGrossEarnings === 0 && bestAvailableHours > 0 && effectiveRates.payRate > 0) {
-          const rateIsSuperInclusive = fallbackPayRateSource === "EMPLOYEE_DEFAULT";
-          if (rateIsSuperInclusive) {
-            estimatedGrossEarnings = (effectiveRates.payRate / (1 + superRate)) * bestAvailableHours;
-            estimatedSuperAmount = estimatedGrossEarnings * superRate;
-          } else {
-            estimatedGrossEarnings = effectiveRates.payRate * bestAvailableHours;
-            estimatedSuperAmount = estimatedGrossEarnings * superRate;
-          }
+          const superMode = fallbackPayRateSource === "EMPLOYEE_DEFAULT" ? "INCLUSIVE" : "EXCLUSIVE";
+          const decomp = decomposeCostRate(effectiveRates.payRate, bestAvailableHours, superMode, superRate);
+          estimatedGrossEarnings = decomp.grossEarnings;
+          estimatedSuperAmount = decomp.superAmount;
         }
         if (estimatedGrossEarnings > 0) {
-          totalEmployeeCost = estimatedGrossEarnings + estimatedSuperAmount;
+          totalEmployeeCost = roundMoney(estimatedGrossEarnings + estimatedSuperAmount);
           costSource = "ESTIMATED";
         }
       }
@@ -4803,7 +4753,7 @@ export async function registerRoutes(
 
       const bestPlacementFee = empPlacements.find(p => parseFloat(p.payrollFeePercent || "0") > 0)?.payrollFeePercent;
       const feePercent = parseFloat(bestPlacementFee || employee.payrollFeePercent || "0");
-      const payrollFeeAmount = effectiveGrossEarnings * (feePercent / 100);
+      const payrollFeeAmount = calculatePayrollFeeRevenue(effectiveGrossEarnings, feePercent);
 
       let payrollTaxRate = 0;
       let payrollTaxAmount = 0;
@@ -4815,10 +4765,10 @@ export async function registerRoutes(
 
       const costExPayrollTax = totalEmployeeCost;
       const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
-      const profitExPayrollTax = totalRevenue - costExPayrollTax;
-      const profitIncPayrollTax = totalRevenue - costIncPayrollTax;
-      const marginExPT = totalRevenue > 0 ? (profitExPayrollTax / totalRevenue) * 100 : 0;
-      const marginIncPT = totalRevenue > 0 ? (profitIncPayrollTax / totalRevenue) * 100 : 0;
+      const profitExPayrollTax = roundMoney(totalRevenue - costExPayrollTax);
+      const profitIncPayrollTax = roundMoney(totalRevenue - costIncPayrollTax);
+      const marginExPT = totalRevenue > 0 ? roundPercent((profitExPayrollTax / totalRevenue) * 100) : 0;
+      const marginIncPT = totalRevenue > 0 ? roundPercent((profitIncPayrollTax / totalRevenue) * 100) : 0;
 
       const primaryPlacement = empPlacements[0];
       const primaryClient = primaryPlacement ? allClients.find(c => c.id === primaryPlacement.clientId) : null;
