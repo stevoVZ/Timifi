@@ -23,6 +23,7 @@ import {
   ExternalLink,
   DollarSign,
   Zap,
+  Link2,
 } from "lucide-react";
 
 const PRIORITY_CONFIG: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
@@ -41,9 +42,10 @@ const TYPE_CONFIG: Record<string, { label: string; icon: typeof Bell }> = {
   XERO: { label: "Xero", icon: Zap },
   CLEARANCE: { label: "Clearance", icon: Shield },
   SYSTEM: { label: "System", icon: Info },
+  RCTI: { label: "RCTI", icon: Link2 },
 };
 
-const ALL_TYPES = ["PAYRUN", "STP", "INVOICE", "TIMESHEET", "SUPER", "XERO", "CLEARANCE", "SYSTEM"];
+const ALL_TYPES = ["PAYRUN", "STP", "INVOICE", "TIMESHEET", "SUPER", "XERO", "CLEARANCE", "SYSTEM", "RCTI"];
 const ALL_PRIORITIES = ["URGENT", "HIGH", "MEDIUM", "LOW"];
 
 function formatTimeAgo(dateStr: string) {
