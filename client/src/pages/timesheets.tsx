@@ -2345,6 +2345,9 @@ function MonthlyHoursView() {
                     const empPlacementCount = placementRows.filter(r => r.employee.id === employee.id && r.placement !== null).length;
                     const hasOtherPlacementRows = empPlacementCount > 1;
                     const timesheet = getTimesheet(employee.id, placement?.id || null, hasOtherPlacementRows);
+                    const ts = timesheet;
+                    const isLocked = !!(ts && (ts as any).lockedByPayRunId);
+                    const canUnlock = !!(ts && isLocked);
                     const isRowEditing = !!editing[rowKey];
                     const edit = editing[rowKey];
 
@@ -2477,16 +2480,21 @@ function MonthlyHoursView() {
                                       {s}
                                     </DropdownMenuItem>
                                   ))}
-                                {canUnlock && (
-                                  <DropdownMenuItem onClick={() => setUnlockDialog(rk)}>
+                                {canUnlock && ts && (
+                                  <DropdownMenuItem onClick={() => {
+                                    const unlockMut = async () => {
+                                      try {
+                                        await apiRequest("PATCH", `/api/timesheets/${ts.id}`, { lockedByPayRunId: null, changeSource: "UNLOCK" });
+                                        queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+                                        toast({ title: "Timesheet unlocked" });
+                                      } catch (err: any) {
+                                        toast({ title: "Error", description: err.message, variant: "destructive" });
+                                      }
+                                    };
+                                    unlockMut();
+                                  }}>
                                     <LockOpen className="w-3.5 h-3.5 mr-2" />
                                     Unlock Timesheet
-                                  </DropdownMenuItem>
-                                )}
-                                {ts && (
-                                  <DropdownMenuItem onClick={() => setHistoryTs(ts)}>
-                                    <History className="w-3.5 h-3.5 mr-2" />
-                                    View History
                                   </DropdownMenuItem>
                                 )}
                               </DropdownMenuContent>
