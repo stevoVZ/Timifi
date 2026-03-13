@@ -38,6 +38,7 @@ import {
   Mail, Upload, UserCheck, Monitor, Paperclip, ChevronDown, ChevronUp,
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus, Users,
   ChevronLeft, ChevronRight, Trash2, LayoutGrid, Lock, AlertCircle, Receipt,
+  MoreHorizontal, Link2 as LinkIcon, FileCheck, DollarSign,
 } from "lucide-react";
 import type { Timesheet, Employee, Document as DocType } from "@shared/schema";
 
@@ -2547,6 +2548,7 @@ type RctiRow = {
   amountExclGst: string;
   status: string;
   reference: string | null;
+  timesheetId: string | null;
 };
 
 type ClientRow = {
@@ -2561,13 +2563,6 @@ const SOURCE_BADGES: Record<string, { label: string; cls: string }> = {
   ADMIN_ENTRY: { label: "Admin",  cls: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400" },
   PORTAL:      { label: "Portal", cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" },
   RCTI:        { label: "RCTI",   cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" },
-};
-
-const STATUS_NEXT: Record<string, string | null> = {
-  DRAFT: "SUBMITTED",
-  SUBMITTED: null,
-  APPROVED: null,
-  REJECTED: "DRAFT",
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -2586,7 +2581,6 @@ function RowStatusBadge({ ts, onApprove, onReject, isPending }: {
   if (!ts) return <span className="text-xs text-muted-foreground">—</span>;
   const status = ts.status as string;
   const cls = STATUS_COLORS[status] || STATUS_COLORS.DRAFT;
-
   return (
     <div className="flex items-center gap-1">
       <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${cls}`}>
@@ -2595,20 +2589,12 @@ function RowStatusBadge({ ts, onApprove, onReject, isPending }: {
       </span>
       {status === "SUBMITTED" && (
         <>
-          <button
-            title="Approve"
-            onClick={onApprove}
-            disabled={isPending}
-            className="h-5 w-5 rounded flex items-center justify-center text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 disabled:opacity-40"
-          >
+          <button title="Approve" onClick={onApprove} disabled={isPending}
+            className="h-5 w-5 rounded flex items-center justify-center text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 disabled:opacity-40">
             <CheckCircle className="w-3.5 h-3.5" />
           </button>
-          <button
-            title="Reject"
-            onClick={onReject}
-            disabled={isPending}
-            className="h-5 w-5 rounded flex items-center justify-center text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40"
-          >
+          <button title="Reject" onClick={onReject} disabled={isPending}
+            className="h-5 w-5 rounded flex items-center justify-center text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40">
             <XCircle className="w-3.5 h-3.5" />
           </button>
         </>
@@ -2617,6 +2603,452 @@ function RowStatusBadge({ ts, onApprove, onReject, isPending }: {
   );
 }
 
+// ── Create Invoice Dialog ─────────────────────────────────────────────────────
+
+function CreateInvoiceDialog({
+  employee, placement, ts, month, year, open, onClose,
+}: {
+  employee: Employee;
+  placement: PlacementData | null;
+  ts: Timesheet;
+  month: number;
+  year: number;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const chargeRate = parseFloat(placement?.chargeOutRate || "0");
+  const tsHours = parseFloat(ts.totalHours || "0");
+
+  const [hours, setHours] = useState(String(tsHours));
+  const [rate, setRate] = useState(String(chargeRate));
+  const [desc, setDesc] = useState(
+    `Labour hire services — ${employee.firstName} ${employee.lastName} — ${MONTHS[month]} ${year}`
+  );
+  const [saving, setSaving] = useState(false);
+
+  const hoursNum = parseFloat(hours) || 0;
+  const rateNum  = parseFloat(rate)  || 0;
+  const exGST    = +(hoursNum * rateNum).toFixed(2);
+  const gst      = +(exGST * 0.1).toFixed(2);
+  const inclGST  = +(exGST + gst).toFixed(2);
+
+  const today = new Date();
+  const issueDate = today.toISOString().slice(0, 10);
+  const dueDate = new Date(today.getTime() + 14 * 86400000).toISOString().slice(0, 10);
+
+  const handleCreate = async () => {
+    if (hoursNum <= 0 || rateNum <= 0) {
+      toast({ title: "Hours and rate must be > 0", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiRequest("POST", "/api/invoices", {
+        employeeId: employee.id,
+        clientId: placement?.clientId || null,
+        timesheetId: ts.id,
+        year,
+        month,
+        hours: String(hoursNum),
+        hourlyRate: String(rateNum),
+        amountExclGst: String(exGST),
+        gstAmount: String(gst),
+        amountInclGst: String(inclGST),
+        description: desc,
+        issueDate,
+        dueDate,
+        status: "DRAFT",
+        invoiceType: "SALES",
+        linkedEmployeeIds: [employee.id],
+        lineItems: [{
+          description: desc,
+          hours: hoursNum,
+          rate: rateNum,
+          amount: exGST,
+          accountCode: "200",
+          taxType: "OUTPUT",
+        }],
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Draft invoice created" });
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Failed to create invoice", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <DollarSign className="w-4 h-4" />
+            Create Invoice
+          </DialogTitle>
+          <DialogDescription>
+            {employee.firstName} {employee.lastName} · {MONTHS[month]} {year}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Hours</Label>
+              <Input type="number" value={hours} onChange={e => setHours(e.target.value)}
+                step="0.25" min="0" className="text-right" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Charge-out rate (ex GST)</Label>
+              <Input type="number" value={rate} onChange={e => setRate(e.target.value)}
+                step="0.01" min="0" className="text-right" />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Description</Label>
+            <Input value={desc} onChange={e => setDesc(e.target.value)} />
+          </div>
+
+          <div className="rounded-md bg-muted/40 p-3 text-sm space-y-1.5">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Amount ex GST</span>
+              <span className="font-mono">${exGST.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">GST (10%)</span>
+              <span className="font-mono">${gst.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between font-semibold border-t pt-1.5 mt-1">
+              <span>Total incl GST</span>
+              <span className="font-mono">${inclGST.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
+            <div>Issue: {issueDate}</div>
+            <div>Due: {dueDate} (14 days)</div>
+          </div>
+
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button size="sm" onClick={handleCreate} disabled={saving}>
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <FileCheck className="w-3.5 h-3.5 mr-1.5" />}
+              Create Draft Invoice
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Link RCTI Dialog ──────────────────────────────────────────────────────────
+
+function LinkRctiDialog({
+  employee, clientId, clientName, ts, month, year, rctis, open, onClose,
+}: {
+  employee: Employee;
+  clientId: string | null;
+  clientName: string;
+  ts: Timesheet;
+  month: number;
+  year: number;
+  rctis: RctiRow[];
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Candidate RCTIs: same employee + client + period, not yet linked to a different timesheet
+  const candidates = rctis.filter(r =>
+    r.employeeId === employee.id &&
+    r.clientId === clientId &&
+    r.month === month &&
+    r.year === year &&
+    (!r.timesheetId || r.timesheetId === ts.id)
+  );
+
+  const tsHours = parseFloat(ts.totalHours || "0");
+
+  const handleLink = async () => {
+    if (!selectedId) return;
+    const rcti = candidates.find(r => r.id === selectedId);
+    if (!rcti) return;
+    setSaving(true);
+
+    const rctiHours = parseFloat(rcti.hours || "0");
+    const delta = Math.abs(tsHours - rctiHours);
+    // Threshold hardcoded to 0.5 here; ideally read from settings
+    const discrepancyStatus = delta > 0.5 ? "HOURS_MISMATCH" : "NONE";
+
+    try {
+      // Link timesheet → rcti
+      await apiRequest("PATCH", `/api/timesheets/${ts.id}`, {
+        rctiId: selectedId,
+        discrepancyStatus,
+        changeSource: "RCTI_LINK",
+      });
+      // Link rcti → timesheet
+      await apiRequest("PATCH", `/api/rctis/${selectedId}`, { timesheetId: ts.id });
+
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/rctis"] });
+
+      if (discrepancyStatus !== "NONE") {
+        toast({
+          title: "RCTI linked — hours discrepancy detected",
+          description: `Timesheet: ${tsHours}h · RCTI: ${rctiHours}h · Delta: ${delta.toFixed(2)}h`,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "RCTI linked successfully" });
+      }
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Failed to link RCTI", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <LinkIcon className="w-4 h-4" />
+            Link RCTI
+          </DialogTitle>
+          <DialogDescription>
+            {employee.firstName} {employee.lastName} · {clientName} · {MONTHS[month]} {year}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          <div className="text-xs text-muted-foreground">
+            Timesheet: <span className="font-semibold text-foreground">{tsHours}h</span>
+          </div>
+
+          {candidates.length === 0 ? (
+            <div className="rounded-md bg-muted/40 p-4 text-sm text-center text-muted-foreground">
+              No unlinked RCTIs found for this employee, client and period.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {candidates.map(r => {
+                const rHours = parseFloat(r.hours || "0");
+                const delta = Math.abs(tsHours - rHours);
+                const hasDiscrepancy = delta > 0.5;
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => setSelectedId(r.id)}
+                    className={`w-full text-left rounded-md border p-3 text-sm transition-colors
+                      ${selectedId === r.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted/50"}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{r.reference || r.id.slice(0, 8)}</span>
+                      <span className={`text-xs font-mono ${hasDiscrepancy ? "text-amber-600" : "text-green-600"}`}>
+                        {rHours}h {hasDiscrepancy ? `(Δ${delta.toFixed(2)}h)` : "✓"}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      ${parseFloat(r.amountExclGst).toFixed(2)} ex GST · {r.status}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button size="sm" onClick={handleLink} disabled={saving || !selectedId}>
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <LinkIcon className="w-3.5 h-3.5 mr-1.5" />}
+              Link RCTI
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Payroll Lock Dialog ───────────────────────────────────────────────────────
+
+function PayrollLockDialog({
+  employee, ts, open, onClose,
+}: {
+  employee: Employee;
+  ts: Timesheet;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+
+  const lockRef = `MANUAL-${new Date().toISOString().slice(0, 10)}-${ts.id.slice(0, 6).toUpperCase()}`;
+
+  const handleLock = async () => {
+    setSaving(true);
+    try {
+      await apiRequest("PATCH", `/api/timesheets/${ts.id}`, {
+        lockedByPayRunId: lockRef,
+        changeSource: "PAYROLL_LOCK",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      toast({ title: "Timesheet locked for payroll" });
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Failed to lock timesheet", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Lock className="w-4 h-4" />
+            Lock for Payroll
+          </DialogTitle>
+          <DialogDescription>
+            This action is permanent and will be audit-logged.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3 text-sm space-y-1">
+            <div><span className="text-muted-foreground">Employee:</span> {employee.firstName} {employee.lastName}</div>
+            <div><span className="text-muted-foreground">Hours:</span> {parseFloat(ts.totalHours || "0").toFixed(2)}h</div>
+            <div><span className="text-muted-foreground">Gross:</span> ${parseFloat(ts.grossValue || "0").toFixed(2)}</div>
+            <div><span className="text-muted-foreground">Lock ref:</span> <span className="font-mono text-xs">{lockRef}</span></div>
+          </div>
+
+          <p className="text-sm text-muted-foreground">
+            Once locked, this timesheet cannot be edited without admin intervention. Ensure all values are correct before proceeding.
+          </p>
+
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+            <Button size="sm" variant="destructive" onClick={handleLock} disabled={saving}>
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Lock className="w-3.5 h-3.5 mr-1.5" />}
+              Confirm Lock
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Discrepancy Resolution Dialog ─────────────────────────────────────────────
+
+function DiscrepancyDialog({
+  employee, ts, rcti, open, onClose,
+}: {
+  employee: Employee;
+  ts: Timesheet;
+  rcti: RctiRow;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+  const tsHours = parseFloat(ts.totalHours || "0");
+  const rctiHours = parseFloat(rcti.hours || "0");
+  const delta = tsHours - rctiHours;
+
+  const resolve = async (action: "USE_TIMESHEET" | "USE_RCTI" | "OVERRIDE") => {
+    setSaving(true);
+    try {
+      const patch: Record<string, any> = {
+        discrepancyStatus: "RESOLVED",
+        changeSource: "DISCREPANCY_RESOLVED",
+      };
+      if (action === "USE_RCTI") {
+        patch.totalHours = rcti.hours;
+        patch.regularHours = rcti.hours;
+        patch.overtimeHours = "0";
+      }
+      await apiRequest("PATCH", `/api/timesheets/${ts.id}`, patch);
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      toast({ title: "Discrepancy resolved" });
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Failed to resolve", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-500" />
+            RCTI Discrepancy
+          </DialogTitle>
+          <DialogDescription>
+            {employee.firstName} {employee.lastName} — hours differ between timesheet and RCTI.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          <div className="rounded-md border p-3 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Timesheet hours</span>
+              <span className="font-mono font-medium">{tsHours.toFixed(2)}h</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">RCTI hours</span>
+              <span className="font-mono font-medium">{rctiHours.toFixed(2)}h</span>
+            </div>
+            <div className="flex justify-between border-t pt-2">
+              <span className="text-muted-foreground">Delta</span>
+              <span className={`font-mono font-semibold ${Math.abs(delta) > 0.5 ? "text-amber-600" : "text-muted-foreground"}`}>
+                {delta > 0 ? "+" : ""}{delta.toFixed(2)}h
+              </span>
+            </div>
+          </div>
+
+          <div className="text-xs text-muted-foreground">
+            RCTI ref: {rcti.reference || rcti.id.slice(0, 8)} · ${parseFloat(rcti.amountExclGst).toFixed(2)} ex GST
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium">How would you like to resolve this?</p>
+            <Button variant="outline" size="sm" className="w-full justify-start gap-2" onClick={() => resolve("USE_TIMESHEET")} disabled={saving}>
+              <FileCheck className="w-3.5 h-3.5" />
+              Keep timesheet hours ({tsHours}h) — mark resolved
+            </Button>
+            <Button variant="outline" size="sm" className="w-full justify-start gap-2" onClick={() => resolve("USE_RCTI")} disabled={saving}>
+              <Receipt className="w-3.5 h-3.5" />
+              Use RCTI hours ({rctiHours}h) — update timesheet
+            </Button>
+          </div>
+
+          <div className="flex justify-end">
+            <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>Dismiss</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Reconciliation View ───────────────────────────────────────────────────────
+
 function ReconciliationView() {
   const { toast } = useToast();
   const now = new Date();
@@ -2624,6 +3056,12 @@ function ReconciliationView() {
   const [year, setYear] = useState(now.getFullYear());
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<"all" | "missing" | "needs-action" | "done">("all");
+
+  // Dialog state — track which row has which dialog open
+  const [invoiceDialog, setInvoiceDialog] = useState<string | null>(null);
+  const [linkRctiDialog, setLinkRctiDialog] = useState<string | null>(null);
+  const [lockDialog, setLockDialog] = useState<string | null>(null);
+  const [discrepancyDialog, setDiscrepancyDialog] = useState<string | null>(null);
 
   const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
   const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
@@ -2637,10 +3075,8 @@ function ReconciliationView() {
 
   const periodStart = new Date(year, month - 1, 1);
   const periodEnd   = new Date(year, month, 0);
-
   const activeEmployees = (employees || []).filter(e => e.status === "ACTIVE");
 
-  // Build placement rows for this period — same logic as MonthlyHoursView
   const rows = useMemo(() => {
     const result: {
       employee: Employee;
@@ -2691,14 +3127,15 @@ function ReconciliationView() {
     });
   }, [activeEmployees, placements, clients, month, year]);
 
+  const empHasMultiplePlacements = (empId: string) =>
+    rows.filter(r => r.employee.id === empId && r.placement).length > 1;
+
   const getTimesheet = useCallback((empId: string, placementId: string | null, hasMultiple: boolean): Timesheet | null => {
     if (!timesheets) return null;
     if (placementId) {
       const byP = timesheets.find(t => t.employeeId === empId && (t as any).placementId === placementId && t.month === month && t.year === year);
       if (byP) return byP;
-      if (!hasMultiple) {
-        return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
-      }
+      if (!hasMultiple) return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
       return null;
     }
     return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
@@ -2714,7 +3151,6 @@ function ReconciliationView() {
     return invoices.find(inv => inv.timesheetId === tsId) || null;
   };
 
-  // Status mutation
   const statusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
       setPendingIds(s => new Set(s).add(id));
@@ -2732,39 +3168,21 @@ function ReconciliationView() {
     },
   });
 
-  const empHasMultiplePlacements = (empId: string) =>
-    rows.filter(r => r.employee.id === empId && r.placement).length > 1;
-
-  // Row state classification
-  const classify = (ts: Timesheet | null, rcti: RctiRow | null, isRctiClient: boolean): "missing" | "needs-action" | "in-progress" | "done" => {
+  const classify = (ts: Timesheet | null, rcti: RctiRow | null, isRctiClient: boolean) => {
     if (!ts && !rcti) return "missing";
-    if (ts?.status === "SUBMITTED") return "needs-action";
-    if (ts?.status === "REJECTED") return "needs-action";
-    if (ts?.status === "DRAFT") return "in-progress";
+    if (ts?.status === "SUBMITTED" || ts?.status === "REJECTED") return "needs-action";
     if (ts?.status === "APPROVED") return "done";
     if (isRctiClient && rcti) return "done";
     return "in-progress";
   };
 
   const ROW_COLORS: Record<string, string> = {
-    missing:      "bg-red-50/60 dark:bg-red-950/20 hover:bg-red-50 dark:hover:bg-red-950/30",
+    missing:        "bg-red-50/60 dark:bg-red-950/20 hover:bg-red-50 dark:hover:bg-red-950/30",
     "needs-action": "bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/30",
-    "in-progress": "hover:bg-muted/50",
-    done:         "bg-green-50/40 dark:bg-green-950/10 hover:bg-green-50/60 dark:hover:bg-green-950/20",
+    "in-progress":  "hover:bg-muted/50",
+    done:           "bg-green-50/40 dark:bg-green-950/10 hover:bg-green-50/60 dark:hover:bg-green-950/20",
   };
 
-  const filteredRows = rows.filter(row => {
-    if (filter === "all") return true;
-    const ts = getTimesheet(row.employee.id, row.placement?.id || null, empHasMultiplePlacements(row.employee.id));
-    const rcti = getRcti(row.employee.id, row.clientId);
-    const state = classify(ts, rcti, row.isRctiClient);
-    if (filter === "missing") return state === "missing";
-    if (filter === "needs-action") return state === "needs-action";
-    if (filter === "done") return state === "done";
-    return true;
-  });
-
-  // Counts for filter badges
   const counts = useMemo(() => {
     const c = { missing: 0, "needs-action": 0, done: 0 };
     for (const row of rows) {
@@ -2778,12 +3196,20 @@ function ReconciliationView() {
     return c;
   }, [rows, timesheets, rctis, month, year]);
 
+  const filteredRows = rows.filter(row => {
+    if (filter === "all") return true;
+    const ts = getTimesheet(row.employee.id, row.placement?.id || null, empHasMultiplePlacements(row.employee.id));
+    const rcti = getRcti(row.employee.id, row.clientId);
+    const state = classify(ts, rcti, row.isRctiClient);
+    return state === filter;
+  });
+
   const INVOICE_STATUS_COLORS: Record<string, string> = {
-    DRAFT:    "bg-gray-100 text-gray-600",
-    SENT:     "bg-blue-100 text-blue-700",
+    DRAFT:      "bg-gray-100 text-gray-600",
+    SENT:       "bg-blue-100 text-blue-700",
     AUTHORISED: "bg-blue-100 text-blue-700",
-    PAID:     "bg-green-100 text-green-700",
-    VOIDED:   "bg-red-100 text-red-700",
+    PAID:       "bg-green-100 text-green-700",
+    VOIDED:     "bg-red-100 text-red-700",
   };
 
   return (
@@ -2794,30 +3220,22 @@ function ReconciliationView() {
           <Button variant="outline" size="icon" onClick={prevMonth} className="h-8 w-8">
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <span className="text-sm font-semibold min-w-[110px] text-center">
-            {MONTHS[month]} {year}
-          </span>
+          <span className="text-sm font-semibold min-w-[110px] text-center">{MONTHS[month]} {year}</span>
           <Button variant="outline" size="icon" onClick={nextMonth} className="h-8 w-8">
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
 
-        {/* Filter buttons */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {([
-            ["all",          "All",          null,                     ""],
-            ["missing",      "Missing",      counts.missing,           "text-red-600"],
-            ["needs-action", "Needs Action", counts["needs-action"],   "text-amber-600"],
-            ["done",         "Done",         counts.done,              "text-green-600"],
+            ["all",          "All",          null,                   ""],
+            ["missing",      "Missing",      counts.missing,         "text-red-600"],
+            ["needs-action", "Needs Action", counts["needs-action"], "text-amber-600"],
+            ["done",         "Done",         counts.done,            "text-green-600"],
           ] as const).map(([val, label, count, cls]) => (
-            <button
-              key={val}
-              onClick={() => setFilter(val)}
+            <button key={val} onClick={() => setFilter(val)}
               className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium border transition-colors
-                ${filter === val
-                  ? "bg-foreground text-background border-foreground"
-                  : "bg-background border-border hover:bg-muted"}`}
-            >
+                ${filter === val ? "bg-foreground text-background border-foreground" : "bg-background border-border hover:bg-muted"}`}>
               {label}
               {count !== null && count > 0 && (
                 <span className={`text-[10px] font-bold ${filter === val ? "" : cls}`}>{count}</span>
@@ -2827,15 +3245,12 @@ function ReconciliationView() {
         </div>
       </div>
 
-      {/* Grid */}
       {isLoading ? (
         <div className="space-y-2">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-12 rounded-md bg-muted animate-pulse" />
-          ))}
+          {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-12 rounded-md bg-muted animate-pulse" />)}
         </div>
       ) : (
-        <div className="rounded-md border overflow-hidden">
+        <div className="rounded-md border overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-muted/60 border-b text-xs text-muted-foreground">
@@ -2846,12 +3261,13 @@ function ReconciliationView() {
                 <th className="text-left px-3 py-2.5 font-medium">Status</th>
                 <th className="text-left px-3 py-2.5 font-medium">Invoice / RCTI</th>
                 <th className="text-left px-3 py-2.5 font-medium">Flags</th>
+                <th className="text-right px-3 py-2.5 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-sm text-muted-foreground">
+                  <td colSpan={8} className="text-center py-12 text-sm text-muted-foreground">
                     {filter === "all" ? "No active employees with placements this period." : `No ${filter} rows this period.`}
                   </td>
                 </tr>
@@ -2865,109 +3281,200 @@ function ReconciliationView() {
                   const src = ts ? ((ts as any).source as string | null) : null;
                   const srcBadge = src ? SOURCE_BADGES[src] : null;
                   const isLocked = !!(ts && (ts as any).lockedByPayRunId);
-                  const hasDiscrepancy = ts && (ts as any).discrepancyStatus && (ts as any).discrepancyStatus !== "NONE";
+                  const hasDiscrepancy = !!(ts && (ts as any).discrepancyStatus && (ts as any).discrepancyStatus !== "NONE" && (ts as any).discrepancyStatus !== "RESOLVED");
                   const isPending = !!(ts && pendingIds.has(ts.id));
+                  const rk = row.rowKey;
+
+                  // What actions are available for this row?
+                  const canCreateInvoice = !!(ts && ts.status === "APPROVED" && !inv && !row.isRctiClient);
+                  const canLinkRcti = !!(ts && row.isRctiClient && !(ts as any).rctiId);
+                  const canLock = !!(ts && ts.status === "APPROVED" && !isLocked);
+                  const canResolveDiscrepancy = !!(hasDiscrepancy && ts && rcti);
 
                   return (
-                    <tr key={row.rowKey} className={`border-b last:border-b-0 ${ROW_COLORS[state]}`}>
-                      {/* Employee */}
-                      <td className="px-3 py-2.5">
-                        <div className="font-medium text-sm">
-                          {row.employee.firstName} {row.employee.lastName}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                          {row.employee.paymentMethod === "INVOICE" ? "Contractor" : "Payroll"}
-                        </div>
-                      </td>
+                    <>
+                      <tr key={rk} className={`border-b last:border-b-0 ${ROW_COLORS[state]}`}>
+                        {/* Employee */}
+                        <td className="px-3 py-2.5">
+                          <div className="font-medium text-sm">{row.employee.firstName} {row.employee.lastName}</div>
+                          <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                            {row.employee.paymentMethod === "INVOICE" ? "Contractor" : "Payroll"}
+                          </div>
+                        </td>
 
-                      {/* Client */}
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-1">
-                          <span className="text-sm">{row.clientName || "—"}</span>
-                          {row.isRctiClient && (
-                            <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                              RCTI
-                            </span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Source */}
-                      <td className="px-3 py-2.5">
-                        {srcBadge ? (
-                          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${srcBadge.cls}`}>
-                            {srcBadge.label}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </td>
-
-                      {/* Hours */}
-                      <td className="px-3 py-2.5 text-right tabular-nums">
-                        {ts ? (
-                          <div>
-                            <span className="font-medium">{parseFloat(ts.totalHours || "0").toFixed(1)}</span>
-                            <span className="text-muted-foreground text-xs">h</span>
-                            {parseFloat(ts.overtimeHours || "0") > 0 && (
-                              <div className="text-[10px] text-muted-foreground">
-                                +{parseFloat(ts.overtimeHours || "0").toFixed(1)}h OT
-                              </div>
+                        {/* Client */}
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center gap-1">
+                            <span className="text-sm">{row.clientName || "—"}</span>
+                            {row.isRctiClient && (
+                              <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                                RCTI
+                              </span>
                             )}
                           </div>
-                        ) : rcti ? (
-                          <div>
-                            <span className="font-medium">{parseFloat(rcti.hours || "0").toFixed(1)}</span>
-                            <span className="text-muted-foreground text-xs">h</span>
-                            <div className="text-[10px] text-amber-600">via RCTI</div>
+                        </td>
+
+                        {/* Source */}
+                        <td className="px-3 py-2.5">
+                          {srcBadge ? (
+                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${srcBadge.cls}`}>
+                              {srcBadge.label}
+                            </span>
+                          ) : <span className="text-xs text-muted-foreground">—</span>}
+                        </td>
+
+                        {/* Hours */}
+                        <td className="px-3 py-2.5 text-right tabular-nums">
+                          {ts ? (
+                            <div>
+                              <span className="font-medium">{parseFloat(ts.totalHours || "0").toFixed(1)}</span>
+                              <span className="text-muted-foreground text-xs">h</span>
+                              {parseFloat(ts.overtimeHours || "0") > 0 && (
+                                <div className="text-[10px] text-muted-foreground">
+                                  +{parseFloat(ts.overtimeHours || "0").toFixed(1)}h OT
+                                </div>
+                              )}
+                            </div>
+                          ) : rcti ? (
+                            <div>
+                              <span className="font-medium">{parseFloat(rcti.hours || "0").toFixed(1)}</span>
+                              <span className="text-muted-foreground text-xs">h</span>
+                              <div className="text-[10px] text-amber-600">via RCTI</div>
+                            </div>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-3 py-2.5">
+                          <RowStatusBadge
+                            ts={ts}
+                            isPending={isPending}
+                            onApprove={() => ts && statusMutation.mutate({ id: ts.id, status: "APPROVED" })}
+                            onReject={() => ts && statusMutation.mutate({ id: ts.id, status: "REJECTED" })}
+                          />
+                        </td>
+
+                        {/* Invoice / RCTI */}
+                        <td className="px-3 py-2.5">
+                          {inv ? (
+                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${INVOICE_STATUS_COLORS[inv.status] || "bg-gray-100 text-gray-600"}`}>
+                              {inv.invoiceNumber || inv.status}
+                            </span>
+                          ) : rcti && row.isRctiClient ? (
+                            <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                              <Receipt className="w-2.5 h-2.5" />
+                              {rcti.reference || "RCTI"}
+                            </span>
+                          ) : <span className="text-xs text-muted-foreground">—</span>}
+                        </td>
+
+                        {/* Flags */}
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center gap-1">
+                            {isLocked && (
+                              <span title="Locked for payroll" className="text-muted-foreground">
+                                <Lock className="w-3 h-3" />
+                              </span>
+                            )}
+                            {hasDiscrepancy && (
+                              <button
+                                title="RCTI discrepancy — click to resolve"
+                                className="text-amber-500 hover:text-amber-600"
+                                onClick={() => setDiscrepancyDialog(rk)}
+                              >
+                                <AlertCircle className="w-3 h-3" />
+                              </button>
+                            )}
                           </div>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
+                        </td>
 
-                      {/* Status */}
-                      <td className="px-3 py-2.5">
-                        <RowStatusBadge
+                        {/* Actions */}
+                        <td className="px-3 py-2.5 text-right">
+                          {(canCreateInvoice || canLinkRcti || canLock || canResolveDiscrepancy) ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-6 w-6">
+                                  <MoreHorizontal className="w-3.5 h-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="text-sm">
+                                {canCreateInvoice && (
+                                  <DropdownMenuItem onClick={() => setInvoiceDialog(rk)}>
+                                    <DollarSign className="w-3.5 h-3.5 mr-2" />
+                                    Create Invoice
+                                  </DropdownMenuItem>
+                                )}
+                                {canLinkRcti && (
+                                  <DropdownMenuItem onClick={() => setLinkRctiDialog(rk)}>
+                                    <LinkIcon className="w-3.5 h-3.5 mr-2" />
+                                    Link RCTI
+                                  </DropdownMenuItem>
+                                )}
+                                {canLock && (
+                                  <DropdownMenuItem onClick={() => setLockDialog(rk)}>
+                                    <Lock className="w-3.5 h-3.5 mr-2" />
+                                    Lock for Payroll
+                                  </DropdownMenuItem>
+                                )}
+                                {canResolveDiscrepancy && (
+                                  <DropdownMenuItem onClick={() => setDiscrepancyDialog(rk)}>
+                                    <AlertCircle className="w-3.5 h-3.5 mr-2 text-amber-500" />
+                                    Resolve Discrepancy
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : null}
+                        </td>
+                      </tr>
+
+                      {/* Inline dialogs — rendered as siblings so they don't break table layout */}
+                      {ts && invoiceDialog === rk && (
+                        <CreateInvoiceDialog
+                          key={`inv-${rk}`}
+                          employee={row.employee}
+                          placement={row.placement}
                           ts={ts}
-                          isPending={isPending}
-                          onApprove={() => ts && statusMutation.mutate({ id: ts.id, status: "APPROVED" })}
-                          onReject={() => ts && statusMutation.mutate({ id: ts.id, status: "REJECTED" })}
+                          month={month}
+                          year={year}
+                          open={true}
+                          onClose={() => setInvoiceDialog(null)}
                         />
-                      </td>
-
-                      {/* Invoice / RCTI */}
-                      <td className="px-3 py-2.5">
-                        {inv ? (
-                          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${INVOICE_STATUS_COLORS[inv.status] || "bg-gray-100 text-gray-600"}`}>
-                            {inv.invoiceNumber || inv.status}
-                          </span>
-                        ) : rcti && row.isRctiClient ? (
-                          <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                            <Receipt className="w-2.5 h-2.5" />
-                            {rcti.reference || "RCTI"}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </td>
-
-                      {/* Flags */}
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-1">
-                          {isLocked && (
-                            <span title="Locked for payroll" className="text-muted-foreground">
-                              <Lock className="w-3 h-3" />
-                            </span>
-                          )}
-                          {hasDiscrepancy && (
-                            <span title={`RCTI discrepancy: ${(ts as any).discrepancyStatus}`} className="text-amber-500">
-                              <AlertCircle className="w-3 h-3" />
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                      )}
+                      {ts && linkRctiDialog === rk && (
+                        <LinkRctiDialog
+                          key={`rcti-${rk}`}
+                          employee={row.employee}
+                          clientId={row.clientId}
+                          clientName={row.clientName}
+                          ts={ts}
+                          month={month}
+                          year={year}
+                          rctis={rctis || []}
+                          open={true}
+                          onClose={() => setLinkRctiDialog(null)}
+                        />
+                      )}
+                      {ts && lockDialog === rk && (
+                        <PayrollLockDialog
+                          key={`lock-${rk}`}
+                          employee={row.employee}
+                          ts={ts}
+                          open={true}
+                          onClose={() => setLockDialog(null)}
+                        />
+                      )}
+                      {ts && rcti && discrepancyDialog === rk && (
+                        <DiscrepancyDialog
+                          key={`disc-${rk}`}
+                          employee={row.employee}
+                          ts={ts}
+                          rcti={rcti}
+                          open={true}
+                          onClose={() => setDiscrepancyDialog(null)}
+                        />
+                      )}
+                    </>
                   );
                 })
               )}
@@ -2976,12 +3483,11 @@ function ReconciliationView() {
         </div>
       )}
 
-      {/* Legend */}
       <div className="flex items-center gap-4 text-[10px] text-muted-foreground flex-wrap">
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-200 dark:bg-red-900/40" /> Missing timesheet</div>
-        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-200 dark:bg-amber-900/40" /> Needs action (submitted or rejected)</div>
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-200 dark:bg-amber-900/40" /> Needs action</div>
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-white border dark:bg-transparent" /> In progress</div>
-        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-green-200 dark:bg-green-900/40" /> Approved / complete</div>
+        <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-green-200 dark:bg-green-900/40" /> Approved</div>
         <div className="flex items-center gap-1"><Lock className="w-3 h-3" /> Payroll locked</div>
         <div className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-amber-500" /> RCTI discrepancy</div>
       </div>
