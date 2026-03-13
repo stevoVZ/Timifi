@@ -78,6 +78,9 @@ export const timesheets = pgTable("timesheets", {
   source: text("source"),
   submittedAt: timestamp("submitted_at"),
   reviewedAt: timestamp("reviewed_at"),
+  rctiId: varchar("rcti_id").references(() => rctis.id),
+  lockedByPayRunId: text("locked_by_pay_run_id"),
+  discrepancyStatus: text("discrepancy_status").default("NONE"),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -597,6 +600,7 @@ export const rctis = pgTable("rctis", {
   reference: text("reference"),
   receivedDate: date("received_date"),
   bankTransactionId: varchar("bank_transaction_id"),
+  timesheetId: varchar("timesheet_id").references(() => timesheets.id),
   status: rctiStatusEnum("status").notNull().default("DRAFT"),
   source: text("source").default("MANUAL"),
   tenantId: varchar("tenant_id"),
@@ -658,3 +662,4 @@ export const invoicePayments = pgTable("invoice_payments", {
 export const insertInvoicePaymentSchema = createInsertSchema(invoicePayments).omit({ id: true, createdAt: true });
 export type InvoicePayment = typeof invoicePayments.$inferSelect;
 export type InsertInvoicePayment = z.infer<typeof insertInvoicePaymentSchema>;
+
