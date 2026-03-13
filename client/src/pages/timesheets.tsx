@@ -24,6 +24,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -39,7 +46,7 @@ import {
   X, Eye, Loader2, Info, ArrowRight, UploadCloud, FilePlus, Users,
   ChevronLeft, ChevronRight, Trash2, LayoutGrid, Lock, AlertCircle, Receipt,
   MoreHorizontal, Link2 as LinkIcon, FileCheck, DollarSign,
-  Inbox, FolderOpen, LockOpen, Download,
+  Inbox, FolderOpen, LockOpen, Download, History,
 } from "lucide-react";
 import type { Timesheet, Employee, Document as DocType } from "@shared/schema";
 
@@ -2470,6 +2477,18 @@ function MonthlyHoursView() {
                                       {s}
                                     </DropdownMenuItem>
                                   ))}
+                                {canUnlock && (
+                                  <DropdownMenuItem onClick={() => setUnlockDialog(rk)}>
+                                    <LockOpen className="w-3.5 h-3.5 mr-2" />
+                                    Unlock Timesheet
+                                  </DropdownMenuItem>
+                                )}
+                                {ts && (
+                                  <DropdownMenuItem onClick={() => setHistoryTs(ts)}>
+                                    <History className="w-3.5 h-3.5 mr-2" />
+                                    View History
+                                  </DropdownMenuItem>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           ) : (
@@ -3080,6 +3099,7 @@ function ReconciliationView() {
   const [lockDialog, setLockDialog] = useState<string | null>(null);
   const [discrepancyDialog, setDiscrepancyDialog] = useState<string | null>(null);
   const [unlockDialog, setUnlockDialog] = useState<string | null>(null);
+  const [historyTs, setHistoryTs] = useState<Timesheet | null>(null);
 
   const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
   const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
@@ -3502,6 +3522,14 @@ function ReconciliationView() {
         </div>
       )}
 
+      {historyTs && (
+        <AuditLogSheet
+          ts={historyTs}
+          open={!!historyTs}
+          onClose={() => setHistoryTs(null)}
+        />
+      )}
+
       <div className="flex items-center gap-4 text-[10px] text-muted-foreground flex-wrap">
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-red-200 dark:bg-red-900/40" /> Missing timesheet</div>
         <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-amber-200 dark:bg-amber-900/40" /> Needs action</div>
@@ -3793,6 +3821,81 @@ function DocumentsView() {
 
       <PdfViewerDialog open={viewerOpen} onClose={() => setViewerOpen(false)} pdfData={viewerData} title={viewerTitle} />
     </div>
+  );
+}
+
+// -- Audit Log Sheet ----------------------------------------------------------
+
+function AuditLogSheet({
+  ts, open, onClose,
+}: {
+  ts: Timesheet;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { data: logs, isLoading } = useQuery<any[]>({
+    queryKey: ["/api/timesheets", ts.id, "history"],
+    queryFn: async () => {
+      const res = await fetch(`/api/timesheets/${ts.id}/history`);
+      return res.json();
+    },
+    enabled: open,
+  });
+  const SOURCE_LABELS: Record<string, string> = {
+    MANUAL_EDIT: "Manual Edit", PDF_UPLOAD: "PDF Upload", XERO_SYNC: "Xero Sync",
+    RCTI_LINK: "RCTI Link", INBOX_APPROVE: "Inbox Approve", INBOX_REJECT: "Inbox Reject",
+    PAYROLL_LOCK: "Payroll Lock", PAYROLL_UNLOCK: "Payroll Unlock",
+    ADMIN_ENTRY: "Admin Entry", PORTAL: "Portal",
+  };
+  return (
+    <Sheet open={open} onOpenChange={v => !v && onClose()}>
+      <SheetContent className="w-[440px] sm:w-[540px] overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            <History className="w-4 h-4" />
+            Audit History
+          </SheetTitle>
+          <SheetDescription>
+            {ts.employeeId} · {MONTHS[(ts as any).month || 1]} {(ts as any).year}
+          </SheetDescription>
+        </SheetHeader>
+        <div className="mt-6 space-y-3">
+          {isLoading ? (
+            <div className="space-y-2">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="h-14 rounded-md bg-muted animate-pulse" />
+              ))}
+            </div>
+          ) : !logs || logs.length === 0 ? (
+            <div className="text-center py-12 text-sm text-muted-foreground">
+              No history recorded for this timesheet.
+            </div>
+          ) : (
+            logs.map((log: any) => (
+              <div key={log.id} className="rounded-md border border-border/60 p-3 text-sm space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium capitalize">{log.field}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {new Date(log.createdAt).toLocaleString("en-AU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="line-through">{log.oldValue ?? "—"}</span>
+                  <span>→</span>
+                  <span className="text-foreground font-medium">{log.newValue ?? "—"}</span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                  <span className="rounded bg-muted px-1.5 py-0.5">
+                    {SOURCE_LABELS[log.changeSource] || log.changeSource}
+                  </span>
+                  {log.changedBy && <span>by {log.changedBy}</span>}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
