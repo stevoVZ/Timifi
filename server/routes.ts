@@ -3449,6 +3449,7 @@ export async function registerRoutes(
               receivedDate: txn.date,
               bankTransactionId: txn.id,
               status: "RECEIVED",
+              source: "AUTO_MATCH",
             });
             created++;
             continue;
@@ -3480,6 +3481,7 @@ export async function registerRoutes(
           receivedDate: txn.date,
           bankTransactionId: txn.id,
           status: "RECEIVED",
+          source: "AUTO_MATCH",
         });
         created++;
       }
