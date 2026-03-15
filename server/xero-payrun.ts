@@ -213,8 +213,12 @@ export async function pushPayRunToXero(opts: {
       throw new Error(`Xero create pay run failed (${createRes.status}): ${parseXeroErrorMessage(body)}`);
     }
 
-    const createData = (await createRes.json()) as { PayRuns?: any[] };
-    payRun = createData.PayRuns?.[0];
+    const createData = await createRes.json();
+    if (Array.isArray(createData)) {
+      payRun = createData[0];
+    } else {
+      payRun = createData.PayRuns?.[0];
+    }
     if (!payRun) throw new Error("Xero did not return a pay run after creation");
   }
 
