@@ -587,27 +587,6 @@ export async function pushPayRunToXero(opts: {
     errors.push(`Reused existing draft pay run for this period (${opts.periodStart} to ${opts.periodEnd})`);
   }
 
-  let ordinaryEarningsRateId: string | null = null;
-  try {
-    const piRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayItems", {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Xero-Tenant-Id": tenantId,
-        Accept: "application/json",
-      },
-    });
-    if (piRes.ok) {
-      const piData = (await piRes.json()) as { PayItems?: any };
-      const earningsRates = piData.PayItems?.EarningsRates || [];
-      const ordinary = earningsRates.find(
-        (r: any) =>
-          (r.Name || "").toLowerCase().includes("ordinary") ||
-          r.EarningsType === "REGULAREARNINGS"
-      );
-      if (ordinary) ordinaryEarningsRateId = ordinary.EarningsRateID;
-    }
-  } catch {}
-
   for (const payslip of payslips) {
     const empData = employeeMap.get(payslip.EmployeeID);
     if (!empData || empData.hours <= 0) {
@@ -615,25 +594,76 @@ export async function pushPayRunToXero(opts: {
       continue;
     }
 
-    const earningsLine: any = {
-      NumberOfUnits: empData.hours,
-      RatePerUnit: empData.rate,
-    };
-    if (empData.earningsRateId || ordinaryEarningsRateId) {
-      earningsLine.EarningsRateID = empData.earningsRateId || ordinaryEarningsRateId;
-    }
-
-    const updateBody = {
-      PayslipID: payslip.PayslipID,
-      EmployeeID: payslip.EmployeeID,
-      EarningsLines: [earningsLine],
-      // Explicitly clear any stale manual tax/deduction overrides on existing drafts
-      TaxLines: [],
-      DeductionLines: [],
-      ReimbursementLines: [],
-    };
-
     try {
+      // Step 1: Fetch the full existing payslip from Xero to preserve all existing data
+      // (rate, tax type, deductions, super fund, leave lines, etc.)
+      const fullPsRes = await xeroFetch(
+        `https://api.xero.com/payroll.xro/1.0/Payslip/${payslip.PayslipID}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Xero-Tenant-Id": tenantId,
+            Accept: "application/json",
+          },
+        }
+      );
+
+      let updateBody: any;
+
+      if (fullPsRes.ok) {
+        const fullPsData = (await fullPsRes.json()) as { Payslip?: any };
+        const existingPayslip = fullPsData.Payslip;
+
+        if (existingPayslip) {
+          // Step 2: Clone the existing payslip and only update NumberOfUnits
+          // on the primary earnings line — preserve rate, tax, deductions, super, etc.
+          const existingEarningsLines: any[] = existingPayslip.EarningsLines || [];
+
+          let updatedEarningsLines: any[];
+          if (existingEarningsLines.length > 0) {
+            // Update hours on the first (primary) earnings line only, keep everything else
+            updatedEarningsLines = existingEarningsLines.map((el: any, idx: number) => {
+              if (idx === 0) {
+                return { ...el, NumberOfUnits: empData.hours };
+              }
+              return el;
+            });
+          } else {
+            // No existing earnings lines — create one using Timifi rate as fallback
+            updatedEarningsLines = [{
+              NumberOfUnits: empData.hours,
+              RatePerUnit: empData.rate,
+            }];
+          }
+
+          updateBody = {
+            PayslipID: existingPayslip.PayslipID,
+            EmployeeID: existingPayslip.EmployeeID,
+            EarningsLines: updatedEarningsLines,
+            // Preserve all existing lines from Xero — don't override
+            ...(existingPayslip.TaxLines?.length > 0 && { TaxLines: existingPayslip.TaxLines }),
+            ...(existingPayslip.DeductionLines?.length > 0 && { DeductionLines: existingPayslip.DeductionLines }),
+            ...(existingPayslip.SuperLines?.length > 0 && { SuperLines: existingPayslip.SuperLines }),
+            ...(existingPayslip.ReimbursementLines?.length > 0 && { ReimbursementLines: existingPayslip.ReimbursementLines }),
+          };
+        } else {
+          // Fallback if payslip not found in response
+          updateBody = {
+            PayslipID: payslip.PayslipID,
+            EmployeeID: payslip.EmployeeID,
+            EarningsLines: [{ NumberOfUnits: empData.hours, RatePerUnit: empData.rate }],
+          };
+        }
+      } else {
+        // Fallback if fetch failed
+        updateBody = {
+          PayslipID: payslip.PayslipID,
+          EmployeeID: payslip.EmployeeID,
+          EarningsLines: [{ NumberOfUnits: empData.hours, RatePerUnit: empData.rate }],
+        };
+      }
+
+      // Step 3: Push the updated payslip back to Xero
       const updateRes = await xeroFetch(
         `https://api.xero.com/payroll.xro/1.0/Payslip/${payslip.PayslipID}`,
         {
