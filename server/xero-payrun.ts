@@ -335,6 +335,104 @@ export async function getAvailablePayPeriods(): Promise<PayPeriodOption[]> {
   return periods;
 }
 
+
+export interface XeroPayslipData {
+  xeroEmployeeId: string;
+  firstName: string;
+  lastName: string;
+  hours: number;       // NumberOfUnits from EarningsLines
+  ratePerUnit: number; // RatePerUnit from EarningsLines
+}
+
+export async function getXeroPayslipHours(
+  payRunId: string
+): Promise<XeroPayslipData[]> {
+  const { accessToken, tenantId } = await refreshTokenIfNeeded();
+
+  // Fetch the pay run detail (includes Payslips with EmployeeID)
+  const prRes = await xeroFetch(
+    `https://api.xero.com/payroll.xro/1.0/PayRuns/${payRunId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        Accept: "application/json",
+      },
+    }
+  );
+  if (!prRes.ok) throw new Error(`Xero PayRun fetch failed (${prRes.status})`);
+  const prData = (await prRes.json()) as { PayRuns?: any[] };
+  const payRun = prData.PayRuns?.[0];
+  if (!payRun) throw new Error("Pay run not found in Xero");
+
+  const payslipStubs: any[] = payRun.Payslips || [];
+
+  // Fetch full employee list for name resolution
+  const empRes = await xeroFetch(
+    "https://api.xero.com/payroll.xro/1.0/Employees",
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        Accept: "application/json",
+      },
+    }
+  );
+  const empData = empRes.ok
+    ? ((await empRes.json()) as { Employees?: any[] })
+    : { Employees: [] };
+  const xeroEmpMap = new Map<string, { firstName: string; lastName: string }>();
+  for (const xe of empData.Employees || []) {
+    xeroEmpMap.set(xe.EmployeeID, {
+      firstName: xe.FirstName || "",
+      lastName: xe.LastName || "",
+    });
+  }
+
+  const results: XeroPayslipData[] = [];
+
+  for (const stub of payslipStubs) {
+    // Fetch individual payslip to get EarningsLines
+    const psRes = await xeroFetch(
+      `https://api.xero.com/payroll.xro/1.0/Payslip/${stub.PayslipID}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Xero-Tenant-Id": tenantId,
+          Accept: "application/json",
+        },
+      }
+    );
+    if (!psRes.ok) continue;
+    const psData = (await psRes.json()) as { Payslip?: any };
+    const ps = psData.Payslip;
+    if (!ps) continue;
+
+    const earningsLines: any[] = ps.EarningsLines || [];
+    const totalHours = earningsLines.reduce(
+      (sum: number, el: any) => sum + (parseFloat(el.NumberOfUnits) || 0),
+      0
+    );
+    const ratePerUnit =
+      earningsLines.length > 0
+        ? parseFloat(earningsLines[0].RatePerUnit) || 0
+        : 0;
+
+    const emp = xeroEmpMap.get(stub.EmployeeID);
+    results.push({
+      xeroEmployeeId: stub.EmployeeID,
+      firstName: emp?.firstName || "",
+      lastName: emp?.lastName || "",
+      hours: totalHours,
+      ratePerUnit,
+    });
+
+    await new Promise(r => setTimeout(r, 200)); // rate-limit courtesy
+  }
+
+  return results;
+}
+
 export async function pushPayRunToXero(opts: {
   calendarId: string;
   periodStart: string;
