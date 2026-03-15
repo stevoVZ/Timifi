@@ -311,8 +311,25 @@ function UploadView() {
   };
 
   const updItem = useCallback((id: string, patch: Partial<QueueItem>) => {
-    setQueue((q) => q.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-  }, []);
+    setQueue((q) => q.map((item) => {
+      if (item.id !== id) return item;
+      const updated = { ...item, ...patch };
+      const empChanged = "assignedEmployeeId" in patch;
+      const periodChanged = "assignedMonth" in patch || "assignedYear" in patch;
+      if ((empChanged || periodChanged) && !("assignedPlacementId" in patch) && allPlacements && updated.assignedEmployeeId) {
+        const empPlacements = getPlacementsForEmployee(allPlacements, updated.assignedEmployeeId, updated.assignedMonth, updated.assignedYear);
+        if (empPlacements.length === 1) {
+          updated.assignedPlacementId = empPlacements[0].id;
+        } else {
+          updated.assignedPlacementId = null;
+        }
+      }
+      if (empChanged && !patch.assignedEmployeeId) {
+        updated.assignedPlacementId = null;
+      }
+      return updated;
+    }));
+  }, [allPlacements]);
 
   const matchEmployee = useCallback((name: string | null | undefined): string | null => {
     if (!name || activeEmployees.length === 0) return null;
@@ -423,7 +440,7 @@ function UploadView() {
     if (!i.assignedEmployeeId || !allPlacements) return true;
     const m = i.assignedMonth || new Date().getMonth() + 1;
     const y = i.assignedYear || new Date().getFullYear();
-    const empPlacements = getPlacementsForEmployee(allPlacements as any as PlacementOption[], i.assignedEmployeeId, m, y);
+    const empPlacements = getPlacementsForEmployee(allPlacements || [], i.assignedEmployeeId, m, y);
     if (empPlacements.length <= 1) return true;
     return !!i.assignedPlacementId;
   });
@@ -907,7 +924,9 @@ function UploadView() {
               onAssignEmployee={(empId) => updItem(item.id, { assignedEmployeeId: empId })}
               onAssignMonth={(m) => updItem(item.id, { assignedMonth: m })}
               onAssignYear={(y) => updItem(item.id, { assignedYear: y })}
+              onAssignPlacement={(id) => updItem(item.id, { assignedPlacementId: id })}
               employees={activeEmployees}
+              placements={allPlacements || []}
               duplicateWarning={getDuplicateWarning(item)}
             />
           ))}
@@ -1203,7 +1222,8 @@ function PdfViewerDialog({
 
 function FileQueueCard({
   item, idx, expanded, onToggleExpand, onExclude, onRemove,
-  onAssignEmployee, onAssignMonth, onAssignYear, employees, duplicateWarning,
+  onAssignEmployee, onAssignMonth, onAssignYear, onAssignPlacement,
+  employees, placements, duplicateWarning,
 }: {
   item: QueueItem;
   idx: number;
@@ -1214,13 +1234,18 @@ function FileQueueCard({
   onAssignEmployee: (id: string) => void;
   onAssignMonth: (m: number) => void;
   onAssignYear: (y: number) => void;
+  onAssignPlacement: (id: string | null) => void;
   employees: Employee[];
+  placements: PlacementOption[];
   duplicateWarning: string | null;
 }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const r = item.result;
   const assignedEmp = employees.find((e) => e.id === item.assignedEmployeeId);
   const confColor = !r ? "text-muted-foreground" : r.confidence >= 90 ? "text-green-600" : r.confidence >= 70 ? "text-amber-600" : "text-red-600";
+  const empPlacements = item.assignedEmployeeId
+    ? getPlacementsForEmployee(placements, item.assignedEmployeeId, item.assignedMonth, item.assignedYear)
+    : [];
 
   return (
     <>
@@ -1283,59 +1308,75 @@ function FileQueueCard({
               </div>
 
               {r && !item.excluded && item.status === "done" && (
-                <div className="mt-2 flex items-center gap-2 flex-wrap">
-                  <Select
-                    value={item.assignedEmployeeId || ""}
-                    onValueChange={(v) => onAssignEmployee(v)}
-                  >
-                    <SelectTrigger className={`h-7 text-xs w-[160px] ${!item.assignedEmployeeId ? "border-amber-300 dark:border-amber-700" : ""}`} data-testid={`select-employee-${item.id}`}>
-                      <SelectValue placeholder="Select employee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {employees.map((e) => (
-                        <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <>
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <Select
+                      value={item.assignedEmployeeId || ""}
+                      onValueChange={(v) => onAssignEmployee(v)}
+                    >
+                      <SelectTrigger className={`h-7 text-xs w-[160px] ${!item.assignedEmployeeId ? "border-amber-300 dark:border-amber-700" : ""}`} data-testid={`select-employee-${item.id}`}>
+                        <SelectValue placeholder="Select employee" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {employees.map((e) => (
+                          <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
 
-                  <Select
-                    value={String(item.assignedMonth)}
-                    onValueChange={(v) => onAssignMonth(parseInt(v))}
-                  >
-                    <SelectTrigger className="h-7 text-xs w-[100px]" data-testid={`select-month-${item.id}`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {MONTHS.slice(1).map((m, i) => (
-                        <SelectItem key={i + 1} value={String(i + 1)}>{m.slice(0, 3)}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <Select
+                      value={String(item.assignedMonth)}
+                      onValueChange={(v) => onAssignMonth(parseInt(v))}
+                    >
+                      <SelectTrigger className="h-7 text-xs w-[100px]" data-testid={`select-month-${item.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MONTHS.slice(1).map((m, i) => (
+                          <SelectItem key={i + 1} value={String(i + 1)}>{m.slice(0, 3)}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
 
-                  <Select
-                    value={String(item.assignedYear)}
-                    onValueChange={(v) => onAssignYear(parseInt(v))}
-                  >
-                    <SelectTrigger className="h-7 text-xs w-[80px]" data-testid={`select-year-${item.id}`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map((y) => (
-                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <Select
+                      value={String(item.assignedYear)}
+                      onValueChange={(v) => onAssignYear(parseInt(v))}
+                    >
+                      <SelectTrigger className="h-7 text-xs w-[80px]" data-testid={`select-year-${item.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1].map((y) => (
+                          <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
 
-                  {item.excluded ? (
-                    <Button variant="outline" size="sm" className="h-7 px-2 text-xs border-green-200 text-green-700 dark:border-green-800 dark:text-green-400" onClick={onExclude} data-testid={`button-exclude-${item.id}`}>
-                      Include
-                    </Button>
-                  ) : (
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={onExclude} data-testid={`button-exclude-${item.id}`}>
-                      Skip
-                    </Button>
+                    {item.excluded ? (
+                      <Button variant="outline" size="sm" className="h-7 px-2 text-xs border-green-200 text-green-700 dark:border-green-800 dark:text-green-400" onClick={onExclude} data-testid={`button-exclude-${item.id}`}>
+                        Include
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={onExclude} data-testid={`button-exclude-${item.id}`}>
+                        Skip
+                      </Button>
+                    )}
+                  </div>
+                  {empPlacements.length > 0 && (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground whitespace-nowrap">Placement:</span>
+                      <PlacementSelect
+                        placements={empPlacements}
+                        value={item.assignedPlacementId}
+                        onChange={onAssignPlacement}
+                        testId={`select-placement-${item.id}`}
+                      />
+                      {empPlacements.length > 1 && !item.assignedPlacementId && (
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400 whitespace-nowrap">⚠ Select placement</span>
+                      )}
+                    </div>
                   )}
-                </div>
+                </>
               )}
 
               {duplicateWarning && !item.excluded && (
@@ -1520,7 +1561,7 @@ function SubmissionsView() {
     if (!manualEmployeeId || !placements) return [];
     const m = parseInt(manualMonth);
     const y = parseInt(manualYear);
-    return getPlacementsForEmployee(placements as any as PlacementOption[], manualEmployeeId, m, y);
+    return getPlacementsForEmployee(placements || [], manualEmployeeId, m, y);
   }, [manualEmployeeId, placements, manualMonth, manualYear]);
 
   useEffect(() => {
@@ -2137,19 +2178,7 @@ function TimesheetRow({
   );
 }
 
-interface PlacementData {
-  id: string;
-  employeeId: string;
-  clientId: string | null;
-  clientName: string | null;
-  chargeOutRate: string | null;
-  payRate: string | null;
-  status: string;
-  startDate: string | null;
-  endDate: string | null;
-}
-
-function getActiveRate(placement: PlacementData | null, emp: Employee): { rate: number; source: "placement" | "employee" | "none" } {
+function getActiveRate(placement: PlacementOption | null, emp: Employee): { rate: number; source: "placement" | "employee" | "none" } {
   if (placement?.payRate) {
     const r = parseFloat(placement.payRate);
     if (r > 0) return { rate: r, source: "placement" };
@@ -2173,7 +2202,7 @@ function MonthlyHoursView() {
 
   const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
   const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
-  const { data: placements } = useQuery<PlacementData[]>({ queryKey: ["/api/placements"] });
+  const { data: placements } = useQuery<PlacementOption[]>({ queryKey: ["/api/placements"] });
   const { data: expectedHoursData } = useQuery<{ id: string; employeeId: string; month: number; year: number; expectedDays: string | null; expectedHours: string }[]>({
     queryKey: ["/api/expected-hours", month, year],
     queryFn: async () => {
@@ -2256,7 +2285,7 @@ function MonthlyHoursView() {
   const periodEnd = new Date(year, month, 0);
 
   const placementRows = useMemo(() => {
-    const rows: { employee: Employee; placement: PlacementData | null; clientName: string; rowKey: string }[] = [];
+    const rows: { employee: Employee; placement: PlacementOption | null; clientName: string; rowKey: string }[] = [];
 
     for (const emp of activeEmployees) {
       const empPlacements = (placements || []).filter(p => {
@@ -2308,17 +2337,17 @@ function MonthlyHoursView() {
       const hasMultiple = placementRows.filter(r => r.employee.id === empId && r.placement).length > 1;
 
       if (placementId) {
-        const byPlacement = periodTs.find(t => t.employeeId === empId && (t as any).placementId === placementId);
+        const byPlacement = periodTs.find(t => t.employeeId === empId && t.placementId === placementId);
         if (byPlacement) { map.set(row.rowKey, byPlacement); claimed.add(byPlacement.id); continue; }
         if (!hasMultiple) {
-          const byEmp = periodTs.find(t => t.employeeId === empId && !(t as any).placementId);
+          const byEmp = periodTs.find(t => t.employeeId === empId && !t.placementId);
           if (byEmp) { map.set(row.rowKey, byEmp); claimed.add(byEmp.id); continue; }
         }
-        const unlinked = periodTs.find(t => t.employeeId === empId && !(t as any).placementId && !claimed.has(t.id));
+        const unlinked = periodTs.find(t => t.employeeId === empId && !t.placementId && !claimed.has(t.id));
         if (unlinked) { map.set(row.rowKey, unlinked); claimed.add(unlinked.id); continue; }
         map.set(row.rowKey, null);
       } else {
-        const byEmp = periodTs.find(t => t.employeeId === empId && !(t as any).placementId);
+        const byEmp = periodTs.find(t => t.employeeId === empId && !t.placementId);
         map.set(row.rowKey, byEmp || null);
       }
     }
@@ -2329,7 +2358,7 @@ function MonthlyHoursView() {
     return timesheetByRow.get(rowKey) || null;
   };
 
-  const isTimesheetUnlinked = (ts: Timesheet | null) => !!(ts && !(ts as any).placementId);
+  const isTimesheetUnlinked = (ts: Timesheet | null) => !!(ts && !ts.placementId);
 
   const [linkPlacementDialog, setLinkPlacementDialog] = useState<{ tsId: string; empId: string } | null>(null);
 
@@ -2379,7 +2408,7 @@ function MonthlyHoursView() {
     setEditing(prev => { const next = { ...prev }; delete next[rowKey]; return next; });
   };
 
-  const saveEdit = (rowKey: string, emp: Employee, placement: PlacementData | null, ts: Timesheet | null) => {
+  const saveEdit = (rowKey: string, emp: Employee, placement: PlacementOption | null, ts: Timesheet | null) => {
     const edit = editing[rowKey];
     if (!edit) return;
 
@@ -2506,7 +2535,7 @@ function MonthlyHoursView() {
                     const hasOtherPlacementRows = empPlacementCount > 1;
                     const timesheet = getTimesheet(employee.id, placement?.id || null, hasOtherPlacementRows, rowKey);
                     const ts = timesheet;
-                    const isLocked = !!(ts && (ts as any).lockedByPayRunId);
+                    const isLocked = !!(ts && ts.lockedByPayRunId);
                     const canUnlock = !!(ts && isLocked);
                     const isRowEditing = !!editing[rowKey];
                     const edit = editing[rowKey];
@@ -2753,13 +2782,13 @@ function MonthlyHoursView() {
 }
 
 function LinkPlacementDialog({ tsId, empId, month, year, placements, open, onClose }: {
-  tsId: string; empId: string; month: number; year: number; placements: PlacementData[]; open: boolean; onClose: () => void;
+  tsId: string; empId: string; month: number; year: number; placements: PlacementOption[]; open: boolean; onClose: () => void;
 }) {
   const { toast } = useToast();
   const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const empPlacements = getPlacementsForEmployee(placements as any as PlacementOption[], empId, month, year);
+  const empPlacements = getPlacementsForEmployee(placements || [], empId, month, year);
 
   const handleSave = async () => {
     if (!selectedPlacementId) return;
@@ -2921,7 +2950,7 @@ function CreateInvoiceDialog({
   employee, placement, ts, month, year, open, onClose,
 }: {
   employee: Employee;
-  placement: PlacementData | null;
+  placement: PlacementOption | null;
   ts: Timesheet;
   month: number;
   year: number;
@@ -3379,7 +3408,7 @@ function ReconciliationView() {
 
   const { data: employees } = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
   const { data: timesheets, isLoading } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
-  const { data: placements } = useQuery<PlacementData[]>({ queryKey: ["/api/placements"] });
+  const { data: placements } = useQuery<PlacementOption[]>({ queryKey: ["/api/placements"] });
   const { data: clients } = useQuery<ClientRow[]>({ queryKey: ["/api/clients"] });
   const { data: invoices } = useQuery<InvoiceRow[]>({ queryKey: ["/api/invoices"] });
   const { data: rctis } = useQuery<RctiRow[]>({ queryKey: ["/api/rctis"] });
@@ -3394,7 +3423,7 @@ function ReconciliationView() {
   const rows = useMemo(() => {
     const result: {
       employee: Employee;
-      placement: PlacementData | null;
+      placement: PlacementOption | null;
       clientName: string;
       clientId: string | null;
       isRctiClient: boolean;
@@ -3456,17 +3485,17 @@ function ReconciliationView() {
       const hasMultiple = rows.filter(r => r.employee.id === empId && r.placement).length > 1;
 
       if (placementId) {
-        const byP = periodTs.find(t => t.employeeId === empId && (t as any).placementId === placementId);
+        const byP = periodTs.find(t => t.employeeId === empId && t.placementId === placementId);
         if (byP) { map.set(row.rowKey, byP); claimed.add(byP.id); continue; }
         if (!hasMultiple) {
-          const byEmp = periodTs.find(t => t.employeeId === empId && !(t as any).placementId);
+          const byEmp = periodTs.find(t => t.employeeId === empId && !t.placementId);
           if (byEmp) { map.set(row.rowKey, byEmp); claimed.add(byEmp.id); continue; }
         }
-        const unlinked = periodTs.find(t => t.employeeId === empId && !(t as any).placementId && !claimed.has(t.id));
+        const unlinked = periodTs.find(t => t.employeeId === empId && !t.placementId && !claimed.has(t.id));
         if (unlinked) { map.set(row.rowKey, unlinked); claimed.add(unlinked.id); continue; }
         map.set(row.rowKey, null);
       } else {
-        const byEmp = periodTs.find(t => t.employeeId === empId && !(t as any).placementId);
+        const byEmp = periodTs.find(t => t.employeeId === empId && !t.placementId);
         map.set(row.rowKey, byEmp || null);
       }
     }
@@ -3477,7 +3506,7 @@ function ReconciliationView() {
     return timesheetByRow.get(rowKey) || null;
   };
 
-  const isTimesheetUnlinked = (ts: Timesheet | null) => !!(ts && !(ts as any).placementId);
+  const isTimesheetUnlinked = (ts: Timesheet | null) => !!(ts && !ts.placementId);
 
   const [linkPlacementDialog, setLinkPlacementDialog] = useState<{ tsId: string; empId: string } | null>(null);
 
@@ -3618,16 +3647,16 @@ function ReconciliationView() {
                   const rcti = getRcti(row.employee.id, row.clientId);
                   const inv = ts ? getInvoice(ts.id) : null;
                   const state = classify(ts, rcti, row.isRctiClient);
-                  const src = ts ? ((ts as any).source as string | null) : null;
+                  const src = ts ? (ts.source as string | null) : null;
                   const srcBadge = src ? SOURCE_BADGES[src] : null;
-                  const isLocked = !!(ts && (ts as any).lockedByPayRunId);
-                  const hasDiscrepancy = !!(ts && (ts as any).discrepancyStatus && (ts as any).discrepancyStatus !== "NONE" && (ts as any).discrepancyStatus !== "RESOLVED");
+                  const isLocked = !!(ts && ts.lockedByPayRunId);
+                  const hasDiscrepancy = !!(ts && ts.discrepancyStatus && ts.discrepancyStatus !== "NONE" && ts.discrepancyStatus !== "RESOLVED");
                   const isPending = !!(ts && pendingIds.has(ts.id));
                   const rk = row.rowKey;
 
                   // What actions are available for this row?
                   const canCreateInvoice = !!(ts && ts.status === "APPROVED" && !inv && !row.isRctiClient);
-                  const canLinkRcti = !!(ts && row.isRctiClient && !(ts as any).rctiId);
+                  const canLinkRcti = !!(ts && row.isRctiClient && !ts.rctiId);
                   const canLock = !!(ts && ts.status === "APPROVED" && !isLocked);
                   const canUnlock = !!(ts && isLocked);
                   const canResolveDiscrepancy = !!(hasDiscrepancy && ts && rcti);
@@ -3908,7 +3937,7 @@ function InboxView() {
   const discrepancies = useMemo(() => {
     if (!timesheets) return [];
     return timesheets.filter(t => {
-      const ds = (t as any).discrepancyStatus;
+      const ds = t.discrepancyStatus;
       return ds && ds !== "NONE" && ds !== "RESOLVED";
     });
   }, [timesheets]);
@@ -3920,11 +3949,11 @@ function InboxView() {
     for (const emp of activeEmps) {
       const hasTs = timesheets.some(t =>
         t.employeeId === emp.id &&
-        (t as any).month === prevMonth &&
-        (t as any).year === prevYear
+        t.month === prevMonth &&
+        t.year === prevYear
       );
       if (!hasTs) {
-        const pl = (placements || []).find((p: any) => p.employeeId === emp.id && p.status === "ACTIVE");
+        const pl = (placements || []).find(p => p.employeeId === emp.id && p.status === "ACTIVE");
         result.push({ employee: emp, clientName: pl?.clientName || "\u2014" });
       }
     }
@@ -3959,7 +3988,7 @@ function InboxView() {
                     <div>
                       <p className="text-sm font-medium">{empName(ts.employeeId)}</p>
                       <p className="text-xs text-muted-foreground">
-                        {MONTHS[(ts as any).month || 0]} {(ts as any).year} \u00b7 {(ts as any).totalHours ?? "\u2014"} hrs
+                        {MONTHS[ts.month || 0]} {ts.year} \u00b7 {ts.totalHours ?? "\u2014"} hrs
                       </p>
                     </div>
                     <div className="flex gap-2">
@@ -3990,7 +4019,7 @@ function InboxView() {
                     <div>
                       <p className="text-sm font-medium">{empName(ts.employeeId)}</p>
                       <p className="text-xs text-muted-foreground">
-                        {MONTHS[(ts as any).month || 0]} {(ts as any).year} \u00b7 {(ts as any).discrepancyStatus}
+                        {MONTHS[ts.month || 0]} {ts.year} \u00b7 {ts.discrepancyStatus}
                       </p>
                     </div>
                     <span className="text-xs text-amber-600 font-medium">Resolve in Reconciliation</span>
@@ -4067,13 +4096,13 @@ function DocumentsView() {
       const ts = timesheets.find(t => t.id === tsId);
       if (!ts) continue;
       const emp = empName(ts.employeeId);
-      const label = `${emp} \u2014 ${MONTHS[(ts as any).month || 0]} ${(ts as any).year}`;
+      const label = `${emp} \u2014 ${MONTHS[ts.month || 0]} ${ts.year}`;
       for (const doc of docs) out.push({ ts, doc, employee: emp, label });
     }
     out.sort((a, b) => {
-      const yDiff = ((b.ts as any).year || 0) - ((a.ts as any).year || 0);
+      const yDiff = (b.ts.year || 0) - (a.ts.year || 0);
       if (yDiff !== 0) return yDiff;
-      const mDiff = ((b.ts as any).month || 0) - ((a.ts as any).month || 0);
+      const mDiff = (b.ts.month || 0) - (a.ts.month || 0);
       if (mDiff !== 0) return mDiff;
       return a.employee.localeCompare(b.employee);
     });
@@ -4179,7 +4208,7 @@ function AuditLogSheet({
             Audit History
           </SheetTitle>
           <SheetDescription>
-            {ts.employeeId} · {MONTHS[(ts as any).month || 1]} {(ts as any).year}
+            {ts.employeeId} · {MONTHS[ts.month || 1]} {ts.year}
           </SheetDescription>
         </SheetHeader>
         <div className="mt-6 space-y-3">
@@ -4263,7 +4292,7 @@ function UnlockTimesheetDialog({
         <DialogHeader>
           <DialogTitle>Unlock Timesheet</DialogTitle>
           <DialogDescription>
-            {employee.firstName} {employee.lastName} \u2014 {(ts as any).month ? MONTHS[(ts as any).month] : ""} {(ts as any).year}
+            {employee.firstName} {employee.lastName} \u2014 {ts.month ? MONTHS[ts.month] : ""} {ts.year}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
