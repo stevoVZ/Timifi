@@ -228,6 +228,7 @@ export interface IStorage {
   getReferralBonus(id: string): Promise<ReferralBonus | undefined>;
   createReferralBonus(data: InsertReferralBonus): Promise<ReferralBonus>;
   updateReferralBonus(id: string, data: Partial<InsertReferralBonus>): Promise<ReferralBonus | undefined>;
+  deleteReferralBonus(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1254,6 +1255,13 @@ export class DatabaseStorage implements IStorage {
     if (t) conds.push(eq(referralBonuses.tenantId, t));
     const [bonus] = await db.update(referralBonuses).set({ ...data, updatedAt: new Date() }).where(and(...conds)).returning();
     return bonus;
+  }
+
+  async deleteReferralBonus(id: string): Promise<void> {
+    const t = await this.tid();
+    const conds = [eq(referralBonuses.id, id)];
+    if (t) conds.push(eq(referralBonuses.tenantId, t));
+    await db.delete(referralBonuses).where(and(...conds));
   }
 }
 

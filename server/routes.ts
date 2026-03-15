@@ -4193,6 +4193,18 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/referral-bonuses/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await storage.getReferralBonus(id);
+      if (!existing) return res.status(404).json({ message: "Referral bonus not found" });
+      await storage.deleteReferralBonus(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete referral bonus" });
+    }
+  });
+
   app.get("/api/referral-bonuses/payouts", async (req, res) => {
     try {
       const [allReferralBonuses, allInvoices, allRctis, allTimesheets, allExpectedHours] = await Promise.all([

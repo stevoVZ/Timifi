@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Gift, Plus, Pencil, Users, DollarSign, Calendar, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
+import { Gift, Plus, Pencil, Users, DollarSign, Calendar, ChevronDown, ChevronRight, RotateCcw, Trash2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import type { Employee } from "@shared/schema";
 
 interface ReferralBonusData {
@@ -114,6 +115,18 @@ export default function ReferralBonusesPage() {
     onSuccess: () => {
       invalidateAll();
       toast({ title: "Reactivated", description: "Referral bonus arrangement is active again." });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/referral-bonuses/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateAll();
+      toast({ title: "Deleted", description: "Referral bonus arrangement has been deleted." });
     },
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
@@ -457,6 +470,37 @@ export default function ReferralBonusesPage() {
                             Reactivate
                           </Button>
                         )}
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive hover:text-destructive"
+                              disabled={deleteMutation.isPending}
+                              data-testid={`button-mgmt-delete-${b.id}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent data-testid={`dialog-delete-confirm-${b.id}`}>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete referral bonus?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will permanently delete the referral bonus arrangement between {getName(b.referringEmployeeId)} and {getName(b.referredEmployeeId)}. This action cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel data-testid="button-delete-cancel">Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteMutation.mutate(b.id)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                data-testid="button-delete-confirm"
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </div>
                     {isExpanded && payout && payout.monthlyBreakdown.length > 0 && (
