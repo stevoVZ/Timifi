@@ -69,6 +69,11 @@ const SOURCE_BADGES: Record<string, { label: string; cls: string }> = {
 
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
+interface PlacementAllocation {
+  placementId: string;
+  hours: number;
+}
+
 interface QueueItem {
   id: string;
   file: File;
@@ -80,6 +85,7 @@ interface QueueItem {
   assignedMonth: number;
   assignedYear: number;
   assignedPlacementId: string | null;
+  assignedPlacements: PlacementAllocation[];
 }
 
 interface PlacementOption {
@@ -245,7 +251,7 @@ function UploadView() {
       return items.map((s: any) => {
         const f = new File([], s._fileName || "restored.pdf", { type: s._fileType || "application/pdf" });
         Object.defineProperty(f, "size", { value: s._fileSize || 0 });
-        return { ...s, file: f };
+        return { ...s, file: f, assignedPlacements: s.assignedPlacements || [] };
       });
     } catch { return []; }
   };
@@ -277,6 +283,7 @@ function UploadView() {
       assignedMonth: i.assignedMonth,
       assignedYear: i.assignedYear,
       assignedPlacementId: i.assignedPlacementId,
+      assignedPlacements: i.assignedPlacements,
     }));
     try { sessionStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(toSave)); } catch {}
   }, [queue]);
@@ -356,16 +363,23 @@ function UploadView() {
       const updated = { ...item, ...patch };
       const empChanged = "assignedEmployeeId" in patch;
       const periodChanged = "assignedMonth" in patch || "assignedYear" in patch;
-      if ((empChanged || periodChanged) && !("assignedPlacementId" in patch) && allPlacements && updated.assignedEmployeeId) {
+      if ((empChanged || periodChanged) && !("assignedPlacementId" in patch) && !("assignedPlacements" in patch) && allPlacements && updated.assignedEmployeeId) {
         const empPlacements = getPlacementsForEmployee(allPlacements, updated.assignedEmployeeId, updated.assignedMonth, updated.assignedYear);
         if (empPlacements.length === 1) {
           updated.assignedPlacementId = empPlacements[0].id;
+          updated.assignedPlacements = [{ placementId: empPlacements[0].id, hours: updated.result?.totalHours || 0 }];
+        } else if (empPlacements.length > 1) {
+          updated.assignedPlacementId = null;
+          const splitHours = Math.round(((updated.result?.totalHours || 0) / empPlacements.length) * 100) / 100;
+          updated.assignedPlacements = empPlacements.map(p => ({ placementId: p.id, hours: splitHours }));
         } else {
           updated.assignedPlacementId = null;
+          updated.assignedPlacements = [];
         }
       }
       if (empChanged && !patch.assignedEmployeeId) {
         updated.assignedPlacementId = null;
+        updated.assignedPlacements = [];
       }
       return updated;
     }));
@@ -396,7 +410,7 @@ function UploadView() {
       setQueue((q) => [...q, {
         id, file: f, fileBase64: null, status: "scanning", result: null, excluded: false,
         assignedEmployeeId: null, assignedMonth: targetMonth, assignedYear: targetYear,
-        assignedPlacementId: null,
+        assignedPlacementId: null, assignedPlacements: [],
       }]);
     });
 
@@ -431,9 +445,16 @@ function UploadView() {
           const m = parsed?.month || targetMonth;
           const y = parsed?.year || targetYear;
           let autoPlacement: string | null = null;
+          let autoPlacements: PlacementAllocation[] = [];
           if (empId && allPlacements) {
             const empPlacements = getPlacementsForEmployee(allPlacements, empId, m, y);
-            if (empPlacements.length === 1) autoPlacement = empPlacements[0].id;
+            if (empPlacements.length === 1) {
+              autoPlacement = empPlacements[0].id;
+              autoPlacements = [{ placementId: empPlacements[0].id, hours: result.totalHours }];
+            } else if (empPlacements.length > 1) {
+              const splitHours = Math.round((result.totalHours / empPlacements.length) * 100) / 100;
+              autoPlacements = empPlacements.map(p => ({ placementId: p.id, hours: splitHours }));
+            }
           }
           setQueue((prev) => prev.map((item) => (item.id === id ? {
             ...item,
@@ -443,6 +464,7 @@ function UploadView() {
             assignedMonth: m,
             assignedYear: y,
             assignedPlacementId: autoPlacement,
+            assignedPlacements: autoPlacements,
           } : item)));
         }
       });
@@ -482,30 +504,76 @@ function UploadView() {
     const y = i.assignedYear || new Date().getFullYear();
     const empPlacements = getPlacementsForEmployee(allPlacements || [], i.assignedEmployeeId, m, y);
     if (empPlacements.length <= 1) return true;
+    if (i.assignedPlacements?.length > 0) return true;
     return !!i.assignedPlacementId;
   });
   const canSubmit = allDone && doneActive.length > 0 && !anyScanning && allAssigned && allPlacementsResolved;
 
-  const grouped = doneActive.reduce<Record<string, QueueItem[]>>((acc, item) => {
-    const key = `${item.assignedEmployeeId}__${item.assignedMonth}__${item.assignedYear}__${item.assignedPlacementId || "none"}`;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(item);
-    return acc;
-  }, {});
+  interface GroupSummary {
+    empId: string;
+    emp: Employee | undefined;
+    month: number;
+    year: number;
+    items: QueueItem[];
+    totalHours: number;
+    regularHours: number;
+    overtimeHours: number;
+    grossValue: number;
+    placementId: string | null;
+    placement: PlacementOption | undefined | null;
+  }
 
-  const groupSummaries = Object.entries(grouped).map(([key, items]) => {
-    const [empId, monthStr, yearStr, placementKey] = key.split("__");
-    const emp = activeEmployees.find((e) => e.id === empId);
-    const month = parseInt(monthStr);
-    const year = parseInt(yearStr);
-    const totalHours = items.reduce((s, i) => s + (i.result?.totalHours || 0), 0);
-    const regularHours = items.reduce((s, i) => s + (i.result?.regularHours || 0), 0);
-    const overtimeHours = items.reduce((s, i) => s + (i.result?.overtimeHours || 0), 0);
-    const rate = emp ? parseFloat(emp.hourlyRate || "0") : 0;
-    const placementId = placementKey !== "none" ? placementKey : null;
-    const placement = placementId && allPlacements ? allPlacements.find(p => p.id === placementId) : null;
-    return { empId, emp, month, year, items, totalHours, regularHours, overtimeHours, grossValue: totalHours * rate, placementId, placement };
-  });
+  const groupSummaries = useMemo(() => {
+    const summaries: GroupSummary[] = [];
+    for (const item of doneActive) {
+      if (!item.result) continue;
+      const ap = item.assignedPlacements || [];
+      if (ap.length > 1) {
+        const totalItemHours = item.result.totalHours;
+        for (const alloc of ap) {
+          if (alloc.hours <= 0) continue;
+          const ratio = totalItemHours > 0 ? alloc.hours / totalItemHours : 0;
+          const emp = activeEmployees.find((e) => e.id === item.assignedEmployeeId);
+          const rate = emp ? parseFloat(emp.hourlyRate || "0") : 0;
+          const placement = allPlacements?.find(p => p.id === alloc.placementId) || null;
+          summaries.push({
+            empId: item.assignedEmployeeId!,
+            emp,
+            month: item.assignedMonth,
+            year: item.assignedYear,
+            items: [item],
+            totalHours: alloc.hours,
+            regularHours: Math.round(item.result.regularHours * ratio * 100) / 100,
+            overtimeHours: Math.round(item.result.overtimeHours * ratio * 100) / 100,
+            grossValue: alloc.hours * rate,
+            placementId: alloc.placementId,
+            placement,
+          });
+        }
+      } else {
+        const placementId = ap.length === 1
+          ? ap[0].placementId
+          : item.assignedPlacementId;
+        const emp = activeEmployees.find((e) => e.id === item.assignedEmployeeId);
+        const rate = emp ? parseFloat(emp.hourlyRate || "0") : 0;
+        const placement = placementId && allPlacements ? allPlacements.find(p => p.id === placementId) : null;
+        summaries.push({
+          empId: item.assignedEmployeeId!,
+          emp,
+          month: item.assignedMonth,
+          year: item.assignedYear,
+          items: [item],
+          totalHours: item.result.totalHours,
+          regularHours: item.result.regularHours,
+          overtimeHours: item.result.overtimeHours,
+          grossValue: item.result.totalHours * rate,
+          placementId: placementId || null,
+          placement,
+        });
+      }
+    }
+    return summaries;
+  }, [doneActive, activeEmployees, allPlacements]);
 
   const batchTotalHours = doneActive.reduce((s, i) => s + (i.result?.totalHours || 0), 0);
 
@@ -895,21 +963,54 @@ function UploadView() {
                   {currentReview.assignedEmployeeId && (() => {
                     const empPlacements = getPlacementsForEmployee(allPlacements || [], currentReview.assignedEmployeeId!, currentReview.assignedMonth, currentReview.assignedYear);
                     if (empPlacements.length === 0) return null;
+                    if (empPlacements.length === 1) {
+                      return (
+                        <div className="space-y-1">
+                          <Label className="text-[10px] text-muted-foreground">Placement</Label>
+                          <span className="text-xs font-medium text-foreground block py-1">{empPlacements[0].clientName || "Unknown"} — ${empPlacements[0].chargeOutRate || "?"}/hr</span>
+                        </div>
+                      );
+                    }
                     return (
-                      <div className="space-y-1">
-                        <Label className="text-[10px] text-muted-foreground">Placement</Label>
-                        <PlacementSelect
-                          placements={empPlacements}
-                          value={currentReview.assignedPlacementId}
-                          onChange={(id) => updItem(currentReview.id, { assignedPlacementId: id })}
-                          testId="select-review-placement"
-                        />
-                        {empPlacements.length > 1 && !currentReview.assignedPlacementId && (
-                          <div className="flex items-center gap-1 text-[10px] text-amber-600">
-                            <AlertTriangle className="w-3 h-3" />
-                            Multiple placements — please select one
-                          </div>
-                        )}
+                      <div className="col-span-2 space-y-1.5 mt-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Split across placements</Label>
+                          {r && (() => {
+                            const ap = currentReview.assignedPlacements || [];
+                            const allocTotal = ap.reduce((s: number, a: PlacementAllocation) => s + a.hours, 0);
+                            const diff = Math.abs(allocTotal - r.totalHours);
+                            return diff > 0.01 ? (
+                              <span className="text-[10px] text-amber-600">{allocTotal.toFixed(1)}h of {r.totalHours}h</span>
+                            ) : (
+                              <span className="text-[10px] text-green-600">✓ {allocTotal.toFixed(1)}h</span>
+                            );
+                          })()}
+                        </div>
+                        {empPlacements.map(p => {
+                          const crAp = currentReview.assignedPlacements || [];
+                          const alloc = crAp.find((a: PlacementAllocation) => a.placementId === p.id);
+                          const hours = alloc?.hours ?? 0;
+                          return (
+                            <div key={p.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50 border border-border">
+                              <div className="flex-1 min-w-0 text-xs truncate">{p.clientName || "Unknown"} — ${p.chargeOutRate || "?"}/hr</div>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                value={hours}
+                                onChange={(e) => {
+                                  const newHours = parseFloat(e.target.value) || 0;
+                                  const updated = (currentReview.assignedPlacements || []).filter((a: PlacementAllocation) => a.placementId !== p.id);
+                                  if (newHours > 0) updated.push({ placementId: p.id, hours: newHours });
+                                  updItem(currentReview.id, { assignedPlacements: updated });
+                                }}
+                                className="w-16 h-6 text-xs font-mono text-center bg-background border border-border rounded px-1 outline-none focus:border-primary"
+                                data-testid={`input-review-placement-hours-${p.id}`}
+                              />
+                              <span className="text-[10px] text-muted-foreground">h</span>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })()}
@@ -998,6 +1099,7 @@ function UploadView() {
                   return { ...qi, result: { ...qi.result, totalHours: total, regularHours: regular, overtimeHours: overtime } };
                 }));
               }}
+              onUpdatePlacements={(newPlacements) => updItem(item.id, { assignedPlacements: newPlacements })}
               employees={activeEmployees}
               placements={allPlacements || []}
               duplicateWarning={getDuplicateWarning(item)}
@@ -1306,7 +1408,7 @@ function PdfViewerDialog({
 function FileQueueCard({
   item, idx, expanded, onToggleExpand, onExclude, onRemove,
   onAssignEmployee, onAssignMonth, onAssignYear, onAssignPlacement,
-  onUpdateHours,
+  onUpdateHours, onUpdatePlacements,
   employees, placements, duplicateWarning,
 }: {
   item: QueueItem;
@@ -1320,6 +1422,7 @@ function FileQueueCard({
   onAssignYear: (y: number) => void;
   onAssignPlacement: (id: string | null) => void;
   onUpdateHours: (total: number, regular: number, overtime: number) => void;
+  onUpdatePlacements: (placements: PlacementAllocation[]) => void;
   employees: Employee[];
   placements: PlacementOption[];
   duplicateWarning: string | null;
@@ -1447,18 +1550,54 @@ function FileQueueCard({
                       </Button>
                     )}
                   </div>
-                  {empPlacements.length > 0 && (
+                  {empPlacements.length === 1 && (
                     <div className="mt-1.5 flex items-center gap-2">
                       <span className="text-[10px] text-muted-foreground whitespace-nowrap">Placement:</span>
-                      <PlacementSelect
-                        placements={empPlacements}
-                        value={item.assignedPlacementId}
-                        onChange={onAssignPlacement}
-                        testId={`select-placement-${item.id}`}
-                      />
-                      {empPlacements.length > 1 && !item.assignedPlacementId && (
-                        <span className="text-[10px] text-amber-600 dark:text-amber-400 whitespace-nowrap">⚠ Select placement</span>
-                      )}
+                      <span className="text-xs font-medium text-foreground">{empPlacements[0].clientName || "Unknown"} — ${empPlacements[0].chargeOutRate || "?"}/hr</span>
+                    </div>
+                  )}
+                  {empPlacements.length > 1 && (
+                    <div className="mt-2 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Split across placements</span>
+                        {r && (() => {
+                          const ap = item.assignedPlacements || [];
+                          const allocTotal = ap.reduce((s: number, a: PlacementAllocation) => s + a.hours, 0);
+                          const diff = Math.abs(allocTotal - r.totalHours);
+                          return diff > 0.01 ? (
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                              {allocTotal.toFixed(1)}h of {r.totalHours}h allocated
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-green-600 dark:text-green-400">✓ {allocTotal.toFixed(1)}h allocated</span>
+                          );
+                        })()}
+                      </div>
+                      {empPlacements.map(p => {
+                        const ap = item.assignedPlacements || [];
+                        const alloc = ap.find((a: PlacementAllocation) => a.placementId === p.id);
+                        const hours = alloc?.hours ?? 0;
+                        return (
+                          <div key={p.id} className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50 border border-border">
+                            <div className="flex-1 min-w-0 text-xs truncate">{p.clientName || "Unknown"} — ${p.chargeOutRate || "?"}/hr</div>
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              value={hours}
+                              onChange={(e) => {
+                                const newHours = parseFloat(e.target.value) || 0;
+                                const updated = ap.filter((a: PlacementAllocation) => a.placementId !== p.id);
+                                if (newHours > 0) updated.push({ placementId: p.id, hours: newHours });
+                                onUpdatePlacements(updated);
+                              }}
+                              className="w-16 h-6 text-xs font-mono text-center bg-background border border-border rounded px-1 outline-none focus:border-primary"
+                              data-testid={`input-placement-hours-${p.id}-${item.id}`}
+                            />
+                            <span className="text-[10px] text-muted-foreground">h</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </>
