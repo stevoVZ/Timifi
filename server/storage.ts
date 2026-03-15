@@ -37,6 +37,8 @@ import {
   payrollTaxRates,
   type ReferralBonus, type InsertReferralBonus,
   referralBonuses,
+  type RctiPayment, type InsertRctiPayment,
+  rctiPayments,
 } from "@shared/schema";
 
 let _cachedTenantId: string | null = null;
@@ -1104,6 +1106,26 @@ export class DatabaseStorage implements IStorage {
 
   async deleteRcti(id: string): Promise<void> {
     await db.delete(rctis).where(eq(rctis.id, id));
+  }
+
+  async createRctiPayment(data: InsertRctiPayment): Promise<RctiPayment> {
+    const t = await this.tid();
+    const [payment] = await db.insert(rctiPayments).values({ ...data, tenantId: t }).returning();
+    return payment;
+  }
+
+  async getRctiPaymentsByRcti(rctiId: string): Promise<RctiPayment[]> {
+    const t = await this.tid();
+    const conds = [eq(rctiPayments.rctiId, rctiId)];
+    if (t) conds.push(eq(rctiPayments.tenantId, t));
+    return db.select().from(rctiPayments).where(and(...conds));
+  }
+
+  async getRctiPaymentsByBankTransaction(bankTransactionId: string): Promise<RctiPayment[]> {
+    const t = await this.tid();
+    const conds = [eq(rctiPayments.bankTransactionId, bankTransactionId)];
+    if (t) conds.push(eq(rctiPayments.tenantId, t));
+    return db.select().from(rctiPayments).where(and(...conds));
   }
 
   async getInvoiceLineItems(invoiceId: string): Promise<InvoiceLineItem[]> {
