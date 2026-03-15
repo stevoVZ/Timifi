@@ -631,7 +631,6 @@ export async function pushPayRunToXero(opts: {
       TaxLines: [],
       DeductionLines: [],
       ReimbursementLines: [],
-      LeaveLines: [],
     };
 
     try {
