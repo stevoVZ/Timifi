@@ -644,7 +644,7 @@ export async function pushPayRunToXero(opts: {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify({ Payslip: updateBody }),
+          body: JSON.stringify([updateBody]),
         }
       );
 
