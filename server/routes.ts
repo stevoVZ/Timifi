@@ -487,7 +487,8 @@ export async function registerRoutes(
         const { files: filesList, ...timesheetData } = items[i];
         const parsed = insertTimesheetSchema.parse(coerceDates(timesheetData));
         const existing = allTimesheets.filter(
-          (ts) => ts.employeeId === parsed.employeeId && ts.month === parsed.month && ts.year === parsed.year
+          (ts) => ts.employeeId === parsed.employeeId && ts.month === parsed.month && ts.year === parsed.year &&
+            (parsed.placementId ? ts.placementId === parsed.placementId : !ts.placementId)
         );
         const approvedTs = existing.find((ts) => ts.status === "APPROVED");
         if (approvedTs && !forceOverwrite) {
@@ -543,6 +544,8 @@ export async function registerRoutes(
             if (parsed.fileHash) updateFields.fileHash = parsed.fileHash;
             if (parsed.fileSizeBytes) updateFields.fileSizeBytes = parsed.fileSizeBytes;
             if (parsed.status) updateFields.status = parsed.status;
+            if (parsed.placementId !== undefined) updateFields.placementId = parsed.placementId;
+            if (parsed.clientId !== undefined) updateFields.clientId = parsed.clientId;
             timesheet = await storage.updateTimesheet(existingRecord.id, updateFields);
           } else {
             timesheet = await storage.createTimesheet({ ...parsed, source: "PDF_UPLOAD" });

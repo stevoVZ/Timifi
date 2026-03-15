@@ -78,6 +78,51 @@ interface QueueItem {
   assignedEmployeeId: string | null;
   assignedMonth: number;
   assignedYear: number;
+  assignedPlacementId: string | null;
+}
+
+interface PlacementOption {
+  id: string;
+  employeeId: string;
+  clientId: string | null;
+  clientName: string | null;
+  chargeOutRate: string | null;
+  payRate: string | null;
+  status: string;
+  startDate: string | null;
+  endDate: string | null;
+}
+
+function getPlacementsForEmployee(placements: PlacementOption[], empId: string, month: number, year: number): PlacementOption[] {
+  const periodStart = new Date(year, month - 1, 1);
+  const periodEnd = new Date(year, month, 0);
+  return placements.filter(p => {
+    if (p.employeeId !== empId) return false;
+    if (p.status !== "ACTIVE" && p.status !== "ENDED") return false;
+    if (p.startDate && new Date(p.startDate) > periodEnd) return false;
+    if (p.endDate && new Date(p.endDate) < periodStart) return false;
+    return true;
+  });
+}
+
+function PlacementSelect({ placements, value, onChange, testId }: { placements: PlacementOption[]; value: string | null; onChange: (id: string | null) => void; testId?: string }) {
+  if (placements.length === 0) return <span className="text-xs text-muted-foreground italic">No placements</span>;
+  return (
+    <Select value={value || "__none__"} onValueChange={(v) => onChange(v === "__none__" ? null : v)}>
+      <SelectTrigger className="h-8 text-sm" data-testid={testId}>
+        <SelectValue placeholder="Select placement" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">No placement</SelectItem>
+        {placements.map(p => (
+          <SelectItem key={p.id} value={p.id}>
+            {p.clientName || "Unknown"} — ${p.chargeOutRate || "?"}/hr
+            {p.startDate && p.endDate ? ` (${p.startDate.slice(0, 7)} → ${p.endDate.slice(0, 7)})` : p.startDate ? ` (from ${p.startDate.slice(0, 7)})` : ""}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 interface ScanResult {
@@ -214,6 +259,10 @@ function UploadView() {
     queryKey: ["/api/timesheets"],
   });
 
+  const { data: allPlacements } = useQuery<PlacementOption[]>({
+    queryKey: ["/api/placements"],
+  });
+
   const activeEmployees = employees?.filter((c) => c.status === "ACTIVE") || [];
 
   const getDuplicateWarning = useCallback((item: QueueItem): string | null => {
@@ -290,6 +339,7 @@ function UploadView() {
       setQueue((q) => [...q, {
         id, file: f, fileBase64: null, status: "scanning", result: null, excluded: false,
         assignedEmployeeId: null, assignedMonth: currentMonth, assignedYear: currentYear,
+        assignedPlacementId: null,
       }]);
     });
 
@@ -321,13 +371,21 @@ function UploadView() {
         if (id) {
           const empId = matchEmployee(result.employeeName);
           const parsed = parseMonthFromPeriod(result.period);
+          const m = parsed?.month || currentMonth;
+          const y = parsed?.year || currentYear;
+          let autoPlacement: string | null = null;
+          if (empId && allPlacements) {
+            const empPlacements = getPlacementsForEmployee(allPlacements, empId, m, y);
+            if (empPlacements.length === 1) autoPlacement = empPlacements[0].id;
+          }
           setQueue((prev) => prev.map((item) => (item.id === id ? {
             ...item,
             status: "done",
             result,
             assignedEmployeeId: empId,
-            assignedMonth: parsed?.month || currentMonth,
-            assignedYear: parsed?.year || currentYear,
+            assignedMonth: m,
+            assignedYear: y,
+            assignedPlacementId: autoPlacement,
           } : item)));
         }
       });
@@ -348,7 +406,7 @@ function UploadView() {
         setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "error", result: null } : item)));
       });
     }
-  }, [currentMonth, currentYear, toast, matchEmployee]);
+  }, [currentMonth, currentYear, toast, matchEmployee, allPlacements]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -364,14 +422,14 @@ function UploadView() {
   const canSubmit = allDone && doneActive.length > 0 && !anyScanning && allAssigned;
 
   const grouped = doneActive.reduce<Record<string, QueueItem[]>>((acc, item) => {
-    const key = `${item.assignedEmployeeId}__${item.assignedMonth}__${item.assignedYear}`;
+    const key = `${item.assignedEmployeeId}__${item.assignedMonth}__${item.assignedYear}__${item.assignedPlacementId || "none"}`;
     if (!acc[key]) acc[key] = [];
     acc[key].push(item);
     return acc;
   }, {});
 
   const groupSummaries = Object.entries(grouped).map(([key, items]) => {
-    const [empId, monthStr, yearStr] = key.split("__");
+    const [empId, monthStr, yearStr, placementKey] = key.split("__");
     const emp = activeEmployees.find((e) => e.id === empId);
     const month = parseInt(monthStr);
     const year = parseInt(yearStr);
@@ -379,7 +437,9 @@ function UploadView() {
     const regularHours = items.reduce((s, i) => s + (i.result?.regularHours || 0), 0);
     const overtimeHours = items.reduce((s, i) => s + (i.result?.overtimeHours || 0), 0);
     const rate = emp ? parseFloat(emp.hourlyRate || "0") : 0;
-    return { empId, emp, month, year, items, totalHours, regularHours, overtimeHours, grossValue: totalHours * rate };
+    const placementId = placementKey !== "none" ? placementKey : null;
+    const placement = placementId && allPlacements ? allPlacements.find(p => p.id === placementId) : null;
+    return { empId, emp, month, year, items, totalHours, regularHours, overtimeHours, grossValue: totalHours * rate, placementId, placement };
   });
 
   const batchTotalHours = doneActive.reduce((s, i) => s + (i.result?.totalHours || 0), 0);
@@ -405,6 +465,8 @@ function UploadView() {
       grossValue: String(g.grossValue),
       status: "SUBMITTED",
       submittedAt: new Date().toISOString(),
+      ...(g.placementId && { placementId: g.placementId }),
+      ...(g.placement?.clientId && { clientId: g.placement.clientId }),
       fileName: g.items.length === 1
         ? g.items[0].result!.fileName
         : `Batch (${g.items.length} files)`,
@@ -738,6 +800,27 @@ function UploadView() {
                         </SelectContent>
                       </Select>
                     </div>
+                  {currentReview.assignedEmployeeId && (() => {
+                    const empPlacements = getPlacementsForEmployee(allPlacements || [], currentReview.assignedEmployeeId!, currentReview.assignedMonth, currentReview.assignedYear);
+                    if (empPlacements.length === 0) return null;
+                    return (
+                      <div className="space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">Placement</Label>
+                        <PlacementSelect
+                          placements={empPlacements}
+                          value={currentReview.assignedPlacementId}
+                          onChange={(id) => updItem(currentReview.id, { assignedPlacementId: id })}
+                          testId="select-review-placement"
+                        />
+                        {empPlacements.length > 1 && !currentReview.assignedPlacementId && (
+                          <div className="flex items-center gap-1 text-[10px] text-amber-600">
+                            <AlertTriangle className="w-3 h-3" />
+                            Multiple placements — please select one
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   </div>
                 </div>
               </CardContent>
@@ -853,6 +936,11 @@ function UploadView() {
                           <div className="text-[11px] text-muted-foreground">
                             {MONTHS[g.month]?.slice(0, 3)} {g.year} · {g.items.length} file{g.items.length !== 1 ? "s" : ""}
                           </div>
+                          {g.placement && (
+                            <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">
+                              → {g.placement.clientName}
+                            </div>
+                          )}
                         </div>
                         <span className="font-mono text-xs font-semibold text-primary flex-shrink-0">{g.totalHours}h</span>
                       </div>
@@ -1343,6 +1431,10 @@ function SubmissionsView() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [manualEmployeeId, setManualEmployeeId] = useState<string | null>(null);
+  const [manualPlacementId, setManualPlacementId] = useState<string | null>(null);
+  const [manualMonth, setManualMonth] = useState(String(new Date().getMonth() + 1));
+  const [manualYear, setManualYear] = useState(String(new Date().getFullYear()));
 
   const { data: timesheetsList, isLoading } = useQuery<Timesheet[]>({
     queryKey: ["/api/timesheets"],
@@ -1350,6 +1442,10 @@ function SubmissionsView() {
 
   const { data: employees } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
+  });
+
+  const { data: placements } = useQuery<any[]>({
+    queryKey: ["/api/placements"],
   });
 
   const employeeMap = new Map(employees?.map((c) => [c.id, c]) || []);
@@ -1412,6 +1508,13 @@ function SubmissionsView() {
     });
   };
 
+  const manualPlacements = useMemo(() => {
+    if (!manualEmployeeId || !placements) return [];
+    const m = parseInt(manualMonth);
+    const y = parseInt(manualYear);
+    return getPlacementsForEmployee(placements as any as PlacementOption[], manualEmployeeId, m, y);
+  }, [manualEmployeeId, placements, manualMonth, manualYear]);
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -1422,9 +1525,9 @@ function SubmissionsView() {
     if (raw.intakeSource) notesObj.intakeSource = raw.intakeSource;
 
     const payload: Record<string, any> = {
-      employeeId: raw.employeeId,
-      year: parseInt(raw.year),
-      month: parseInt(raw.month),
+      employeeId: manualEmployeeId || raw.employeeId,
+      year: parseInt(manualYear),
+      month: parseInt(manualMonth),
       totalHours: raw.totalHours || "0",
       regularHours: raw.regularHours || "0",
       overtimeHours: raw.overtimeHours || "0",
@@ -1432,6 +1535,14 @@ function SubmissionsView() {
       status: "DRAFT",
       notes: Object.keys(notesObj).length > 0 ? JSON.stringify(notesObj) : null,
     };
+
+    if (manualPlacementId) {
+      const placement = manualPlacements.find(p => p.id === manualPlacementId);
+      if (placement) {
+        payload.placementId = manualPlacementId;
+        payload.clientId = placement.clientId;
+      }
+    }
 
     if (selectedFile) {
       payload.fileName = selectedFile.name;
@@ -1441,6 +1552,8 @@ function SubmissionsView() {
 
     createMutation.mutate(payload);
     setSelectedFile(null);
+    setManualEmployeeId(null);
+    setManualPlacementId(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -1495,7 +1608,7 @@ function SubmissionsView() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label>Employee</Label>
-                <Select name="employeeId" required>
+                <Select name="employeeId" required value={manualEmployeeId || ""} onValueChange={(v) => { setManualEmployeeId(v); setManualPlacementId(null); }}>
                   <SelectTrigger data-testid="select-employee">
                     <SelectValue placeholder="Select employee" />
                   </SelectTrigger>
@@ -1511,11 +1624,11 @@ function SubmissionsView() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="year">Year</Label>
-                  <Input id="year" name="year" type="number" defaultValue={new Date().getFullYear()} required data-testid="input-year" />
+                  <Input id="year" name="year" type="number" value={manualYear} onChange={(e) => { setManualYear(e.target.value); setManualPlacementId(null); }} required data-testid="input-year" />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="month">Month</Label>
-                  <Select name="month" defaultValue={String(new Date().getMonth() + 1)}>
+                  <Select name="month" value={manualMonth} onValueChange={(v) => { setManualMonth(v); setManualPlacementId(null); }}>
                     <SelectTrigger data-testid="select-month">
                       <SelectValue />
                     </SelectTrigger>
@@ -1527,6 +1640,28 @@ function SubmissionsView() {
                   </Select>
                 </div>
               </div>
+              {manualEmployeeId && manualPlacements.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label>Placement</Label>
+                  <Select value={manualPlacementId || ""} onValueChange={setManualPlacementId}>
+                    <SelectTrigger data-testid="select-placement-manual">
+                      <SelectValue placeholder="Select placement (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {manualPlacements.map(p => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.clientName} — ${p.chargeOutRate || "?"}/hr
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {manualPlacements.length === 1 && !manualPlacementId && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Only one placement found — consider selecting it.
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="totalHours">Total Hours</Label>
@@ -2165,6 +2300,10 @@ function MonthlyHoursView() {
         );
         if (byEmployee) return byEmployee;
       }
+      const unlinked = timesheets.find(t =>
+        t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year
+      );
+      if (unlinked) return unlinked;
       return null;
     }
     const byEmployee = timesheets.find(t =>
@@ -2172,6 +2311,10 @@ function MonthlyHoursView() {
     );
     return byEmployee || null;
   };
+
+  const isTimesheetUnlinked = (ts: Timesheet | null) => !!(ts && !(ts as any).placementId);
+
+  const [linkPlacementDialog, setLinkPlacementDialog] = useState<{ tsId: string; empId: string } | null>(null);
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, rowKey, data }: { id: string; rowKey: string; data: Record<string, any> }) => {
@@ -2461,6 +2604,9 @@ function MonthlyHoursView() {
                                   <Badge variant={timesheet.status === "APPROVED" ? "default" : timesheet.status === "REJECTED" ? "destructive" : "secondary"} className="text-[10px]">
                                     {timesheet.status}
                                   </Badge>
+                                  {isTimesheetUnlinked(timesheet) && placement && (
+                                    <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600 dark:border-amber-700 dark:text-amber-400">Unlinked</Badge>
+                                  )}
                                   <ChevronDown className="w-3 h-3 text-muted-foreground" />
                                 </button>
                               </DropdownMenuTrigger>
@@ -2480,6 +2626,12 @@ function MonthlyHoursView() {
                                       {s}
                                     </DropdownMenuItem>
                                   ))}
+                                {isTimesheetUnlinked(timesheet) && placement && (
+                                  <DropdownMenuItem onClick={() => setLinkPlacementDialog({ tsId: timesheet.id, empId: employee.id })} data-testid={`menu-link-placement-${rowKey}`}>
+                                    <LinkIcon className="w-3.5 h-3.5 mr-2 text-amber-500" />
+                                    Link to Placement
+                                  </DropdownMenuItem>
+                                )}
                                 {canUnlock && ts && (
                                   <DropdownMenuItem onClick={() => {
                                     const unlockMut = async () => {
@@ -2567,7 +2719,106 @@ function MonthlyHoursView() {
           )}
         </CardContent>
       </Card>
+
+      {linkPlacementDialog && (
+        <LinkPlacementDialog
+          tsId={linkPlacementDialog.tsId}
+          empId={linkPlacementDialog.empId}
+          month={month}
+          year={year}
+          placements={placements || []}
+          open={true}
+          onClose={() => setLinkPlacementDialog(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function LinkPlacementDialog({ tsId, empId, month, year, placements, open, onClose }: {
+  tsId: string; empId: string; month: number; year: number; placements: PlacementData[]; open: boolean; onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const empPlacements = getPlacementsForEmployee(placements as any as PlacementOption[], empId, month, year);
+
+  const handleSave = async () => {
+    if (!selectedPlacementId) return;
+    const placement = empPlacements.find(p => p.id === selectedPlacementId);
+    if (!placement) return;
+    setSaving(true);
+    try {
+      await apiRequest("PATCH", `/api/timesheets/${tsId}`, {
+        placementId: selectedPlacementId,
+        clientId: placement.clientId,
+        changeSource: "LINK_PLACEMENT",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/timesheets"] });
+      toast({ title: "Timesheet linked to placement" });
+      onClose();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={() => onClose()}>
+      <DialogContent className="max-w-sm" data-testid="dialog-link-placement">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2">
+            <LinkIcon className="w-4 h-4 text-amber-500" />
+            Link to Placement
+          </DialogTitle>
+          <DialogDescription>
+            Choose which placement this timesheet belongs to for {MONTHS[month]} {year}.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          {empPlacements.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No active placements found for this period.</p>
+          ) : (
+            <div className="space-y-2">
+              {empPlacements.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setSelectedPlacementId(p.id)}
+                  className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                    selectedPlacementId === p.id
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-muted-foreground/30"
+                  }`}
+                  data-testid={`option-placement-${p.id}`}
+                >
+                  <div className="text-sm font-medium">{p.clientName || "Unknown"}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    ${p.chargeOutRate || "?"}/hr charge-out
+                    {p.payRate && ` · $${p.payRate}/hr pay`}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {p.startDate ? p.startDate : "No start"} → {p.endDate ? p.endDate : "Ongoing"}
+                    {" · "}{p.status}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} data-testid="button-cancel-link-placement">Cancel</Button>
+          <Button
+            disabled={!selectedPlacementId || saving}
+            onClick={handleSave}
+            data-testid="button-confirm-link-placement"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Link"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -3182,10 +3433,16 @@ function ReconciliationView() {
       const byP = timesheets.find(t => t.employeeId === empId && (t as any).placementId === placementId && t.month === month && t.year === year);
       if (byP) return byP;
       if (!hasMultiple) return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
+      const unlinked = timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year);
+      if (unlinked) return unlinked;
       return null;
     }
     return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
   }, [timesheets, month, year]);
+
+  const isTimesheetUnlinked = (ts: Timesheet | null) => !!(ts && !(ts as any).placementId);
+
+  const [linkPlacementDialog, setLinkPlacementDialog] = useState<{ tsId: string; empId: string } | null>(null);
 
   const getRcti = (empId: string, clientId: string | null): RctiRow | null => {
     if (!clientId || !rctis) return null;
@@ -3432,12 +3689,15 @@ function ReconciliationView() {
                                 <AlertCircle className="w-3 h-3" />
                               </button>
                             )}
+                            {isTimesheetUnlinked(ts) && row.placement && (
+                              <Badge variant="outline" className="text-[8px] border-amber-300 text-amber-600 dark:border-amber-700 dark:text-amber-400">Unlinked</Badge>
+                            )}
                           </div>
                         </td>
 
                         {/* Actions */}
                         <td className="px-3 py-2.5 text-right">
-                          {(canCreateInvoice || canLinkRcti || canLock || canUnlock || canResolveDiscrepancy) ? (
+                          {(canCreateInvoice || canLinkRcti || canLock || canUnlock || canResolveDiscrepancy || (isTimesheetUnlinked(ts) && row.placement)) ? (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="h-6 w-6">
@@ -3455,6 +3715,12 @@ function ReconciliationView() {
                                   <DropdownMenuItem onClick={() => setLinkRctiDialog(rk)}>
                                     <LinkIcon className="w-3.5 h-3.5 mr-2" />
                                     Link RCTI
+                                  </DropdownMenuItem>
+                                )}
+                                {isTimesheetUnlinked(ts) && row.placement && ts && (
+                                  <DropdownMenuItem onClick={() => setLinkPlacementDialog({ tsId: ts.id, empId: row.employee.id })} data-testid={`menu-link-placement-recon-${rk}`}>
+                                    <LinkIcon className="w-3.5 h-3.5 mr-2 text-amber-500" />
+                                    Link to Placement
                                   </DropdownMenuItem>
                                 )}
                                 {canLock && (
@@ -3546,6 +3812,18 @@ function ReconciliationView() {
         <div className="flex items-center gap-1"><Lock className="w-3 h-3" /> Payroll locked</div>
         <div className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-amber-500" /> RCTI discrepancy</div>
       </div>
+
+      {linkPlacementDialog && (
+        <LinkPlacementDialog
+          tsId={linkPlacementDialog.tsId}
+          empId={linkPlacementDialog.empId}
+          month={month}
+          year={year}
+          placements={placements || []}
+          open={true}
+          onClose={() => setLinkPlacementDialog(null)}
+        />
+      )}
     </div>
   );
 }
