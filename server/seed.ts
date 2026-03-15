@@ -1,6 +1,6 @@
 import { db } from "./db";
-import { users, settings, employees, timesheets, invoices, payRuns, payRunLines, documents, notifications, messages, leaveRequests, payItems } from "@shared/schema";
-import { sql, isNull, eq } from "drizzle-orm";
+import { users, settings, employees, timesheets, invoices, payRuns, payRunLines, documents, notifications, messages, leaveRequests, payItems, payrollTaxRates } from "@shared/schema";
+import { sql, isNull, eq, and } from "drizzle-orm";
 import { hashPassword } from "./auth";
 
 export async function seedDatabase() {
@@ -48,6 +48,29 @@ export async function seedDatabase() {
   if (toInsert.length > 0) {
     console.log(`Seeding ${toInsert.length} business rules settings key(s):`, toInsert.map(k => k.key));
     await db.insert(settings).values(toInsert.map(({ key, value }) => ({ key, value })));
+  }
+
+  await fixActPayrollTaxRate();
+}
+
+async function fixActPayrollTaxRate() {
+  const incorrectRate = "1.650";
+  const correctRate = "6.850";
+
+  const [updated] = await db
+    .update(payrollTaxRates)
+    .set({ rate: correctRate })
+    .where(
+      and(
+        eq(payrollTaxRates.state, "ACT"),
+        eq(payrollTaxRates.financialYearStart, 2025),
+        eq(payrollTaxRates.rate, incorrectRate),
+      ),
+    )
+    .returning();
+
+  if (updated) {
+    console.log(`Fixed ACT FY2025 payroll tax rate from ${incorrectRate}% to ${correctRate}%`);
   }
 }
 
