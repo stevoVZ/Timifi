@@ -487,7 +487,7 @@ export default function ReferralBonusesPage() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>Delete referral bonus?</AlertDialogTitle>
                               <AlertDialogDescription>
-                                This will permanently delete the referral bonus arrangement between {getName(b.referringEmployeeId)} and {getName(b.referredEmployeeId)}. This action cannot be undone.
+                                This will permanently delete the referral bonus arrangement between {b.referringEmployee?.firstName} {b.referringEmployee?.lastName} and {b.referredEmployee?.firstName} {b.referredEmployee?.lastName}. This action cannot be undone.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
