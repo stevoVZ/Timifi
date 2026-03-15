@@ -302,6 +302,7 @@ export const clients = pgTable("clients", {
   postalCode: text("postal_code"),
   country: text("country"),
   isRcti: boolean("is_rcti").notNull().default(false),
+  paymentLagMonths: smallint("payment_lag_months").notNull().default(0),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

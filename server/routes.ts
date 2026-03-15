@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema, employees, timesheets, invoices, invoiceEmployees, payRunLines, documents, notifications, messages, leaveRequests, taxDeclarations, bankAccounts, superMemberships, placements, rateHistory, timesheetAuditLog, monthlyExpectedHours, rctis, type RateHistory } from "@shared/schema";
+import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema, employees, timesheets, invoices, invoiceEmployees, payRunLines, documents, notifications, messages, leaveRequests, taxDeclarations, bankAccounts, superMemberships, placements, rateHistory, timesheetAuditLog, monthlyExpectedHours, rctis, type RateHistory, type InsertRcti } from "@shared/schema";
 import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
@@ -2663,6 +2663,13 @@ export async function registerRoutes(
 
   app.patch("/api/clients/:id", async (req, res) => {
     try {
+      if (req.body.paymentLagMonths !== undefined) {
+        const lag = parseInt(req.body.paymentLagMonths);
+        if (isNaN(lag) || lag < 0 || lag > 12) {
+          return res.status(400).json({ message: "paymentLagMonths must be an integer between 0 and 12" });
+        }
+        req.body.paymentLagMonths = lag;
+      }
       const client = await storage.updateClient(req.params.id, req.body);
       if (!client) return res.status(404).json({ message: "Client not found" });
       res.json(client);
@@ -3532,7 +3539,14 @@ export async function registerRoutes(
     try {
       const parsed = insertRctiSchema.partial().safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: "Invalid RCTI data", errors: parsed.error.issues });
-      const rcti = await storage.updateRcti(req.params.id, parsed.data);
+
+      const existing = await storage.getRctis().then(all => all.find(r => r.id === req.params.id));
+      const updateData: Partial<InsertRcti> = { ...parsed.data };
+      if (existing && existing.source === "AUTO_MATCH") {
+        updateData.source = "AUTO_MATCH_EDITED";
+      }
+
+      const rcti = await storage.updateRcti(req.params.id, updateData);
       if (!rcti) return res.status(404).json({ message: "RCTI not found" });
       res.json(rcti);
     } catch (err: any) {
@@ -3594,11 +3608,25 @@ export async function registerRoutes(
         return true;
       };
 
+      const subtractMonths = (month: number, year: number, lag: number): { month: number; year: number } => {
+        let m = month - lag;
+        let y = year;
+        while (m < 1) { m += 12; y -= 1; }
+        return { month: m, year: y };
+      };
+
       let created = 0;
       const skipped: string[] = [];
       for (const txn of unmatchedTxns) {
         const client = rctiClients.find(c => c.name.toLowerCase().trim() === (txn.contactName || "").toLowerCase().trim());
         if (!client) continue;
+
+        const lag = client.paymentLagMonths ?? 0;
+        const workPeriod = subtractMonths(txn.month, txn.year, lag);
+
+        const workPeriodDateStr = lag > 0
+          ? `${workPeriod.year}-${String(workPeriod.month).padStart(2, "0")}-15`
+          : txn.date;
 
         const clientPlacements = allPlacements.filter(p =>
           p.clientId === client.id && (p.status === "ACTIVE" || p.status === "ENDED")
@@ -3606,7 +3634,7 @@ export async function registerRoutes(
 
         const uniqueEmployeeIds = [...new Set(clientPlacements.map(p => p.employeeId))];
 
-        const activePlacements = clientPlacements.filter(p => wasPlacementActiveOnDate(p, txn.date));
+        const activePlacements = clientPlacements.filter(p => wasPlacementActiveOnDate(p, workPeriodDateStr));
         const activeUniqueEmployeeIds = [...new Set(activePlacements.map(p => p.employeeId))];
 
         const amount = parseFloat(txn.amount || "0");
@@ -3658,8 +3686,8 @@ export async function registerRoutes(
             await storage.createRcti({
               clientId: client.id,
               employeeId: null,
-              month: txn.month,
-              year: txn.year,
+              month: workPeriod.month,
+              year: workPeriod.year,
               hours: null,
               hourlyRate: null,
               amountExclGst: exGst.toFixed(2),
@@ -3690,8 +3718,8 @@ export async function registerRoutes(
         await storage.createRcti({
           clientId: client.id,
           employeeId,
-          month: txn.month,
-          year: txn.year,
+          month: workPeriod.month,
+          year: workPeriod.year,
           hours,
           hourlyRate,
           amountExclGst: exGst.toFixed(2),
@@ -3715,6 +3743,193 @@ export async function registerRoutes(
       });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to auto-match RCTIs" });
+    }
+  });
+
+  app.post("/api/rctis/re-match", async (_req, res) => {
+    try {
+      const allRctis = await storage.getRctis();
+      const autoMatched = allRctis.filter(r => r.source === "AUTO_MATCH");
+      let deleted = 0;
+      for (const r of autoMatched) {
+        await storage.deleteRcti(r.id);
+        deleted++;
+      }
+
+      const [allBankTxns, allClients, allPlacements, allEmployees, existingRctis] = await Promise.all([
+        storage.getBankTransactions(),
+        storage.getClients(),
+        storage.getAllPlacements(),
+        storage.getEmployees(),
+        storage.getRctis(),
+      ]);
+
+      const rctiClients = allClients.filter(c => c.isRcti);
+      if (rctiClients.length === 0) {
+        return res.json({ deleted, created: 0, message: `Deleted ${deleted} auto-matched RCTIs. No RCTI clients configured.` });
+      }
+
+      const rctiClientNames = new Set(rctiClients.map(c => c.name.toLowerCase().trim()));
+      const receiveTxns = allBankTxns.filter(t =>
+        t.type === "RECEIVE" &&
+        t.contactName &&
+        rctiClientNames.has(t.contactName.toLowerCase().trim())
+      );
+
+      const matchedTxnIds = new Set(existingRctis.map(r => r.bankTransactionId).filter(Boolean));
+      const unmatchedTxns = receiveTxns.filter(t => !matchedTxnIds.has(t.id));
+
+      const getChargeOutRate = (employeeId: string, placements: typeof allPlacements): number => {
+        const placement = placements.find(p => p.employeeId === employeeId);
+        const placementRate = parseFloat(placement?.chargeOutRate || "0");
+        if (placementRate > 0) return placementRate;
+        const emp = allEmployees.find(e => e.id === employeeId);
+        const empRate = parseFloat(emp?.chargeOutRate || "0");
+        if (empRate > 0) return empRate;
+        return 0;
+      };
+
+      const wasPlacementActiveOnDate = (placement: typeof allPlacements[0], dateStr: string | null): boolean => {
+        if (!dateStr) return true;
+        const txnDate = new Date(dateStr);
+        const start = placement.startDate ? new Date(placement.startDate) : null;
+        const end = placement.endDate ? new Date(placement.endDate) : null;
+        if (start && txnDate < start) return false;
+        if (end && txnDate > new Date(end.getTime() + 30 * 24 * 60 * 60 * 1000)) return false;
+        return true;
+      };
+
+      const subtractMonths = (month: number, year: number, lag: number): { month: number; year: number } => {
+        let m = month - lag;
+        let y = year;
+        while (m < 1) { m += 12; y -= 1; }
+        return { month: m, year: y };
+      };
+
+      let created = 0;
+      for (const txn of unmatchedTxns) {
+        const client = rctiClients.find(c => c.name.toLowerCase().trim() === (txn.contactName || "").toLowerCase().trim());
+        if (!client) continue;
+
+        const lag = client.paymentLagMonths ?? 0;
+        const workPeriod = subtractMonths(txn.month, txn.year, lag);
+
+        const workPeriodDateStr = lag > 0
+          ? `${workPeriod.year}-${String(workPeriod.month).padStart(2, "0")}-15`
+          : txn.date;
+
+        const clientPlacements = allPlacements.filter(p =>
+          p.clientId === client.id && (p.status === "ACTIVE" || p.status === "ENDED")
+        );
+
+        const uniqueEmployeeIds = [...new Set(clientPlacements.map(p => p.employeeId))];
+        const activePlacements = clientPlacements.filter(p => wasPlacementActiveOnDate(p, workPeriodDateStr));
+        const activeUniqueEmployeeIds = [...new Set(activePlacements.map(p => p.employeeId))];
+
+        const amount = parseFloat(txn.amount || "0");
+        const { exGst, gst } = gstTripletFromIncl(amount);
+        const desc = txn.description || txn.reference || `Bank receipt from ${client.name}`;
+
+        let employeeId: string | null = null;
+
+        if (activeUniqueEmployeeIds.length === 1) {
+          employeeId = activeUniqueEmployeeIds[0];
+        } else if (uniqueEmployeeIds.length === 1) {
+          employeeId = uniqueEmployeeIds[0];
+        } else if (activeUniqueEmployeeIds.length > 1) {
+          const descLower = (txn.description || txn.reference || "").toLowerCase();
+          if (descLower) {
+            const nameMatch = activePlacements.find(p => {
+              const emp = allEmployees.find(e => e.id === p.employeeId);
+              if (!emp) return false;
+              const first = (emp.firstName || "").toLowerCase().trim();
+              const last = (emp.lastName || "").toLowerCase().trim();
+              if (!first || !last || last.length < 3) return false;
+              const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              return new RegExp(`\\b${escaped(last)}\\b`, "i").test(descLower) &&
+                     new RegExp(`\\b${escaped(first)}\\b`, "i").test(descLower);
+            });
+            if (nameMatch) employeeId = nameMatch.employeeId;
+          }
+
+          if (!employeeId) {
+            const allRates = activeUniqueEmployeeIds.map(eid => ({
+              employeeId: eid,
+              rate: getChargeOutRate(eid, activePlacements),
+            })).filter(r => r.rate > 0);
+
+            if (allRates.length > 0) {
+              for (const r of allRates) {
+                const candidateHours = exGst / r.rate;
+                const roundedHours = Math.round(candidateHours * 4) / 4;
+                if (Math.abs(candidateHours - roundedHours) < 0.02) {
+                  employeeId = r.employeeId;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!employeeId) {
+            await storage.createRcti({
+              clientId: client.id,
+              employeeId: null,
+              month: workPeriod.month,
+              year: workPeriod.year,
+              hours: null,
+              hourlyRate: null,
+              amountExclGst: exGst.toFixed(2),
+              gstAmount: gst.toFixed(2),
+              amountInclGst: amount.toFixed(2),
+              description: `${desc} [UNATTRIBUTED - manual review needed]`,
+              reference: txn.reference,
+              receivedDate: txn.date,
+              bankTransactionId: txn.id,
+              status: "RECEIVED",
+              source: "AUTO_MATCH",
+            });
+            created++;
+            continue;
+          }
+        }
+
+        let hours: string | null = null;
+        let hourlyRate: string | null = null;
+        if (employeeId) {
+          const rate = getChargeOutRate(employeeId, clientPlacements);
+          if (rate > 0) {
+            hours = (exGst / rate).toFixed(2);
+            hourlyRate = rate.toFixed(2);
+          }
+        }
+
+        await storage.createRcti({
+          clientId: client.id,
+          employeeId,
+          month: workPeriod.month,
+          year: workPeriod.year,
+          hours,
+          hourlyRate,
+          amountExclGst: exGst.toFixed(2),
+          gstAmount: gst.toFixed(2),
+          amountInclGst: amount.toFixed(2),
+          description: desc,
+          reference: txn.reference,
+          receivedDate: txn.date,
+          bankTransactionId: txn.id,
+          status: "RECEIVED",
+          source: "AUTO_MATCH",
+        });
+        created++;
+      }
+
+      res.json({
+        deleted,
+        created,
+        message: `Deleted ${deleted} auto-matched RCTIs and re-created ${created} with corrected timing.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to re-match RCTIs" });
     }
   });
 

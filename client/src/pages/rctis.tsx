@@ -50,6 +50,7 @@ import {
   X,
   Pencil,
   Info,
+  RefreshCw,
 } from "lucide-react";
 import type { Employee } from "@shared/schema";
 
@@ -86,6 +87,7 @@ type ClientRecord = {
   name: string;
   isRcti: boolean;
   isCustomer?: boolean;
+  paymentLagMonths?: number;
 };
 
 type EligibleClient = {
@@ -153,6 +155,30 @@ export default function RctisPage() {
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to auto-match RCTIs", variant: "destructive" });
+    },
+  });
+
+  const reMatchMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/rctis/re-match");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Re-Match Complete", description: data.message });
+      queryClient.invalidateQueries({ queryKey: ["/api/rctis"] });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to re-match RCTIs", variant: "destructive" });
+    },
+  });
+
+  const updatePaymentLagMutation = useMutation({
+    mutationFn: async ({ clientId, paymentLagMonths }: { clientId: string; paymentLagMonths: number }) => {
+      const res = await apiRequest("PATCH", `/api/clients/${clientId}`, { paymentLagMonths });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
     },
   });
 
@@ -226,6 +252,20 @@ export default function RctisPage() {
           >
             <Link2 className="w-4 h-4 mr-2" />
             {autoMatchMutation.isPending ? "Matching..." : "Auto-Match Bank Txns"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (confirm("This will delete all auto-matched RCTIs and re-create them with current payment lag settings. Continue?")) {
+                reMatchMutation.mutate();
+              }
+            }}
+            disabled={reMatchMutation.isPending}
+            data-testid="button-re-match-rctis"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            {reMatchMutation.isPending ? "Re-matching..." : "Re-Match RCTIs"}
           </Button>
           <Button
             variant="outline"
@@ -362,6 +402,45 @@ export default function RctisPage() {
             })()}
           </CardContent>
         </Card>
+
+        {rctiClients.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Payment Lag Settings</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Set how many months each client's RCTI payment lags behind the work period. For example, if a client pays in January for December's work, set lag to 1.
+              </p>
+              <div className="flex flex-wrap gap-4">
+                {rctiClients.map(c => (
+                  <div key={c.id} className="flex items-center gap-2 border rounded-md px-3 py-2" data-testid={`lag-setting-${c.id}`}>
+                    <span className="text-sm font-medium">{c.name}</span>
+                    <Select
+                      value={String(c.paymentLagMonths ?? 0)}
+                      onValueChange={(val) => updatePaymentLagMutation.mutate({ clientId: c.id, paymentLagMonths: parseInt(val) })}
+                    >
+                      <SelectTrigger className="w-24 h-8" data-testid={`select-lag-${c.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="0">0 months</SelectItem>
+                        <SelectItem value="1">1 month</SelectItem>
+                        <SelectItem value="2">2 months</SelectItem>
+                        <SelectItem value="3">3 months</SelectItem>
+                        <SelectItem value="6">6 months</SelectItem>
+                        <SelectItem value="12">12 months</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                After changing lag settings, use "Re-Match RCTIs" to re-create auto-matched records with the corrected timing.
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="flex items-center gap-3">
           <div className="relative flex-1 max-w-sm">
