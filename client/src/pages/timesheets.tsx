@@ -847,13 +847,62 @@ function UploadView() {
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">
-                  {[
-                    ["Total", `${r.totalHours}h`, "text-primary"],
-                    ["Regular", `${r.regularHours}h`, "text-green-600"],
-                    ["Overtime", `${r.overtimeHours}h`, r.overtimeHours > 8 ? "text-red-600" : "text-amber-600"],
-                  ].map(([label, val, color]) => (
+                  {([
+                    ["Total", r.totalHours, "text-primary", (v: number) => {
+                      const oldTotal = r.totalHours;
+                      const newRegular = Math.max(0, v - r.overtimeHours);
+                      setQueue((q) => q.map((qi) => {
+                        if (qi.id !== currentReview.id || !qi.result) return qi;
+                        const upd = { ...qi, result: { ...qi.result, totalHours: v, regularHours: newRegular, overtimeHours: r.overtimeHours } };
+                        const ap = qi.assignedPlacements || [];
+                        if (ap.length > 0 && oldTotal > 0) {
+                          upd.assignedPlacements = ap.map(a => ({ ...a, hours: Math.round((a.hours / oldTotal) * v * 100) / 100 }));
+                        } else if (ap.length === 1) {
+                          upd.assignedPlacements = [{ ...ap[0], hours: v }];
+                        }
+                        return upd;
+                      }));
+                    }],
+                    ["Regular", r.regularHours, "text-green-600", (v: number) => {
+                      const newTotal = v + r.overtimeHours;
+                      const oldTotal = r.totalHours;
+                      setQueue((q) => q.map((qi) => {
+                        if (qi.id !== currentReview.id || !qi.result) return qi;
+                        const upd = { ...qi, result: { ...qi.result, totalHours: newTotal, regularHours: v, overtimeHours: r.overtimeHours } };
+                        const ap = qi.assignedPlacements || [];
+                        if (ap.length > 0 && oldTotal > 0) {
+                          upd.assignedPlacements = ap.map(a => ({ ...a, hours: Math.round((a.hours / oldTotal) * newTotal * 100) / 100 }));
+                        } else if (ap.length === 1) {
+                          upd.assignedPlacements = [{ ...ap[0], hours: newTotal }];
+                        }
+                        return upd;
+                      }));
+                    }],
+                    ["Overtime", r.overtimeHours, r.overtimeHours > 8 ? "text-red-600" : "text-amber-600", (v: number) => {
+                      const newTotal = r.regularHours + v;
+                      const oldTotal = r.totalHours;
+                      setQueue((q) => q.map((qi) => {
+                        if (qi.id !== currentReview.id || !qi.result) return qi;
+                        const upd = { ...qi, result: { ...qi.result, totalHours: newTotal, regularHours: r.regularHours, overtimeHours: v } };
+                        const ap = qi.assignedPlacements || [];
+                        if (ap.length > 0 && oldTotal > 0) {
+                          upd.assignedPlacements = ap.map(a => ({ ...a, hours: Math.round((a.hours / oldTotal) * newTotal * 100) / 100 }));
+                        } else if (ap.length === 1) {
+                          upd.assignedPlacements = [{ ...ap[0], hours: newTotal }];
+                        }
+                        return upd;
+                      }));
+                    }],
+                  ] as [string, number, string, (v: number) => void][]).map(([label, val, color, onChange]) => (
                     <div key={label} className="p-2.5 rounded-lg bg-muted border border-border text-center">
-                      <div className={`font-mono text-lg font-semibold ${color}`} data-testid={`text-review-${(label as string).toLowerCase()}`}>{val}</div>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={val}
+                        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+                        className={`font-mono text-lg font-semibold ${color} bg-transparent text-center w-full outline-none border-b border-transparent hover:border-border focus:border-primary`}
+                        data-testid={`input-review-${label.toLowerCase()}-hours`}
+                      />
                       <div className="text-[11px] text-muted-foreground">{label}</div>
                     </div>
                   ))}
@@ -1096,7 +1145,18 @@ function UploadView() {
               onUpdateHours={(total, regular, overtime) => {
                 setQueue((q) => q.map((qi) => {
                   if (qi.id !== item.id || !qi.result) return qi;
-                  return { ...qi, result: { ...qi.result, totalHours: total, regularHours: regular, overtimeHours: overtime } };
+                  const oldTotal = qi.result.totalHours;
+                  const updated = { ...qi, result: { ...qi.result, totalHours: total, regularHours: regular, overtimeHours: overtime } };
+                  const ap = qi.assignedPlacements || [];
+                  if (ap.length > 0 && oldTotal > 0) {
+                    updated.assignedPlacements = ap.map(a => ({
+                      ...a,
+                      hours: Math.round((a.hours / oldTotal) * total * 100) / 100,
+                    }));
+                  } else if (ap.length === 1) {
+                    updated.assignedPlacements = [{ ...ap[0], hours: total }];
+                  }
+                  return updated;
                 }));
               }}
               onUpdatePlacements={(newPlacements) => updItem(item.id, { assignedPlacements: newPlacements })}
@@ -1130,7 +1190,7 @@ function UploadView() {
                 {groupSummaries.length > 0 && (
                   <div className="space-y-2">
                     {groupSummaries.map((g) => (
-                      <div key={`${g.empId}-${g.month}-${g.year}-${g.placement?.id || "none"}`} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
+                      <div key={`${g.empId}-${g.month}-${g.year}-${g.placementId || g.placement?.id || "none"}`} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
                         <div className="min-w-0">
                           <div className="text-xs font-medium text-foreground truncate max-w-[160px]">
                             {g.emp ? `${g.emp.firstName} ${g.emp.lastName}` : "Unassigned"}
@@ -1487,7 +1547,20 @@ function FileQueueCard({
                 {r && !item.excluded && (
                   <>
                     <span> · </span>
-                    <span className="font-semibold text-foreground">{r.totalHours}h</span>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={r.totalHours}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value) || 0;
+                        onUpdateHours(v, Math.max(0, v - r.overtimeHours), r.overtimeHours);
+                      }}
+                      className="w-12 font-semibold text-foreground bg-transparent text-center outline-none border-b border-dashed border-muted-foreground/40 hover:border-primary focus:border-primary font-mono"
+                      title="Click to edit total hours"
+                      data-testid={`input-inline-hours-${item.id}`}
+                    />
+                    <span className="text-foreground font-semibold">h</span>
                     <span> · {r.period}</span>
                     <span className={confColor}> · {r.confidence}%</span>
                   </>
