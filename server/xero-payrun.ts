@@ -341,7 +341,10 @@ export async function pushPayRunToXero(opts: {
   periodEnd: string;
   paymentDate: string;
   employees: Array<{
-    xeroEmployeeId: string;
+    appEmployeeId?: string;
+    firstName?: string;
+    lastName?: string;
+    xeroEmployeeId: string | null;
     hours: number;
     rate: number;
     gross: number;
@@ -435,7 +438,48 @@ export async function pushPayRunToXero(opts: {
   const xeroPayRunStatus: string = payRun.PayRunStatus || "DRAFT";
 
   const payslips: any[] = payRun.Payslips || [];
-  const employeeMap = new Map(opts.employees.map(e => [e.xeroEmployeeId, e]));
+
+  // Build primary map by xeroEmployeeId (only employees that already have one)
+  const employeeMap = new Map(
+    opts.employees.filter(e => e.xeroEmployeeId).map(e => [e.xeroEmployeeId!, e])
+  );
+
+  // Name-based fallback for employees without xeroEmployeeId
+  const unmatchedEmployees = opts.employees.filter(e => !e.xeroEmployeeId);
+  if (unmatchedEmployees.length > 0 && payslips.length > 0) {
+    try {
+      const empRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/Employees", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Xero-Tenant-Id": tenantId,
+          Accept: "application/json",
+        },
+      });
+      if (empRes.ok) {
+        const empData = (await empRes.json()) as { Employees?: any[] };
+        const xeroEmployees = empData.Employees || [];
+        const xeroNameMap = new Map<string, string>();
+        for (const xe of xeroEmployees) {
+          const key = `${(xe.FirstName || "").toLowerCase().trim()} ${(xe.LastName || "").toLowerCase().trim()}`;
+          xeroNameMap.set(key, xe.EmployeeID);
+        }
+        for (const emp of unmatchedEmployees) {
+          const key = `${(emp.firstName || "").toLowerCase().trim()} ${(emp.lastName || "").toLowerCase().trim()}`;
+          const matchedXeroId = xeroNameMap.get(key);
+          if (matchedXeroId) {
+            employeeMap.set(matchedXeroId, { ...emp, xeroEmployeeId: matchedXeroId });
+            // Persist the match back to DB
+            try {
+              const { storage } = await import("./storage");
+              if (emp.appEmployeeId) {
+                await storage.updateEmployee(emp.appEmployeeId, { xeroEmployeeId: matchedXeroId });
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+  }
 
   const errors: string[] = [];
   let payslipsUpdated = 0;
