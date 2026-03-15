@@ -66,6 +66,7 @@ export default function ReferralBonusesPage() {
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/referral-bonuses"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/referral-bonuses/payouts"] });
   };
 
   const createMutation = useMutation({
@@ -493,6 +494,7 @@ export default function ReferralBonusesPage() {
                               <AlertDialogCancel data-testid="button-delete-cancel">Cancel</AlertDialogCancel>
                               <AlertDialogAction
                                 onClick={() => deleteMutation.mutate(b.id)}
+                                disabled={deleteMutation.isPending}
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                 data-testid="button-delete-confirm"
                               >
