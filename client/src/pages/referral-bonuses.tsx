@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Gift, Plus, Pencil, Users, DollarSign, Calendar, ChevronDown, ChevronRight } from "lucide-react";
+import { Gift, Plus, Pencil, Users, DollarSign, Calendar, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import type { Employee } from "@shared/schema";
 
 interface ReferralBonusData {
@@ -102,6 +102,18 @@ export default function ReferralBonusesPage() {
     onSuccess: () => {
       invalidateAll();
       toast({ title: "Ended", description: "Referral bonus arrangement ended." });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const reactivateMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/referral-bonuses/${id}/reactivate`);
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateAll();
+      toast({ title: "Reactivated", description: "Referral bonus arrangement is active again." });
     },
     onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
@@ -430,6 +442,19 @@ export default function ReferralBonusesPage() {
                             data-testid={`button-mgmt-end-${b.id}`}
                           >
                             End
+                          </Button>
+                        )}
+                        {b.status === "ENDED" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-green-600 hover:text-green-700"
+                            onClick={() => reactivateMutation.mutate(b.id)}
+                            disabled={reactivateMutation.isPending}
+                            data-testid={`button-mgmt-reactivate-${b.id}`}
+                          >
+                            <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                            Reactivate
                           </Button>
                         )}
                       </div>

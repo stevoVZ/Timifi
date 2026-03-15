@@ -4180,6 +4180,19 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/referral-bonuses/:id/reactivate", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await storage.getReferralBonus(id);
+      if (!existing) return res.status(404).json({ message: "Referral bonus not found" });
+      if (existing.status !== "ENDED") return res.status(400).json({ message: "Only ended arrangements can be reactivated" });
+      const updated = await storage.updateReferralBonus(id, { status: "ACTIVE", endDate: null });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to reactivate referral bonus" });
+    }
+  });
+
   app.get("/api/referral-bonuses/payouts", async (req, res) => {
     try {
       const [allReferralBonuses, allInvoices, allRctis, allTimesheets, allExpectedHours] = await Promise.all([
