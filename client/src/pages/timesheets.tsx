@@ -232,15 +232,54 @@ export default function TimesheetsPage() {
 function UploadView() {
   const { toast } = useToast();
   const now = new Date();
-  const currentMonth = now.getMonth() + 1;
-  const currentYear = now.getFullYear();
+  const prevMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+  const prevMonthYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
 
-  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const QUEUE_STORAGE_KEY = "simplfi_upload_queue";
+
+  const loadPersistedQueue = (): QueueItem[] => {
+    try {
+      const raw = sessionStorage.getItem(QUEUE_STORAGE_KEY);
+      if (!raw) return [];
+      const items = JSON.parse(raw) as Array<any>;
+      return items.map((s: any) => {
+        const f = new File([], s._fileName || "restored.pdf", { type: s._fileType || "application/pdf" });
+        Object.defineProperty(f, "size", { value: s._fileSize || 0 });
+        return { ...s, file: f };
+      });
+    } catch { return []; }
+  };
+
+  const [targetMonth, setTargetMonth] = useState(prevMonth);
+  const [targetYear, setTargetYear] = useState(prevMonthYear);
+  const [queue, setQueue] = useState<QueueItem[]>(loadPersistedQueue);
   const [dragOver, setDragOver] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [lastSubmittedCount, setLastSubmittedCount] = useState(0);
   const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    if (queue.length === 0) {
+      sessionStorage.removeItem(QUEUE_STORAGE_KEY);
+      return;
+    }
+    const toSave = queue.filter((i) => i.status === "done" || i.status === "error").map((i) => ({
+      id: i.id,
+      _fileName: i.file.name,
+      _fileType: i.file.type,
+      _fileSize: i.file.size,
+      fileBase64: i.fileBase64,
+      status: i.status,
+      result: i.result,
+      excluded: i.excluded,
+      assignedEmployeeId: i.assignedEmployeeId,
+      assignedMonth: i.assignedMonth,
+      assignedYear: i.assignedYear,
+      assignedPlacementId: i.assignedPlacementId,
+    }));
+    try { sessionStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(toSave)); } catch {}
+  }, [queue]);
   const [showIntake, setShowIntake] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
   const [reviewIdx, setReviewIdx] = useState(0);
@@ -356,7 +395,7 @@ function UploadView() {
       itemIds.push(id);
       setQueue((q) => [...q, {
         id, file: f, fileBase64: null, status: "scanning", result: null, excluded: false,
-        assignedEmployeeId: null, assignedMonth: currentMonth, assignedYear: currentYear,
+        assignedEmployeeId: null, assignedMonth: targetMonth, assignedYear: targetYear,
         assignedPlacementId: null,
       }]);
     });
@@ -369,8 +408,8 @@ function UploadView() {
 
     const formData = new FormData();
     pdfs.forEach((f) => formData.append("files", f));
-    formData.append("month", String(currentMonth));
-    formData.append("year", String(currentYear));
+    formData.append("month", String(targetMonth));
+    formData.append("year", String(targetYear));
 
     try {
       const [res] = await Promise.all([
@@ -389,8 +428,8 @@ function UploadView() {
         if (id) {
           const empId = matchEmployee(result.employeeName);
           const parsed = parseMonthFromPeriod(result.period);
-          const m = parsed?.month || currentMonth;
-          const y = parsed?.year || currentYear;
+          const m = parsed?.month || targetMonth;
+          const y = parsed?.year || targetYear;
           let autoPlacement: string | null = null;
           if (empId && allPlacements) {
             const empPlacements = getPlacementsForEmployee(allPlacements, empId, m, y);
@@ -424,7 +463,7 @@ function UploadView() {
         setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, status: "error", result: null } : item)));
       });
     }
-  }, [currentMonth, currentYear, toast, matchEmployee, allPlacements]);
+  }, [targetMonth, targetYear, toast, matchEmployee, allPlacements]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -641,9 +680,36 @@ function UploadView() {
     );
   }
 
+  const periodSelector = (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-xs text-muted-foreground whitespace-nowrap">Target period:</span>
+      <Select value={String(targetMonth)} onValueChange={(v) => setTargetMonth(parseInt(v))}>
+        <SelectTrigger className="h-8 w-[100px] text-xs" data-testid="select-target-month">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {MONTHS.slice(1).map((m, i) => (
+            <SelectItem key={i + 1} value={String(i + 1)}>{m.slice(0, 3)}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={String(targetYear)} onValueChange={(v) => setTargetYear(parseInt(v))}>
+        <SelectTrigger className="h-8 w-[80px] text-xs" data-testid="select-target-year">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => (
+            <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
   if (queue.length === 0) {
     return (
       <div className="max-w-2xl mx-auto space-y-4">
+        <div className="flex justify-center">{periodSelector}</div>
         <DropZone
           dragOver={dragOver}
           setDragOver={setDragOver}
@@ -926,6 +992,12 @@ function UploadView() {
               onAssignMonth={(m) => updItem(item.id, { assignedMonth: m })}
               onAssignYear={(y) => updItem(item.id, { assignedYear: y })}
               onAssignPlacement={(id) => updItem(item.id, { assignedPlacementId: id })}
+              onUpdateHours={(total, regular, overtime) => {
+                setQueue((q) => q.map((qi) => {
+                  if (qi.id !== item.id || !qi.result) return qi;
+                  return { ...qi, result: { ...qi.result, totalHours: total, regularHours: regular, overtimeHours: overtime } };
+                }));
+              }}
               employees={activeEmployees}
               placements={allPlacements || []}
               duplicateWarning={getDuplicateWarning(item)}
@@ -1181,6 +1253,16 @@ function useBase64BlobUrl(base64Data: string | null): string | null {
   return blobUrl;
 }
 
+function PdfIframe({ base64Data, title }: { base64Data: string; title: string }) {
+  const blobUrl = useBase64BlobUrl(base64Data);
+  if (!blobUrl) return (
+    <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+      <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading PDF...
+    </div>
+  );
+  return <iframe src={blobUrl} className="w-full h-full" title={title} data-testid="iframe-pdf-viewer" />;
+}
+
 function PdfViewerDialog({
   open,
   onOpenChange,
@@ -1224,6 +1306,7 @@ function PdfViewerDialog({
 function FileQueueCard({
   item, idx, expanded, onToggleExpand, onExclude, onRemove,
   onAssignEmployee, onAssignMonth, onAssignYear, onAssignPlacement,
+  onUpdateHours,
   employees, placements, duplicateWarning,
 }: {
   item: QueueItem;
@@ -1236,6 +1319,7 @@ function FileQueueCard({
   onAssignMonth: (m: number) => void;
   onAssignYear: (y: number) => void;
   onAssignPlacement: (id: string | null) => void;
+  onUpdateHours: (total: number, regular: number, overtime: number) => void;
   employees: Employee[];
   placements: PlacementOption[];
   duplicateWarning: string | null;
@@ -1409,13 +1493,20 @@ function FileQueueCard({
           {expanded && r && !item.excluded && (
             <div className="p-3 border-t border-border bg-muted/30 space-y-3">
               <div className="grid grid-cols-3 gap-2">
-                {[
-                  ["Total", `${r.totalHours}h`, "text-primary"],
-                  ["Regular", `${r.regularHours}h`, "text-green-600"],
-                  ["Overtime", `${r.overtimeHours}h`, r.overtimeHours > 8 ? "text-red-600" : "text-amber-600"],
-                ].map(([label, val, color]) => (
+                {([
+                  ["Total", r.totalHours, "text-primary", (v: number) => onUpdateHours(v, v - r.overtimeHours, r.overtimeHours)],
+                  ["Regular", r.regularHours, "text-green-600", (v: number) => onUpdateHours(v + r.overtimeHours, v, r.overtimeHours)],
+                  ["Overtime", r.overtimeHours, r.overtimeHours > 8 ? "text-red-600" : "text-amber-600", (v: number) => onUpdateHours(r.regularHours + v, r.regularHours, v)],
+                ] as [string, number, string, (v: number) => void][]).map(([label, val, color, onChange]) => (
                   <div key={label} className="p-2 rounded-lg bg-card border border-border text-center">
-                    <div className={`font-mono text-base font-semibold ${color}`}>{val}</div>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={val}
+                      onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+                      className={`font-mono text-base font-semibold ${color} bg-transparent text-center w-full outline-none border-b border-transparent hover:border-border focus:border-primary`}
+                      data-testid={`input-hours-${label.toLowerCase()}-${item.id}`}
+                    />
                     <div className="text-[11px] text-muted-foreground">{label}</div>
                   </div>
                 ))}
@@ -2060,12 +2151,8 @@ function TimesheetRow({
                 )}
               </div>
             ) : selectedDoc?.fileUrl ? (
-              <iframe
-                src={selectedDoc.fileUrl.startsWith("data:") ? selectedDoc.fileUrl : `data:application/pdf;base64,${selectedDoc.fileUrl}`}
-                className="w-full h-full"
-                title={selectedDoc.name}
-                data-testid="iframe-pdf-viewer"
-              />
+              <PdfIframe base64Data={selectedDoc.fileUrl} title={selectedDoc.name} />
+            
             ) : (
               <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
                 File data not available

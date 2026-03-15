@@ -41,7 +41,7 @@ export interface ScanResult {
   monthBoundaryWarning: string | null;
 }
 
-const SYSTEM_PROMPT = `You are a timesheet data extraction assistant. You will receive one or more page images from a PDF timesheet and must extract structured data from them.
+const SYSTEM_PROMPT = `You are a timesheet data extraction assistant for an Australian labour hire agency. You will receive one or more page images from a PDF timesheet and must extract structured data from them.
 
 Extract the following information:
 1. Employee name (the person who worked the hours)
@@ -54,6 +54,17 @@ Extract the following information:
 8. Whether a signature or approval is present
 9. Any notes or comments on the timesheet
 10. The format/template type of the timesheet
+
+CRITICAL RULES FOR HOURS EXTRACTION:
+- ALWAYS use the explicit "Total Hours" or "Total" cell/row if one is visible on the timesheet. This is the most reliable source.
+- If no explicit total row exists, sum the individual daily or weekly hours yourself.
+- Do NOT confuse daily hours with weekly totals. A day is typically 7-8 hours; a week is typically 35-40 hours.
+- For fortnightly (2-week) timesheets common in Australian government, the total should typically be 2x a normal week (e.g. 70-80 hours for full-time, up to 160+ for a full month).
+- For monthly timesheets, full-time hours are typically 152-176 hours (depending on working days in that month).
+- Ignore signature/approval rows, leave rows, and non-working rows when summing hours.
+- If you see both "ordinary hours" and "overtime hours" columns, report them separately. The total should be ordinary + overtime.
+- Pay careful attention to decimal values — "7.6" hours/day is standard in Australian government timesheets (38-hour week / 5 days).
+- Cross-check: if the weekly breakdown adds up to a different total than the "Total" cell, prefer the "Total" cell and note the discrepancy in warnings.
 
 IMPORTANT RULES FOR MONTH BOUNDARIES:
 - If a weekly timesheet spans two months (e.g., a week from Dec 28 to Jan 3), note this explicitly
