@@ -62,6 +62,13 @@ interface PayPeriodOption {
   draftPayRunId: string | null;
 }
 
+interface XeroTemplateData {
+  earningsLines: Array<{ earningsRateId: string; earningsRateName: string; ratePerUnit: number; numberOfUnits: number }>;
+  deductionLines: Array<{ deductionTypeId: string; deductionTypeName: string; calculationType: string; amount: number; percentage?: number }>;
+  superLines: Array<{ superMembershipId: string; fundName: string; contributionType: string; calculationType: string; percentage: number; amount: number }>;
+  taxLines: Array<{ taxType: string; amount: number; manualTax: boolean }>;
+}
+
 interface PreparedEmployee {
   id: string;
   firstName: string;
@@ -73,6 +80,7 @@ interface PreparedEmployee {
   hoursSource: "XERO" | "TIMESHEET" | "INVOICE" | "NONE";
   hoursDetail: string;
   included: boolean;
+  xeroTemplate: XeroTemplateData | null;
 }
 
 interface PrepareData {
@@ -102,6 +110,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
   const [isUnscheduled, setIsUnscheduled] = useState(false);
   const [selectedDraftInfo, setSelectedDraftInfo] = useState<{ hasDraft: boolean; draftPayRunId: string | null }>({ hasDraft: false, draftPayRunId: null });
   const [hoursOverride, setHoursOverride] = useState<Record<string, string>>({});
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (isUnscheduled) {
@@ -139,6 +148,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
       setPaymentDate(getLastDayOfMonth(year, month));
       setSelectedDraftInfo({ hasDraft: false, draftPayRunId: null });
       setHoursOverride({});
+      setExpandedRows(new Set());
       return;
     }
     setIsUnscheduled(false);
@@ -235,6 +245,14 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
 
   function toggleEmployee(id: string) {
     setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleExpanded(id: string) {
+    setExpandedRows(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -523,6 +541,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                       <TableHead className="text-right">PAYG</TableHead>
                       <TableHead className="text-right">Super</TableHead>
                       <TableHead className="text-right">Net</TableHead>
+                      <TableHead className="text-center">Xero Template</TableHead>
                       <TableHead className="text-center">Status</TableHead>
                       <TableHead className="text-center">Xero</TableHead>
                     </TableRow>
@@ -606,7 +625,75 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                               <span className="text-xs text-destructive font-medium">✗</span>
                             )}
                           </TableCell>
+                          <TableCell className="text-center" onClick={e => e.stopPropagation()}>
+                            {emp.xeroTemplate ? (
+                              <button
+                                onClick={() => toggleExpanded(emp.id)}
+                                className="text-xs text-blue-600 hover:text-blue-800 underline underline-offset-2"
+                              >
+                                {expandedRows.has(emp.id) ? "▲ Hide" : "▼ View"}
+                              </button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
                         </TableRow>
+                        {emp.xeroTemplate && expandedRows.has(emp.id) && (
+                          <TableRow key={`${emp.id}-template`} className="bg-slate-50">
+                            <TableCell colSpan={11} className="py-2 px-6">
+                              <div className="grid grid-cols-3 gap-6 text-xs">
+                                <div>
+                                  <div className="font-semibold text-slate-600 mb-1.5">Earnings Rate</div>
+                                  {emp.xeroTemplate.earningsLines.length > 0 ? emp.xeroTemplate.earningsLines.map((el, i) => (
+                                    <div key={i} className="flex justify-between gap-2 py-0.5">
+                                      <span className="text-slate-500">{el.earningsRateName}</span>
+                                      <span className="font-mono">${el.ratePerUnit.toFixed(4)}/hr</span>
+                                    </div>
+                                  )) : <span className="text-slate-400 italic">None set</span>}
+                                </div>
+                                <div>
+                                  <div className="font-semibold text-slate-600 mb-1.5">Deductions</div>
+                                  {emp.xeroTemplate.deductionLines.length > 0 ? emp.xeroTemplate.deductionLines.map((dl, i) => (
+                                    <div key={i} className="flex justify-between gap-2 py-0.5">
+                                      <span className="text-slate-500">{dl.deductionTypeName}</span>
+                                      <span className="font-mono">
+                                        {dl.calculationType === "FIXEDAMOUNT" ? `$${dl.amount.toFixed(2)}` : `${dl.percentage ?? dl.amount}%`}
+                                      </span>
+                                    </div>
+                                  )) : <span className="text-slate-400 italic">None</span>}
+                                </div>
+                                <div>
+                                  <div className="font-semibold text-slate-600 mb-1.5">Super</div>
+                                  {emp.xeroTemplate.superLines.length > 0 ? emp.xeroTemplate.superLines.map((sl, i) => (
+                                    <div key={i} className="flex justify-between gap-2 py-0.5">
+                                      <span className="text-slate-500 truncate max-w-[160px]" title={sl.fundName}>{sl.fundName}</span>
+                                      <span className="font-mono">{sl.percentage}%</span>
+                                    </div>
+                                  )) : <span className="text-slate-400 italic">None set</span>}
+                                </div>
+                              </div>
+                              {emp.xeroTemplate.taxLines.length > 0 && (
+                                <div className="mt-2 pt-2 border-t border-slate-200 text-xs flex gap-4 text-slate-500">
+                                  <span className="font-semibold text-slate-600">Tax:</span>
+                                  {emp.xeroTemplate.taxLines.map((tl, i) => (
+                                    <span key={i}>{tl.taxType}{tl.manualTax ? " (manual override)" : ""} — ${tl.amount.toFixed(2)}</span>
+                                  ))}
+                                </div>
+                              )}
+                              {emp.xeroTemplate.earningsLines.length > 0 && (
+                                <div className="mt-2 pt-2 border-t border-slate-200 text-xs">
+                                  {Math.abs(emp.xeroTemplate.earningsLines[0].ratePerUnit - emp.calculated.rate) > 0.01 ? (
+                                    <span className="text-amber-600 font-medium">
+                                      ⚠ Xero rate (${emp.xeroTemplate.earningsLines[0].ratePerUnit.toFixed(4)}/hr) differs from Timifi rate (${emp.calculated.rate.toFixed(4)}/hr) — push will preserve Xero rate
+                                    </span>
+                                  ) : (
+                                    <span className="text-green-600 font-medium">✓ Timifi rate matches Xero rate</span>
+                                  )}
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        )}
                       );
                     })}
                   </TableBody>
