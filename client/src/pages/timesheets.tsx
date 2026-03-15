@@ -59,11 +59,12 @@ const INTAKE_SOURCES = [
   { value: "ADMIN_ENTRY", label: "Admin Entry", icon: Monitor },
 ];
 
-const INTAKE_BADGE_STYLES: Record<string, string> = {
-  EMAIL: "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-  PORTAL_UPLOAD: "bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300",
-  WALK_IN: "bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
-  ADMIN_ENTRY: "bg-gray-50 text-gray-700 dark:bg-gray-800/50 dark:text-gray-300",
+const SOURCE_BADGES: Record<string, { label: string; cls: string }> = {
+  XERO_SYNC:   { label: "Xero",   cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" },
+  PDF_UPLOAD:  { label: "Upload", cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300" },
+  ADMIN_ENTRY: { label: "Manual", cls: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400" },
+  PORTAL:      { label: "Portal", cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" },
+  RCTI:        { label: "RCTI",   cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" },
 };
 
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -1476,6 +1477,9 @@ function FileQueueCard({
 
 function SubmissionsView() {
   const [search, setSearch] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "mine" | "xero">("all");
+  const [periodMonth, setPeriodMonth] = useState<number>(0);
+  const [periodYear, setPeriodYear] = useState<number>(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1622,10 +1626,38 @@ function SubmissionsView() {
     }
   }
 
-  const filtered = timesheetsList?.filter((ts) => {
-    const c = employeeMap.get(ts.employeeId);
-    const name = c ? `${c.firstName} ${c.lastName}` : "";
-    return `${name} ${MONTHS[ts.month]} ${ts.year}`.toLowerCase().includes(search.toLowerCase());
+  const availableYears = useMemo(() => {
+    if (!timesheetsList) return [];
+    const years = new Set(timesheetsList.map(t => t.year));
+    return Array.from(years).sort((a, b) => b - a);
+  }, [timesheetsList]);
+
+  const periodFiltered = useMemo(() => {
+    if (!timesheetsList) return [];
+    return timesheetsList.filter((ts) => {
+      if (periodMonth > 0 && ts.month !== periodMonth) return false;
+      if (periodYear > 0 && ts.year !== periodYear) return false;
+      if (search) {
+        const c = employeeMap.get(ts.employeeId);
+        const name = c ? `${c.firstName} ${c.lastName}` : "";
+        return `${name} ${MONTHS[ts.month]} ${ts.year}`.toLowerCase().includes(search.toLowerCase());
+      }
+      return true;
+    });
+  }, [timesheetsList, periodMonth, periodYear, search, employeeMap]);
+
+  const sourceCounts = useMemo(() => {
+    return {
+      all: periodFiltered.length,
+      mine: periodFiltered.filter(t => t.source !== "XERO_SYNC").length,
+      xero: periodFiltered.filter(t => t.source === "XERO_SYNC").length,
+    };
+  }, [periodFiltered]);
+
+  const filtered = periodFiltered.filter((ts) => {
+    if (sourceFilter === "mine" && ts.source === "XERO_SYNC") return false;
+    if (sourceFilter === "xero" && ts.source !== "XERO_SYNC") return false;
+    return true;
   });
 
   const grouped = {
@@ -1637,14 +1669,59 @@ function SubmissionsView() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center rounded-lg border border-border bg-muted/30 p-0.5 gap-0.5" data-testid="filter-source">
+          <button
+            onClick={() => setSourceFilter("all")}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${sourceFilter === "all" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            data-testid="filter-source-all"
+          >
+            All ({sourceCounts.all})
+          </button>
+          <button
+            onClick={() => setSourceFilter("mine")}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${sourceFilter === "mine" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            data-testid="filter-source-mine"
+          >
+            My Uploads ({sourceCounts.mine})
+          </button>
+          <button
+            onClick={() => setSourceFilter("xero")}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${sourceFilter === "xero" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            data-testid="filter-source-xero"
+          >
+            Xero ({sourceCounts.xero})
+          </button>
+        </div>
+        <Select value={String(periodYear)} onValueChange={(v) => setPeriodYear(parseInt(v))}>
+          <SelectTrigger className="h-8 w-[90px] text-xs" data-testid="filter-year">
+            <SelectValue placeholder="Year" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="0">All Years</SelectItem>
+            {availableYears.map((y) => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={String(periodMonth)} onValueChange={(v) => setPeriodMonth(parseInt(v))}>
+          <SelectTrigger className="h-8 w-[100px] text-xs" data-testid="filter-month">
+            <SelectValue placeholder="Month" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="0">All Months</SelectItem>
+            {MONTHS.slice(1).map((m, i) => (
+              <SelectItem key={i + 1} value={String(i + 1)}>{m.slice(0, 3)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="relative flex-1 min-w-[160px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search timesheets..."
+            placeholder="Search..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            className="pl-9 h-8 text-xs"
             data-testid="input-search-timesheets"
           />
         </div>
@@ -1840,13 +1917,11 @@ function SubmissionsView() {
                 <div className="space-y-2">
                   {items.map((ts) => {
                     const c = employeeMap.get(ts.employeeId);
-                    const intakeSource = getIntakeSource(ts.notes);
                     return (
                       <TimesheetRow
                         key={ts.id}
                         timesheet={ts}
                         employee={c}
-                        intakeSource={intakeSource}
                         onApprove={() => updateMutation.mutate({ id: ts.id, data: { status: "APPROVED", reviewedAt: new Date().toISOString() } })}
                         onReject={() => updateMutation.mutate({ id: ts.id, data: { status: "REJECTED", reviewedAt: new Date().toISOString() } })}
                         onSubmit={() => updateMutation.mutate({ id: ts.id, data: { status: "SUBMITTED", submittedAt: new Date().toISOString() } })}
@@ -1905,7 +1980,6 @@ interface AuditLogEntry {
 function TimesheetRow({
   timesheet: ts,
   employee: c,
-  intakeSource,
   onApprove,
   onReject,
   onSubmit,
@@ -1913,7 +1987,6 @@ function TimesheetRow({
 }: {
   timesheet: Timesheet;
   employee: Employee | undefined;
-  intakeSource: string | null;
   onApprove: () => void;
   onReject: () => void;
   onSubmit: () => void;
@@ -1927,8 +2000,6 @@ function TimesheetRow({
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const overtimeHours = parseFloat(ts.overtimeHours || "0");
-  const intakeLabel = intakeSource ? INTAKE_SOURCES.find((s) => s.value === intakeSource)?.label : null;
-  const intakeBadgeClass = intakeSource ? INTAKE_BADGE_STYLES[intakeSource] || "" : "";
 
   const handleViewPdf = async () => {
     setDocs([]);
@@ -2022,10 +2093,13 @@ function TimesheetRow({
                     {c ? `${c.firstName} ${c.lastName}` : "Unknown"}
                   </span>
                   <StatusBadge status={ts.status} />
-                  {intakeLabel && (
-                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${intakeBadgeClass}`} data-testid={`badge-intake-${ts.id}`}>
-                      {intakeLabel}
+                  {ts.source && SOURCE_BADGES[ts.source] && (
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${SOURCE_BADGES[ts.source].cls}`} data-testid={`badge-source-${ts.id}`}>
+                      {SOURCE_BADGES[ts.source].label}
                     </span>
+                  )}
+                  {ts.fileName && (
+                    <Paperclip className="w-3 h-3 text-muted-foreground" />
                   )}
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
@@ -2896,14 +2970,6 @@ type ClientRow = {
   id: string;
   name: string;
   isRcti: boolean;
-};
-
-const SOURCE_BADGES: Record<string, { label: string; cls: string }> = {
-  XERO_SYNC:   { label: "Xero",   cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" },
-  PDF_UPLOAD:  { label: "PDF",    cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300" },
-  ADMIN_ENTRY: { label: "Admin",  cls: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400" },
-  PORTAL:      { label: "Portal", cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" },
-  RCTI:        { label: "RCTI",   cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300" },
 };
 
 const STATUS_COLORS: Record<string, string> = {
