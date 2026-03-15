@@ -400,34 +400,6 @@ export default function EmployeeDetailPage() {
                       isPending={updateMutation.isPending}
                       testId="text-preferred-name"
                     />
-                    <EditableField
-                      icon={FileBadge}
-                      label="Contract Code"
-                      field="contractCode"
-                      value={employee.contractCode || "Not set"}
-                      editingField={editingField}
-                      editValues={editValues}
-                      setEditValues={setEditValues}
-                      onStartEdit={startEdit}
-                      onSave={saveEdit}
-                      onCancel={cancelEdit}
-                      isPending={updateMutation.isPending}
-                      testId="text-contract-code"
-                    />
-                    <EditableField
-                      icon={Briefcase}
-                      label="Role Title"
-                      field="roleTitle"
-                      value={employee.roleTitle || "Not set"}
-                      editingField={editingField}
-                      editValues={editValues}
-                      setEditValues={setEditValues}
-                      onStartEdit={startEdit}
-                      onSave={saveEdit}
-                      onCancel={cancelEdit}
-                      isPending={updateMutation.isPending}
-                      testId="text-role-title"
-                    />
                     <div className="flex items-center gap-3 py-2" data-testid="field-employment-type">
                       <Briefcase className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -1666,6 +1638,8 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
     chargeOutRate: "",
     payRate: "",
     payrollFeePercent: "",
+    contractCode: "",
+    roleTitle: "",
     notes: "",
     rateEffectiveDate: "",
   });
@@ -1677,6 +1651,8 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
     chargeOutRate: "",
     payRate: "",
     payrollFeePercent: "",
+    contractCode: "",
+    roleTitle: "",
     notes: "",
     status: "ACTIVE" as "ACTIVE" | "ENDED",
   });
@@ -1692,6 +1668,8 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
       chargeOutRate: p.chargeOutRate || "",
       payRate: p.payRate || "",
       payrollFeePercent: p.payrollFeePercent || "0",
+      contractCode: (p as any).contractCode || "",
+      roleTitle: (p as any).roleTitle || "",
       notes: p.notes || "",
       rateEffectiveDate: new Date().toISOString().split("T")[0],
     });
@@ -1711,7 +1689,7 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
       queryClient.invalidateQueries({ queryKey: ["/api/employees", employeeId] });
       toast({ title: "Placement Added", description: "New placement created." });
       setShowForm(false);
-      setFormData({ clientId: "", clientName: "", startDate: new Date().toISOString().split("T")[0], endDate: "", chargeOutRate: "", payRate: "", payrollFeePercent: "", notes: "", status: "ACTIVE" });
+      setFormData({ clientId: "", clientName: "", startDate: new Date().toISOString().split("T")[0], endDate: "", chargeOutRate: "", payRate: "", payrollFeePercent: "", contractCode: "", roleTitle: "", notes: "", status: "ACTIVE" });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -1747,6 +1725,8 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
         chargeOutRate: editData.chargeOutRate || null,
         payRate: editData.payRate || null,
         payrollFeePercent: editData.payrollFeePercent || "0",
+        contractCode: (editData as any).contractCode || null,
+        roleTitle: (editData as any).roleTitle || null,
         notes: editData.notes || null,
         rateEffectiveDate: editData.rateEffectiveDate || null,
       },
@@ -1785,6 +1765,8 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
       chargeOutRate: formData.chargeOutRate || null,
       payRate: formData.payRate || null,
       payrollFeePercent: formData.payrollFeePercent || "0",
+      contractCode: (formData as any).contractCode || null,
+      roleTitle: (formData as any).roleTitle || null,
       notes: formData.notes || null,
       status: formData.status,
     });
@@ -1861,6 +1843,14 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Payroll Fee %</label>
                 <Input type="number" className="h-8 text-sm" placeholder="%" value={formData.payrollFeePercent} onChange={(e) => setFormData(prev => ({ ...prev, payrollFeePercent: e.target.value }))} data-testid="input-placement-fee" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Contract Code</label>
+                <Input type="text" className="h-8 text-sm" placeholder="e.g. CD012427" value={(formData as any).contractCode || ""} onChange={(e) => setFormData(prev => ({ ...prev, contractCode: e.target.value }))} data-testid="input-placement-contract-code" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Role Title</label>
+                <Input type="text" className="h-8 text-sm" placeholder="e.g. Senior Business Analyst" value={(formData as any).roleTitle || ""} onChange={(e) => setFormData(prev => ({ ...prev, roleTitle: e.target.value }))} data-testid="input-placement-role-title" />
               </div>
             </div>
             <Button size="sm" onClick={handleSubmit} disabled={createMutation.isPending} data-testid="button-save-placement">
@@ -1957,6 +1947,8 @@ function PlacementsCard({ employeeId, placements, clients, invoiceContacts }: { 
                 </div>
                 <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                   <span>From: {p.startDate || "N/A"}</span>
+                  {(p as any).contractCode && <span className="font-medium text-primary">{(p as any).contractCode}</span>}
+                  {(p as any).roleTitle && <span className="text-muted-foreground italic">{(p as any).roleTitle}</span>}
                   {p.chargeOutRate && <span>Charge (Ex GST): ${p.chargeOutRate}/hr</span>}
                   {p.payRate && <span>Pay (Ex GST): ${p.payRate}/hr</span>}
                   {p.payrollFeePercent && parseFloat(p.payrollFeePercent) > 0 && <span>Fee: {p.payrollFeePercent}%</span>}
@@ -2029,7 +2021,7 @@ function PlacementEditForm({
   originalChargeOutRate,
   originalPayRate,
 }: {
-  editData: { clientId: string; clientName: string; startDate: string; endDate: string; chargeOutRate: string; payRate: string; payrollFeePercent: string; notes: string; rateEffectiveDate?: string };
+  editData: { clientId: string; clientName: string; startDate: string; endDate: string; chargeOutRate: string; payRate: string; payrollFeePercent: string; contractCode?: string; roleTitle?: string; notes: string; rateEffectiveDate?: string };
   setEditData: (v: any) => void;
   originalChargeOutRate?: string;
   originalPayRate?: string;
@@ -2111,6 +2103,28 @@ function PlacementEditForm({
             value={editData.payrollFeePercent}
             onChange={(e) => setEditData((prev: any) => ({ ...prev, payrollFeePercent: e.target.value }))}
             data-testid={`input-edit-fee-${placementId}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Contract Code</label>
+          <Input
+            type="text"
+            className="h-8 text-sm"
+            placeholder="e.g. CD012427"
+            value={editData.contractCode || ""}
+            onChange={(e) => setEditData((prev: any) => ({ ...prev, contractCode: e.target.value }))}
+            data-testid={`input-edit-contract-code-${placementId}`}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Role Title</label>
+          <Input
+            type="text"
+            className="h-8 text-sm"
+            placeholder="e.g. Senior Business Analyst"
+            value={editData.roleTitle || ""}
+            onChange={(e) => setEditData((prev: any) => ({ ...prev, roleTitle: e.target.value }))}
+            data-testid={`input-edit-role-title-${placementId}`}
           />
         </div>
       </div>
