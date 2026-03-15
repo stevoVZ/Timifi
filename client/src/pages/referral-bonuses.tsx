@@ -243,6 +243,7 @@ export default function ReferralBonusesPage() {
                       className="h-8"
                       data-testid="input-create-bonus-rate"
                     />
+                    <p className="text-[11px] text-muted-foreground mt-1" data-testid="text-bonus-rate-helper">You'll earn this amount for each hour the referred employee works</p>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
@@ -408,8 +409,8 @@ export default function ReferralBonusesPage() {
                             {b.endDate ? ` to ${new Date(b.endDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}` : " (indefinite)"}
                             {b.notes && ` · ${b.notes}`}
                             {payout && (
-                              <span className="ml-2 font-medium text-foreground">
-                                · Total: ${payout.totalPayout.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              <span className="ml-2 font-medium text-foreground" data-testid={`text-formula-${b.id}`}>
+                                · ${parseFloat(b.bonusRatePerHour).toFixed(2)}/hr × {payout.monthlyBreakdown.reduce((s, m) => s + m.hours, 0).toFixed(1)} hrs = ${payout.totalPayout.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </span>
                             )}
                           </div>
@@ -438,21 +439,21 @@ export default function ReferralBonusesPage() {
                         <div className="text-xs font-medium text-muted-foreground mb-2">Monthly Payout Breakdown</div>
                         <div className="grid grid-cols-4 gap-1 text-xs font-medium text-muted-foreground border-b pb-1 mb-1">
                           <div>Month</div>
-                          <div className="text-right">Hours</div>
-                          <div className="text-right">Rate</div>
+                          <div className="text-right">Calculation</div>
+                          <div></div>
                           <div className="text-right">Amount</div>
                         </div>
                         {payout.monthlyBreakdown.map((mb, idx) => (
-                          <div key={idx} className="grid grid-cols-4 gap-1 text-xs py-0.5">
+                          <div key={idx} className="grid grid-cols-4 gap-1 text-xs py-0.5" data-testid={`breakdown-row-${b.id}-${idx}`}>
                             <div>{monthNames[mb.month - 1]} {mb.year}</div>
-                            <div className="text-right">{mb.hours}</div>
-                            <div className="text-right">${parseFloat(b.bonusRatePerHour).toFixed(2)}</div>
+                            <div className="text-right text-muted-foreground">${parseFloat(b.bonusRatePerHour).toFixed(2)}/hr × {parseFloat(String(mb.hours)).toFixed(1)} hrs</div>
+                            <div className="text-center text-muted-foreground">=</div>
                             <div className="text-right font-medium">${mb.amount.toFixed(2)}</div>
                           </div>
                         ))}
                         <div className="grid grid-cols-4 gap-1 text-xs font-medium border-t pt-1 mt-1">
                           <div>Total</div>
-                          <div className="text-right">{payout.monthlyBreakdown.reduce((s, m) => s + m.hours, 0).toFixed(1)}</div>
+                          <div className="text-right text-muted-foreground">{payout.monthlyBreakdown.reduce((s, m) => s + m.hours, 0).toFixed(1)} hrs</div>
                           <div></div>
                           <div className="text-right">${payout.totalPayout.toFixed(2)}</div>
                         </div>

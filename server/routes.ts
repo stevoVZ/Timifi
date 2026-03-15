@@ -5346,6 +5346,7 @@ export async function registerRoutes(
         totalCost: rows.reduce((s, r: any) => s + r.cost.totalCost, 0),
         totalCostIncPT: rows.reduce((s, r: any) => s + r.cost.totalCostIncPT, 0),
         totalPayrollTax: rows.reduce((s, r: any) => s + r.cost.payrollTaxAmount, 0),
+        totalReferralBonuses: rows.filter((r: any) => r.rowType === "REFERRAL_BONUS").reduce((s, r: any) => s + r.cost.totalCost, 0),
         totalProfitExPT: rows.reduce((s, r: any) => s + r.profitExPayrollTax, 0),
         totalProfitIncPT: rows.reduce((s, r: any) => s + r.profitIncPayrollTax, 0),
         totalProfit: rows.reduce((s, r: any) => s + r.profit, 0),

@@ -172,6 +172,7 @@ interface ProfitabilityData {
     totalCost: number;
     totalCostIncPT: number;
     totalPayrollTax: number;
+    totalReferralBonuses: number;
     totalProfitExPT: number;
     totalProfitIncPT: number;
     totalProfit: number;
@@ -302,7 +303,7 @@ export default function ProfitabilityPage() {
   };
 
   const rows = data?.rows || [];
-  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalCostIncPT: 0, totalPayrollTax: 0, totalProfitExPT: 0, totalProfitIncPT: 0, totalProfit: 0, totalCashReceived: 0, totalPayrollFees: 0, avgMargin: 0, avgMarginExPT: 0, avgMarginIncPT: 0, avgUtilisation: 0, totalActualHours: 0, totalExpectedHours: 0 };
+  const totals = data?.totals || { totalRevenue: 0, totalCost: 0, totalCostIncPT: 0, totalPayrollTax: 0, totalReferralBonuses: 0, totalProfitExPT: 0, totalProfitIncPT: 0, totalProfit: 0, totalCashReceived: 0, totalPayrollFees: 0, avgMargin: 0, avgMarginExPT: 0, avgMarginIncPT: 0, avgUtilisation: 0, totalActualHours: 0, totalExpectedHours: 0 };
 
   return (
     <div className="flex flex-col h-full" data-testid="page-profitability">
@@ -369,13 +370,14 @@ export default function ProfitabilityPage() {
               icon={<Users className="w-3.5 h-3.5" />}
               label="Employee Cost"
               value={fmtCurrency(totals.totalCost)}
+              subtitle={totals.totalReferralBonuses > 0 ? `Incl. referral bonuses: ${fmtCurrency(totals.totalReferralBonuses)}` : undefined}
               testId="kpi-cost"
             />
             <KpiCard
               icon={<TrendingUp className="w-3.5 h-3.5" />}
               label="Profit (inc PT)"
               value={fmtCurrency(totals.totalProfitIncPT)}
-              subtitle={totals.totalPayrollTax > 0 ? `PT: ${fmtCurrency(totals.totalPayrollTax)}` : undefined}
+              subtitle={[totals.totalPayrollTax > 0 ? `PT: ${fmtCurrency(totals.totalPayrollTax)}` : null, totals.totalReferralBonuses > 0 ? `Referrals: -${fmtCurrency(totals.totalReferralBonuses)}` : null].filter(Boolean).join(" · ") || undefined}
               valueColor={totals.totalProfitIncPT >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
               testId="kpi-profit"
             />
