@@ -482,6 +482,11 @@ export async function pushPayRunToXero(opts: {
       PayslipID: payslip.PayslipID,
       EmployeeID: payslip.EmployeeID,
       EarningsLines: [earningsLine],
+      // Explicitly clear any stale manual tax/deduction overrides on existing drafts
+      TaxLines: [],
+      DeductionLines: [],
+      ReimbursementLines: [],
+      LeaveLines: [],
     };
 
     try {
