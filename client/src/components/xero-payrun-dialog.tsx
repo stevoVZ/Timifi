@@ -101,6 +101,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
   const [selectedPeriodKey, setSelectedPeriodKey] = useState("");
   const [isUnscheduled, setIsUnscheduled] = useState(false);
   const [selectedDraftInfo, setSelectedDraftInfo] = useState<{ hasDraft: boolean; draftPayRunId: string | null }>({ hasDraft: false, draftPayRunId: null });
+  const [hoursOverride, setHoursOverride] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (isUnscheduled) {
@@ -137,6 +138,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
       setPeriodEnd(getLastDayOfMonth(year, month));
       setPaymentDate(getLastDayOfMonth(year, month));
       setSelectedDraftInfo({ hasDraft: false, draftPayRunId: null });
+      setHoursOverride({});
       return;
     }
     setIsUnscheduled(false);
@@ -174,12 +176,17 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
     mutationFn: async () => {
       const selectedEmps = (data?.employees || [])
         .filter(e => selected.has(e.id) && e.xeroEmployeeId)
-        .map(e => ({
-          xeroEmployeeId: e.xeroEmployeeId!,
-          hours: e.calculated.hours,
-          rate: e.calculated.rate,
-          gross: e.calculated.gross,
-        }));
+        .map(e => {
+          const overriddenHours = hoursOverride[e.id] !== undefined
+            ? parseFloat(hoursOverride[e.id]) || 0
+            : e.calculated.hours;
+          return {
+            xeroEmployeeId: e.xeroEmployeeId!,
+            hours: overriddenHours,
+            rate: e.calculated.rate,
+            gross: Math.round(overriddenHours * e.calculated.rate * 100) / 100,
+          };
+        });
 
       const r = await fetch("/api/payroll/push-to-xero", {
         method: "POST",
@@ -213,8 +220,13 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
   const totalNet = selectedEmps.reduce((s, e) => s + e.calculated.net, 0);
 
   const noXeroId = employees.filter(e => selected.has(e.id) && !e.xeroEmployeeId);
-  const noHours = employees.filter(e => selected.has(e.id) && e.calculated.hours === 0);
-  const canPush = selectedEmps.length > 0 && calendarId && periodStart && periodEnd && paymentDate && noXeroId.length === 0;
+  const noHours = employees.filter(e => {
+    if (!selected.has(e.id)) return false;
+    const ov = hoursOverride[e.id];
+    const hrs = ov !== undefined ? (parseFloat(ov) || 0) : e.calculated.hours;
+    return hrs === 0;
+  });
+  const canPush = selectedEmps.length > 0 && calendarId && periodStart && periodEnd && paymentDate && noXeroId.length === 0 && noHours.length === 0;
 
   function toggleEmployee(id: string) {
     setSelected(prev => {
@@ -287,14 +299,22 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                   <div className="text-xs text-muted-foreground">Skipped</div>
                 </div>
               </div>
-              {result.errors?.length > 0 && (
-                <Alert variant="destructive" className="w-full text-left">
+              {result.errors?.filter((e: string) => !e.startsWith("Reused existing")).length > 0 && (
+                  <Alert variant="destructive" className="w-full text-left">
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription>
                     <div className="font-medium mb-1">Some payslips had errors:</div>
-                    {result.errors.map((e: string, i: number) => (
+                    {result.errors.filter((e: string) => !e.startsWith("Reused existing")).map((e: string, i: number) => (
                       <div key={i} className="text-xs">{e}</div>
                     ))}
+                  </AlertDescription>
+                </Alert>
+              )}
+              {result.errors?.some((e: string) => e.startsWith("Reused existing")) && (
+                <Alert className="w-full text-left border-blue-200 bg-blue-50">
+                  <Info className="h-4 w-4 text-blue-600" />
+                  <AlertDescription className="text-blue-800 text-xs">
+                    Updated existing draft — no new pay run was created in Xero.
                   </AlertDescription>
                 </Alert>
               )}
@@ -526,21 +546,30 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                               <div className="text-xs text-muted-foreground">${emp.hourlyRate}/hr</div>
                             )}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-sm">
+                          <TableCell className="text-right" onClick={e => e.stopPropagation()}>
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <span className={`inline-flex items-center gap-1 cursor-help ${emp.hoursSource === "INVOICE" ? "text-blue-600" : emp.hoursSource === "NONE" ? "text-muted-foreground" : ""}`}>
-                                    {emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : "—"}
-                                    {emp.calculated.hours > 0 && emp.hoursSource !== "TIMESHEET" && (
-                                      <Info className="w-3 h-3" />
+                                  <div className="flex items-center justify-end gap-1">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.5"
+                                      placeholder={emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : "0"}
+                                      value={hoursOverride[emp.id] !== undefined ? hoursOverride[emp.id] : (emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : "")}
+                                      onChange={ev => setHoursOverride(prev => ({ ...prev, [emp.id]: ev.target.value }))}
+                                      className="w-20 text-right text-sm font-mono border rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary"
+                                      data-testid={`input-hours-${emp.id}`}
+                                    />
+                                    {emp.hoursSource !== "NONE" && emp.hoursSource !== "TIMESHEET" && (
+                                      <Info className="w-3 h-3 text-blue-500 cursor-help" />
                                     )}
-                                  </span>
+                                  </div>
                                 </TooltipTrigger>
                                 <TooltipContent side="left" className="max-w-xs">
                                   <div className="text-xs space-y-1">
                                     <div className="font-medium">
-                                      Source: {emp.hoursSource === "TIMESHEET" ? "Timesheet" : emp.hoursSource === "INVOICE" ? "Invoice (fallback)" : "No data"}
+                                      Source: {emp.hoursSource === "TIMESHEET" ? "Timesheet" : emp.hoursSource === "INVOICE" ? "Invoice (fallback)" : "No timesheet/invoice — enter manually"}
                                     </div>
                                     <div className="text-muted-foreground">{emp.hoursDetail}</div>
                                   </div>
