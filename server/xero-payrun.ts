@@ -18,6 +18,32 @@ function toXeroDate(dateStr: string): string {
   return `/Date(${d.getTime()}+0000)/`;
 }
 
+function parseXeroDate(dateStr: string): string | null {
+  const match = dateStr.match(/\/Date\((\d+)([+-]\d+)?\)\//);
+  if (match) {
+    return new Date(parseInt(match[1])).toISOString().split("T")[0];
+  }
+  try {
+    return new Date(dateStr).toISOString().split("T")[0];
+  } catch {
+    return null;
+  }
+}
+
+function parseXeroErrorMessage(body: string): string {
+  const msgMatch = body.match(/<Message>([\s\S]*?)<\/Message>/);
+  if (msgMatch) {
+    return msgMatch[1].trim();
+  }
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed.Message) return parsed.Message;
+    if (parsed.message) return parsed.message;
+    if (parsed.ErrorMessage) return parsed.ErrorMessage;
+  } catch {}
+  return body.length > 300 ? body.substring(0, 300) + "..." : body;
+}
+
 export async function getXeroPayrollCalendars(): Promise<
   Array<{ id: string; name: string; type: string; startDate: string | null; paymentDate: string | null }>
 > {
@@ -40,16 +66,64 @@ export async function getXeroPayrollCalendars(): Promise<
   }));
 }
 
-function parseXeroDate(dateStr: string): string | null {
-  const match = dateStr.match(/\/Date\((\d+)([+-]\d+)?\)\//);
-  if (match) {
-    return new Date(parseInt(match[1])).toISOString().split("T")[0];
+async function findExistingDraftPayRun(
+  calendarId: string,
+  periodStart: string,
+  periodEnd: string,
+  accessToken: string,
+  tenantId: string
+): Promise<any | null> {
+  let allPayRuns: any[] = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const res = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/PayRuns?page=${page}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) break;
+    const data = (await res.json()) as { PayRuns?: any[] };
+    const batch = data.PayRuns || [];
+    allPayRuns = allPayRuns.concat(batch);
+    hasMore = batch.length === 100;
+    page++;
   }
-  try {
-    return new Date(dateStr).toISOString().split("T")[0];
-  } catch {
-    return null;
+
+  for (const pr of allPayRuns) {
+    if (pr.PayrollCalendarID !== calendarId) continue;
+    const prStatus = (pr.PayRunStatus || "").toUpperCase();
+    if (prStatus !== "DRAFT") continue;
+
+    const prStart = pr.PayRunPeriodStartDate ? parseXeroDate(pr.PayRunPeriodStartDate) : null;
+    const prEnd = pr.PayRunPeriodEndDate ? parseXeroDate(pr.PayRunPeriodEndDate) : null;
+
+    if (prStart === periodStart || prEnd === periodEnd) {
+      return pr;
+    }
   }
+
+  return null;
+}
+
+async function fetchPayRunDetail(
+  payRunId: string,
+  accessToken: string,
+  tenantId: string
+): Promise<any | null> {
+  const res = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/PayRuns/${payRunId}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { PayRuns?: any[] };
+  return data.PayRuns?.[0] || null;
 }
 
 export async function pushPayRunToXero(opts: {
@@ -73,38 +147,58 @@ export async function pushPayRunToXero(opts: {
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
 
-  // Step 1: Create the draft pay run
-  const createBody = {
-    PayrollCalendarID: opts.calendarId,
-    PayRunPeriodStartDate: toXeroDate(opts.periodStart),
-    PayRunPeriodEndDate: toXeroDate(opts.periodEnd),
-    PaymentDate: toXeroDate(opts.paymentDate),
-  };
+  let payRun: any = null;
+  let reusedExisting = false;
 
-  const createRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayRuns", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Xero-Tenant-Id": tenantId,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ PayRuns: [createBody] }),
-  });
+  const existingDraft = await findExistingDraftPayRun(
+    opts.calendarId,
+    opts.periodStart,
+    opts.periodEnd,
+    accessToken,
+    tenantId
+  );
 
-  if (!createRes.ok) {
-    const body = await createRes.text();
-    throw new Error(`Xero create pay run failed (${createRes.status}): ${body}`);
+  if (existingDraft) {
+    const detail = await fetchPayRunDetail(existingDraft.PayRunID, accessToken, tenantId);
+    if (detail) {
+      payRun = detail;
+      reusedExisting = true;
+      console.log(`Reusing existing draft pay run ${existingDraft.PayRunID} for period ${opts.periodStart} - ${opts.periodEnd}`);
+    }
   }
 
-  const createData = (await createRes.json()) as { PayRuns?: any[] };
-  const payRun = createData.PayRuns?.[0];
-  if (!payRun) throw new Error("Xero did not return a pay run");
+  if (!payRun) {
+    const createBody = {
+      PayrollCalendarID: opts.calendarId,
+      PayRunPeriodStartDate: toXeroDate(opts.periodStart),
+      PayRunPeriodEndDate: toXeroDate(opts.periodEnd),
+      PaymentDate: toXeroDate(opts.paymentDate),
+    };
+
+    const createRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayRuns", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify([createBody]),
+    });
+
+    if (!createRes.ok) {
+      const body = await createRes.text();
+      throw new Error(`Xero create pay run failed (${createRes.status}): ${parseXeroErrorMessage(body)}`);
+    }
+
+    const createData = (await createRes.json()) as { PayRuns?: any[] };
+    payRun = createData.PayRuns?.[0];
+    if (!payRun) throw new Error("Xero did not return a pay run after creation");
+  }
 
   const xeroPayRunId: string = payRun.PayRunID;
   const xeroPayRunStatus: string = payRun.PayRunStatus || "DRAFT";
 
-  // Step 2: Match payslips by employee ID and update earnings
   const payslips: any[] = payRun.Payslips || [];
   const employeeMap = new Map(opts.employees.map(e => [e.xeroEmployeeId, e]));
 
@@ -112,7 +206,10 @@ export async function pushPayRunToXero(opts: {
   let payslipsUpdated = 0;
   let payslipsSkipped = 0;
 
-  // Fetch earnings rates to find the "Ordinary Time" rate ID
+  if (reusedExisting) {
+    errors.push(`Reused existing draft pay run for this period (${opts.periodStart} to ${opts.periodEnd})`);
+  }
+
   let ordinaryEarningsRateId: string | null = null;
   try {
     const piRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayItems", {
@@ -172,12 +269,11 @@ export async function pushPayRunToXero(opts: {
 
       if (!updateRes.ok) {
         const errBody = await updateRes.text();
-        errors.push(`Payslip ${payslip.PayslipID} update failed: ${errBody}`);
+        errors.push(`Payslip ${payslip.PayslipID} update failed: ${parseXeroErrorMessage(errBody)}`);
         payslipsSkipped++;
       } else {
         payslipsUpdated++;
       }
-      // Throttle to respect rate limits
       await new Promise(r => setTimeout(r, 300));
     } catch (err: any) {
       errors.push(`Payslip ${payslip.PayslipID}: ${err.message}`);
