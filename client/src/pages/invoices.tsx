@@ -148,7 +148,7 @@ export default function InvoicesPage() {
   const [sortField, setSortField] = useState<string>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
-  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
+  const [lastHandledInvoiceId, setLastHandledInvoiceId] = useState<string | null>(null);
   const [alignmentOpen, setAlignmentOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [gapMonth, setGapMonth] = useState(now.getMonth() + 1);
@@ -197,17 +197,17 @@ export default function InvoicesPage() {
   });
 
   useEffect(() => {
-    if (deepLinkHandled || !invoicesList) return;
+    if (!invoicesList) return;
     const params = new URLSearchParams(searchString);
     const invoiceId = params.get("invoiceId");
-    if (invoiceId) {
+    if (invoiceId && invoiceId !== lastHandledInvoiceId) {
       const inv = invoicesList.find(i => i.id === invoiceId);
       if (inv) {
         setDetailInvoice(inv);
       }
-      setDeepLinkHandled(true);
+      setLastHandledInvoiceId(invoiceId);
     }
-  }, [invoicesList, searchString, deepLinkHandled]);
+  }, [invoicesList, searchString, lastHandledInvoiceId]);
 
   const employeeMap = new Map(employees?.map((c) => [c.id, c]) || []);
   const clientMap = new Map(clients?.map((c) => [c.id, c]) || []);
