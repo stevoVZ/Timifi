@@ -955,7 +955,7 @@ function UploadView() {
                 {groupSummaries.length > 0 && (
                   <div className="space-y-2">
                     {groupSummaries.map((g) => (
-                      <div key={`${g.empId}-${g.month}-${g.year}`} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
+                      <div key={`${g.empId}-${g.month}-${g.year}-${g.placement?.id || "none"}`} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
                         <div className="min-w-0">
                           <div className="text-xs font-medium text-foreground truncate max-w-[160px]">
                             {g.emp ? `${g.emp.firstName} ${g.emp.lastName}` : "Unassigned"}
