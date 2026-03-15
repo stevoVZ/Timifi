@@ -454,38 +454,37 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
     setSyncResults(prev => ({ ...prev, [label]: data }));
   };
 
+  const [syncProgressMessage, setSyncProgressMessage] = useState<string>("");
+
   const syncAllMutation = useMutation({
     mutationFn: async () => {
       setSyncAllPending(true);
-      const endpoints = [
-        { label: "Employees", url: "/api/xero/sync" },
-        { label: "Pay Runs", url: "/api/xero/sync-payruns" },
-        { label: "Timesheets", url: "/api/xero/sync-timesheets" },
-        { label: "Invoices", url: "/api/xero/sync-invoices" },
-        { label: "Contacts", url: "/api/xero/sync-contacts" },
-        { label: "Bank Transactions", url: "/api/xero/sync-bank-transactions" },
-      ];
-      const results: Record<string, SyncResult> = {};
-      for (const ep of endpoints) {
-        try {
-          const res = await apiRequest("POST", ep.url);
-          const data = await res.json();
-          results[ep.label] = data;
-        } catch (err: any) {
-          results[ep.label] = { total: 0, created: 0, updated: 0, errors: [err.message || "Failed"] };
-        }
-      }
-      try {
-        const res = await fetch("/api/xero/payroll-settings", { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          results["Payroll Settings"] = { total: data.payItemsSynced || 0, created: data.payItemsSynced || 0, updated: 0, errors: [] };
-        }
-      } catch {}
-      return results;
+      setSyncProgressMessage("Starting sync...");
+      return new Promise<Record<string, SyncResult>>((resolve, reject) => {
+        const evtSource = new EventSource("/api/xero/sync-all");
+        evtSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === "progress") {
+              setSyncProgressMessage(data.message);
+            } else if (data.type === "complete") {
+              evtSource.close();
+              resolve(data.results);
+            } else if (data.type === "error") {
+              evtSource.close();
+              reject(new Error(data.message));
+            }
+          } catch {}
+        };
+        evtSource.onerror = () => {
+          evtSource.close();
+          reject(new Error("Connection lost during sync"));
+        };
+      });
     },
     onSuccess: (results: Record<string, SyncResult>) => {
       setSyncAllPending(false);
+      setSyncProgressMessage("");
       setSyncResults(results);
       queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/employees"] });
@@ -496,6 +495,7 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
     },
     onError: () => {
       setSyncAllPending(false);
+      setSyncProgressMessage("");
       toast({ title: "Sync All failed", variant: "destructive" });
     },
   });
@@ -694,6 +694,12 @@ function XeroTab({ settings }: { settings: Setting[] | undefined }) {
                 {syncAllPending ? "Syncing All..." : "Sync All"}
               </Button>
             </div>
+            {syncAllPending && syncProgressMessage && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="text-sync-progress">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                {syncProgressMessage}
+              </div>
+            )}
 
             <div className="space-y-2">
               {syncItems.map((item) => (

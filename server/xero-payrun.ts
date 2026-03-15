@@ -1,17 +1,4 @@
-import { refreshTokenIfNeeded } from "./xero";
-
-async function xeroFetch(url: string, options: RequestInit, maxRetries = 3): Promise<Response> {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const response = await fetch(url, options);
-    if (response.status === 429) {
-      const wait = Math.min(2 ** attempt * 5, 60);
-      await new Promise(r => setTimeout(r, wait * 1000));
-      continue;
-    }
-    return response;
-  }
-  throw new Error("Xero rate limit exceeded");
-}
+import { refreshTokenIfNeeded, xeroFetch } from "./xero";
 
 function toXeroDate(dateStr: string): string {
   const d = new Date(dateStr);

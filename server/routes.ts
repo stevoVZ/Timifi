@@ -7,7 +7,7 @@ import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
 import { buildABAFromPayRun, type ABAHeader } from "./aba";
-import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, syncBankTransactionsAllTenants, syncBankTransactionsForTenant, pushInvoiceToXero } from "./xero";
+import { getConsentUrl, handleCallback, isConnected, disconnect, syncEmployees, getCallbackUri, getTenants, selectTenant, syncPayRuns, syncTimesheets, syncPayrollSettings, syncInvoices, syncContacts, syncBankTransactions, syncBankTransactionsAllTenants, syncBankTransactionsForTenant, pushInvoiceToXero, syncAllEntities } from "./xero";
 import { requireAuth, hashPassword, comparePasswords } from "./auth";
 import { scanTimesheetPdf, scanRctiPdf } from "./ocr";
 import {
@@ -2528,6 +2528,49 @@ export async function registerRoutes(
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to sync bank transactions from Xero" });
+    }
+  });
+
+  app.get("/api/xero/sync-all", async (_req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const sendEvent = (data: any) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      const onProgress = (msg: string) => {
+        sendEvent({ type: "progress", message: msg });
+      };
+
+      const { results } = await syncAllEntities(onProgress);
+
+      const totalCreated = Object.values(results).reduce((s, r) => s + r.created, 0);
+      const totalUpdated = Object.values(results).reduce((s, r) => s + r.updated, 0);
+
+      sendEvent({
+        type: "complete",
+        results,
+        summary: { totalCreated, totalUpdated },
+      });
+    } catch (err: any) {
+      sendEvent({ type: "error", message: err.message || "Sync failed" });
+    }
+
+    res.end();
+  });
+
+  app.post("/api/xero/sync-all", async (_req, res) => {
+    try {
+      const { results } = await syncAllEntities();
+      const totalCreated = Object.values(results).reduce((s, r) => s + r.created, 0);
+      const totalUpdated = Object.values(results).reduce((s, r) => s + r.updated, 0);
+      res.json({ results, summary: { totalCreated, totalUpdated } });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to sync all entities from Xero" });
     }
   });
 

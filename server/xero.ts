@@ -19,7 +19,7 @@ function parseRetryAfter(header: string): number {
   return 60;
 }
 
-async function xeroFetch(url: string, options: RequestInit, maxRetries = 5): Promise<Response> {
+export async function xeroFetch(url: string, options: RequestInit, maxRetries = 5): Promise<Response> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const response = await fetch(url, options);
     if (response.status === 429) {
@@ -355,25 +355,32 @@ function mapPayFrequency(calendarType: string | undefined): "WEEKLY" | "FORTNIGH
   return "MONTHLY";
 }
 
-export async function syncEmployees(): Promise<{
+export async function syncEmployees(onProgress?: (msg: string) => void): Promise<{
   total: number;
   created: number;
   updated: number;
   errors: string[];
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
+  const lastSyncKey = await tenantSyncKey("xero.lastEmployeeSyncAt");
+  const lastSyncAt = await getSettingValue(lastSyncKey);
 
   let allEmployees: any[] = [];
   let page = 1;
   let hasMore = true;
 
   while (hasMore) {
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Accept": "application/json",
+    };
+    if (lastSyncAt) {
+      headers["If-Modified-Since"] = new Date(lastSyncAt).toUTCString();
+    }
+    onProgress?.(`Fetching employees page ${page}...`);
     const empResponse = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/Employees?page=${page}`, {
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Xero-Tenant-Id": tenantId,
-        "Accept": "application/json",
-      },
+      headers,
     });
 
     if (!empResponse.ok) {
@@ -389,6 +396,7 @@ export async function syncEmployees(): Promise<{
   }
 
   const employees = allEmployees;
+  onProgress?.(`Processing ${employees.length} employees...`);
 
   let calendarsMap: Record<string, string> = {};
   try {
@@ -746,13 +754,15 @@ async function shouldUpdatePayrollFee(employeeId: string, currentPayRunDate: str
   return true;
 }
 
-export async function syncPayRuns(): Promise<{
+export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
   total: number;
   created: number;
   updated: number;
   errors: string[];
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
+  const lastSyncKey = await tenantSyncKey("xero.lastPayRunSyncAt");
+  const lastSyncAt = await getSettingValue(lastSyncKey);
 
   let calendarNamesMap: Record<string, string> = {};
   try {
@@ -778,12 +788,17 @@ export async function syncPayRuns(): Promise<{
   let prHasMore = true;
 
   while (prHasMore) {
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Accept": "application/json",
+    };
+    if (lastSyncAt) {
+      headers["If-Modified-Since"] = new Date(lastSyncAt).toUTCString();
+    }
+    onProgress?.(`Fetching pay runs page ${prPage}...`);
     const response = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/PayRuns?page=${prPage}`, {
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Xero-Tenant-Id": tenantId,
-        "Accept": "application/json",
-      },
+      headers,
     });
 
     if (!response.ok) {
@@ -905,25 +920,32 @@ export async function syncPayRuns(): Promise<{
   return { total: payRuns.length, created, updated, errors };
 }
 
-export async function syncTimesheets(): Promise<{
+export async function syncTimesheets(onProgress?: (msg: string) => void): Promise<{
   total: number;
   created: number;
   updated: number;
   errors: string[];
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
+  const lastSyncKey = await tenantSyncKey("xero.lastTimesheetSyncAt");
+  const lastSyncAt = await getSettingValue(lastSyncKey);
 
   let allTimesheets: any[] = [];
   let tsPage = 1;
   let tsHasMore = true;
 
   while (tsHasMore) {
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Accept": "application/json",
+    };
+    if (lastSyncAt) {
+      headers["If-Modified-Since"] = new Date(lastSyncAt).toUTCString();
+    }
+    onProgress?.(`Fetching timesheets page ${tsPage}...`);
     const response = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/Timesheets?page=${tsPage}`, {
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Xero-Tenant-Id": tenantId,
-        "Accept": "application/json",
-      },
+      headers,
     });
 
     if (!response.ok) {
@@ -1145,25 +1167,32 @@ export async function syncPayrollSettings(): Promise<{
   return { calendars, earningsRates, leaveTypes, payItemsSynced };
 }
 
-export async function syncInvoices(): Promise<{
+export async function syncInvoices(onProgress?: (msg: string) => void): Promise<{
   total: number;
   created: number;
   updated: number;
   errors: string[];
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
+  const lastSyncKey = await tenantSyncKey("xero.lastInvoiceSyncAt");
+  const lastSyncAt = await getSettingValue(lastSyncKey);
 
   let page = 1;
   let allInvoices: any[] = [];
   let hasMore = true;
 
   while (hasMore) {
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Accept": "application/json",
+    };
+    if (lastSyncAt) {
+      headers["If-Modified-Since"] = new Date(lastSyncAt).toUTCString();
+    }
+    onProgress?.(`Fetching invoices page ${page}...`);
     const response = await xeroFetch(`https://api.xero.com/api.xro/2.0/Invoices?Statuses=AUTHORISED,PAID,SUBMITTED,DRAFT,VOIDED&page=${page}`, {
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Xero-Tenant-Id": tenantId,
-        "Accept": "application/json",
-      },
+      headers,
     });
 
     if (!response.ok) {
@@ -1387,25 +1416,32 @@ export async function syncInvoices(): Promise<{
   return { total: xeroInvoices.length, created, updated, errors };
 }
 
-export async function syncContacts(): Promise<{
+export async function syncContacts(onProgress?: (msg: string) => void): Promise<{
   total: number;
   created: number;
   updated: number;
   errors: string[];
 }> {
   const { accessToken, tenantId } = await refreshTokenIfNeeded();
+  const lastSyncKey = await tenantSyncKey("xero.lastContactSyncAt");
+  const lastSyncAt = await getSettingValue(lastSyncKey);
 
   let page = 1;
   let allContacts: any[] = [];
   let hasMore = true;
 
   while (hasMore) {
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Accept": "application/json",
+    };
+    if (lastSyncAt) {
+      headers["If-Modified-Since"] = new Date(lastSyncAt).toUTCString();
+    }
+    onProgress?.(`Fetching contacts page ${page}...`);
     const response = await xeroFetch(`https://api.xero.com/api.xro/2.0/Contacts?page=${page}`, {
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Xero-Tenant-Id": tenantId,
-        "Accept": "application/json",
-      },
+      headers,
     });
 
     if (!response.ok) {
@@ -1492,7 +1528,7 @@ export async function syncContacts(): Promise<{
   return { total: allContacts.length, created, updated, errors };
 }
 
-export async function syncBankTransactionsForTenant(overrideTenantId: string): Promise<{
+export async function syncBankTransactionsForTenant(overrideTenantId: string, onProgress?: (msg: string) => void): Promise<{
   tenantId: string;
   tenantName: string;
   total: number;
@@ -1500,29 +1536,17 @@ export async function syncBankTransactionsForTenant(overrideTenantId: string): P
   updated: number;
   errors: string[];
 }> {
-  const originalTenantId = await getSettingValue("xero.tenantId");
-  const { setActiveTenantId } = await import("./storage");
+  const tenantsJson = await getSettingValue("xero.tenants");
+  let tenants: Array<{ tenantId: string; tenantName: string }> = [];
+  try { tenants = JSON.parse(tenantsJson || "[]"); } catch {}
+  const tenantName = tenants.find(t => t.tenantId === overrideTenantId)?.tenantName || overrideTenantId;
 
-  try {
-    await saveSetting("xero.tenantId", overrideTenantId);
-    setActiveTenantId(overrideTenantId);
-
-    const tenantsJson = await getSettingValue("xero.tenants");
-    let tenants: Array<{ tenantId: string; tenantName: string }> = [];
-    try { tenants = JSON.parse(tenantsJson || "[]"); } catch {}
-    const tenantName = tenants.find(t => t.tenantId === overrideTenantId)?.tenantName || overrideTenantId;
-
-    const result = await syncBankTransactions();
-    return { tenantId: overrideTenantId, tenantName, ...result };
-  } finally {
-    if (originalTenantId) {
-      await saveSetting("xero.tenantId", originalTenantId);
-      setActiveTenantId(originalTenantId);
-    }
-  }
+  onProgress?.(`Syncing bank transactions for ${tenantName}...`);
+  const result = await syncBankTransactions(onProgress, overrideTenantId);
+  return { tenantId: overrideTenantId, tenantName, ...result };
 }
 
-export async function syncBankTransactionsAllTenants(): Promise<{
+export async function syncBankTransactionsAllTenants(onProgress?: (msg: string) => void): Promise<{
   results: Array<{ tenantId: string; tenantName: string; total: number; created: number; updated: number; errors: string[] }>;
 }> {
   const tenantsJson = await getSettingValue("xero.tenants");
@@ -1532,7 +1556,7 @@ export async function syncBankTransactionsAllTenants(): Promise<{
   const results = [];
   for (const tenant of tenants) {
     try {
-      const result = await syncBankTransactionsForTenant(tenant.tenantId);
+      const result = await syncBankTransactionsForTenant(tenant.tenantId, onProgress);
       results.push(result);
     } catch (err: any) {
       results.push({
@@ -1546,25 +1570,34 @@ export async function syncBankTransactionsAllTenants(): Promise<{
   return { results };
 }
 
-export async function syncBankTransactions(): Promise<{
+export async function syncBankTransactions(onProgress?: (msg: string) => void, overrideTenantId?: string): Promise<{
   total: number;
   created: number;
   updated: number;
   errors: string[];
 }> {
-  const { accessToken, tenantId } = await refreshTokenIfNeeded();
+  const tokenData = await refreshTokenIfNeeded();
+  const accessToken = tokenData.accessToken;
+  const tenantId = overrideTenantId || tokenData.tenantId;
+  const lastSyncKey = `xero.lastBankTxnSyncAt.${tenantId}`;
+  const lastSyncAt = await getSettingValue(lastSyncKey);
 
   let page = 1;
   let allTxns: any[] = [];
   let hasMore = true;
 
   while (hasMore) {
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Accept": "application/json",
+    };
+    if (lastSyncAt) {
+      headers["If-Modified-Since"] = new Date(lastSyncAt).toUTCString();
+    }
+    onProgress?.(`Fetching bank transactions page ${page}...`);
     const response = await xeroFetch(`https://api.xero.com/api.xro/2.0/BankTransactions?page=${page}&where=Status!%3D%22DELETED%22`, {
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Xero-Tenant-Id": tenantId,
-        "Accept": "application/json",
-      },
+      headers,
     });
 
     if (response.status === 403) {
@@ -1631,9 +1664,66 @@ export async function syncBankTransactions(): Promise<{
     }
   }
 
-  await saveSetting(await tenantSyncKey("xero.lastBankTxnSyncAt"), new Date().toISOString());
+  await saveSetting(lastSyncKey, new Date().toISOString());
 
   return { total: allTxns.length, created, updated, errors };
+}
+
+export async function syncAllEntities(onProgress?: (msg: string) => void): Promise<{
+  results: Record<string, { total: number; created: number; updated: number; errors: string[] }>;
+}> {
+  const results: Record<string, { total: number; created: number; updated: number; errors: string[] }> = {};
+
+  onProgress?.("Syncing Contacts...");
+  try {
+    results["Contacts"] = await syncContacts(onProgress);
+  } catch (err: any) {
+    results["Contacts"] = { total: 0, created: 0, updated: 0, errors: [err.message || "Failed"] };
+  }
+
+  onProgress?.("Syncing Employees...");
+  try {
+    results["Employees"] = await syncEmployees(onProgress);
+  } catch (err: any) {
+    results["Employees"] = { total: 0, created: 0, updated: 0, errors: [err.message || "Failed"] };
+  }
+
+  onProgress?.("Syncing Pay Runs...");
+  try {
+    results["Pay Runs"] = await syncPayRuns(onProgress);
+  } catch (err: any) {
+    results["Pay Runs"] = { total: 0, created: 0, updated: 0, errors: [err.message || "Failed"] };
+  }
+
+  onProgress?.("Syncing Timesheets...");
+  try {
+    results["Timesheets"] = await syncTimesheets(onProgress);
+  } catch (err: any) {
+    results["Timesheets"] = { total: 0, created: 0, updated: 0, errors: [err.message || "Failed"] };
+  }
+
+  onProgress?.("Syncing Invoices...");
+  try {
+    results["Invoices"] = await syncInvoices(onProgress);
+  } catch (err: any) {
+    results["Invoices"] = { total: 0, created: 0, updated: 0, errors: [err.message || "Failed"] };
+  }
+
+  onProgress?.("Syncing Bank Transactions...");
+  try {
+    results["Bank Transactions"] = await syncBankTransactions(onProgress);
+  } catch (err: any) {
+    results["Bank Transactions"] = { total: 0, created: 0, updated: 0, errors: [err.message || "Failed"] };
+  }
+
+  try {
+    await syncPayrollSettings();
+  } catch {}
+
+  onProgress?.("Sync complete.");
+  await saveSetting(await tenantSyncKey("xero.lastSyncAt"), new Date().toISOString());
+
+  return { results };
 }
 
 export async function pushInvoiceToXero(invoiceId: string): Promise<{ xeroInvoiceId: string; invoiceNumber: string }> {
