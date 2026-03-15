@@ -2726,14 +2726,34 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/cash-position", async (_req, res) => {
+  app.get("/api/cash-position", async (req, res) => {
     try {
-      const [allTxns, allInvoices, employees, allPayRuns] = await Promise.all([
+      const startYear = req.query.startYear ? parseInt(req.query.startYear as string) : undefined;
+      const startMonth = req.query.startMonth ? parseInt(req.query.startMonth as string) : undefined;
+      const endYear = req.query.endYear ? parseInt(req.query.endYear as string) : undefined;
+      const endMonth = req.query.endMonth ? parseInt(req.query.endMonth as string) : undefined;
+
+      const hasDateFilter = startYear && startMonth && endYear && endMonth
+        && !isNaN(startYear) && !isNaN(startMonth) && !isNaN(endYear) && !isNaN(endMonth)
+        && startMonth >= 1 && startMonth <= 12 && endMonth >= 1 && endMonth <= 12
+        && (startYear * 100 + startMonth) <= (endYear * 100 + endMonth);
+
+      const inDateRange = (year: number, month: number) => {
+        if (!hasDateFilter) return true;
+        const ym = year * 100 + month;
+        return ym >= startYear! * 100 + startMonth! && ym <= endYear! * 100 + endMonth!;
+      };
+
+      const [allTxnsRaw, allInvoicesRaw, employees, allPayRunsRaw] = await Promise.all([
         storage.getBankTransactions(),
         storage.getInvoices(),
         storage.getEmployees(),
         storage.getPayRuns(),
       ]);
+
+      const allTxns = hasDateFilter ? allTxnsRaw.filter(t => inDateRange(t.year, t.month)) : allTxnsRaw;
+      const allInvoices = hasDateFilter ? allInvoicesRaw.filter(inv => inDateRange(inv.year, inv.month)) : allInvoicesRaw;
+      const allPayRuns = hasDateFilter ? allPayRunsRaw.filter(pr => inDateRange(pr.year, pr.month)) : allPayRunsRaw;
 
       const isTransfer = (t: any) =>
         (!t.contactName || t.contactName === "") &&

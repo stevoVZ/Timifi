@@ -1,12 +1,15 @@
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TopBar } from "@/components/top-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Wallet, TrendingUp, TrendingDown, CreditCard, Building2,
   ArrowUpDown, Users, Receipt, DollarSign, Landmark, PiggyBank,
-  FileText, CheckCircle2
+  FileText, CheckCircle2, Calendar
 } from "lucide-react";
 
 interface AccountSummary {
@@ -98,6 +101,181 @@ function formatMonth(m: string): string {
   return `${months[parseInt(mo)]} ${y}`;
 }
 
+interface DateRange {
+  startYear: number;
+  startMonth: number;
+  endYear: number;
+  endMonth: number;
+}
+
+function getAusFYRange(offset: number = 0): DateRange {
+  const now = new Date();
+  let fyStartYear = now.getFullYear();
+  if (now.getMonth() < 6) fyStartYear--;
+  fyStartYear += offset;
+  return { startYear: fyStartYear, startMonth: 7, endYear: fyStartYear + 1, endMonth: 6 };
+}
+
+function getLastNMonthsRange(n: number): DateRange {
+  const now = new Date();
+  let endYear = now.getFullYear();
+  let endMonth = now.getMonth() + 1;
+  let startMonth = endMonth - n + 1;
+  let startYear = endYear;
+  while (startMonth < 1) { startMonth += 12; startYear--; }
+  return { startYear, startMonth, endYear, endMonth };
+}
+
+type PresetKey = "this-fy" | "last-fy" | "last-3" | "last-6" | "last-12" | "all" | "custom";
+
+interface DateFilterState {
+  preset: PresetKey;
+  range: DateRange | null;
+}
+
+let sessionDateFilter: DateFilterState = {
+  preset: "this-fy",
+  range: getAusFYRange(0),
+};
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function DateRangeFilter({ value, onChange }: { value: { preset: PresetKey; range: DateRange | null }; onChange: (v: { preset: PresetKey; range: DateRange | null }) => void }) {
+  const presets: { key: PresetKey; label: string }[] = [
+    { key: "this-fy", label: "This FY" },
+    { key: "last-fy", label: "Last FY" },
+    { key: "last-3", label: "Last 3 months" },
+    { key: "last-6", label: "Last 6 months" },
+    { key: "last-12", label: "Last 12 months" },
+    { key: "all", label: "All time" },
+    { key: "custom", label: "Custom" },
+  ];
+
+  const rangeForPreset = (key: PresetKey): DateRange | null => {
+    switch (key) {
+      case "this-fy": return getAusFYRange(0);
+      case "last-fy": return getAusFYRange(-1);
+      case "last-3": return getLastNMonthsRange(3);
+      case "last-6": return getLastNMonthsRange(6);
+      case "last-12": return getLastNMonthsRange(12);
+      case "all": return null;
+      default: return value.range;
+    }
+  };
+
+  const normalizeRange = (r: DateRange): DateRange => {
+    const startYM = r.startYear * 100 + r.startMonth;
+    const endYM = r.endYear * 100 + r.endMonth;
+    if (startYM > endYM) {
+      return { startYear: r.endYear, startMonth: r.endMonth, endYear: r.startYear, endMonth: r.startMonth };
+    }
+    return r;
+  };
+
+  const handlePreset = (key: PresetKey) => {
+    if (key === "custom") {
+      const r = value.range || getAusFYRange(0);
+      onChange({ preset: "custom", range: r });
+    } else {
+      onChange({ preset: key, range: rangeForPreset(key) });
+    }
+  };
+
+  const handleCustomChange = (r: DateRange) => {
+    onChange({ preset: "custom", range: normalizeRange(r) });
+  };
+
+  const currentRange = value.range;
+  const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - 5 + i);
+
+  const rangeLabel = currentRange
+    ? `${MONTH_NAMES[currentRange.startMonth - 1]} ${currentRange.startYear} – ${MONTH_NAMES[currentRange.endMonth - 1]} ${currentRange.endYear}`
+    : "All time";
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="date-range-filter">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
+        <div className="flex flex-wrap gap-1.5">
+          {presets.map(p => (
+            <Button
+              key={p.key}
+              variant={value.preset === p.key ? "default" : "outline"}
+              size="sm"
+              className="h-7 text-xs px-2.5"
+              onClick={() => handlePreset(p.key)}
+              data-testid={`filter-preset-${p.key}`}
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
+        <span className="text-xs text-muted-foreground ml-1 hidden sm:inline" data-testid="filter-range-label">
+          {rangeLabel}
+        </span>
+      </div>
+      {value.preset === "custom" && currentRange && (
+        <div className="flex items-center gap-2 flex-wrap pl-6" data-testid="custom-range-selectors">
+          <span className="text-xs text-muted-foreground">From</span>
+          <Select
+            value={String(currentRange.startMonth)}
+            onValueChange={(v) => handleCustomChange({ ...currentRange, startMonth: parseInt(v) })}
+          >
+            <SelectTrigger className="w-[80px] h-7 text-xs" data-testid="select-start-month">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MONTH_NAMES.map((m, i) => (
+                <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={String(currentRange.startYear)}
+            onValueChange={(v) => handleCustomChange({ ...currentRange, startYear: parseInt(v) })}
+          >
+            <SelectTrigger className="w-[80px] h-7 text-xs" data-testid="select-start-year">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {years.map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-xs text-muted-foreground">to</span>
+          <Select
+            value={String(currentRange.endMonth)}
+            onValueChange={(v) => handleCustomChange({ ...currentRange, endMonth: parseInt(v) })}
+          >
+            <SelectTrigger className="w-[80px] h-7 text-xs" data-testid="select-end-month">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MONTH_NAMES.map((m, i) => (
+                <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={String(currentRange.endYear)}
+            onValueChange={(v) => handleCustomChange({ ...currentRange, endYear: parseInt(v) })}
+          >
+            <SelectTrigger className="w-[80px] h-7 text-xs" data-testid="select-end-year">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {years.map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function KpiCard({ title, value, subtitle, icon: Icon, variant = "default", testId }: {
   title: string;
   value: string;
@@ -171,8 +349,34 @@ function AccountCard({ account }: { account: AccountSummary }) {
 }
 
 export default function CashPositionPage() {
+  const [dateFilter, setDateFilterState] = useState<DateFilterState>(sessionDateFilter);
+
+  const setDateFilter = (v: DateFilterState) => {
+    sessionDateFilter = v;
+    setDateFilterState(v);
+  };
+
+  const queryKey = useMemo(() => {
+    if (!dateFilter.range) return ["/api/cash-position"];
+    const { startYear, startMonth, endYear, endMonth } = dateFilter.range;
+    return ["/api/cash-position", { startYear, startMonth, endYear, endMonth }];
+  }, [dateFilter.range]);
+
+  const queryUrl = useMemo(() => {
+    if (!dateFilter.range) return "/api/cash-position";
+    const { startYear, startMonth, endYear, endMonth } = dateFilter.range;
+    return `/api/cash-position?startYear=${startYear}&startMonth=${startMonth}&endYear=${endYear}&endMonth=${endMonth}`;
+  }, [dateFilter.range]);
+
   const { data, isLoading } = useQuery<CashPositionData>({
-    queryKey: ["/api/cash-position"],
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(queryUrl, { credentials: "include" });
+      if (!res.ok) {
+        throw new Error(`${res.status}: ${await res.text() || res.statusText}`);
+      }
+      return res.json();
+    },
   });
 
   if (isLoading || !data) {
@@ -180,6 +384,7 @@ export default function CashPositionPage() {
       <div className="flex flex-col h-full">
         <TopBar title="Cash Position" />
         <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
+          <DateRangeFilter value={dateFilter} onChange={setDateFilter} />
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
             {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24" />)}
           </div>
@@ -200,13 +405,15 @@ export default function CashPositionPage() {
   const operatingAccounts = data.accounts.filter(a => !a.name.includes("American Express"));
   const totalCashBalance = operatingAccounts.reduce((s, a) => s + a.currentBalance, 0);
 
-  const recentMonths = data.monthlyFlow.slice(-12);
+  const recentMonths = data.monthlyFlow;
   const maxBar = Math.max(...recentMonths.map(m => Math.max(m.cashIn, m.cashOut)), 1);
 
   return (
     <div className="flex flex-col h-full">
       <TopBar title="Cash Position" />
       <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
+
+        <DateRangeFilter value={dateFilter} onChange={setDateFilter} />
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
           <KpiCard
@@ -441,7 +648,7 @@ export default function CashPositionPage() {
           <CardHeader className="pb-3 px-5 pt-4">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <TrendingUp className="w-4 h-4" />
-              Monthly Bank Flow (Last 12 Months)
+              Monthly Bank Flow
             </CardTitle>
             <p className="text-[11px] text-muted-foreground">Based on synced bank transactions only (excludes inter-account transfers)</p>
           </CardHeader>
