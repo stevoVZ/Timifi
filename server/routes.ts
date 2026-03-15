@@ -7094,15 +7094,16 @@ export async function registerRoutes(
       let xeroPayslipMap = new Map<string, { hours: number; rate: number }>();
       // Also build name→xeroId map so we can link unmatched employees
       let xeroNameToId = new Map<string, string>();
+      console.log("[prepare] draftPayRunId:", draftPayRunId, "month:", month, "year:", year);
       if (draftPayRunId) {
         try {
           const { getXeroPayslipHours } = await import("./xero-payrun");
           const xeroPayslips = await getXeroPayslipHours(draftPayRunId);
+          console.log("[prepare] Xero payslips fetched:", xeroPayslips.length, JSON.stringify(xeroPayslips.map(p => ({name: p.firstName+' '+p.lastName, hours: p.hours, xeroId: p.xeroEmployeeId}))));
           for (const ps of xeroPayslips) {
             xeroPayslipMap.set(ps.xeroEmployeeId, { hours: ps.hours, rate: ps.ratePerUnit });
             const nameKey = `${ps.firstName.toLowerCase().trim()} ${ps.lastName.toLowerCase().trim()}`;
             xeroNameToId.set(nameKey, ps.xeroEmployeeId);
-            // Auto-link employee if matched by name and not yet linked
             const timifiEmp = activePayroll.find(
               e => !e.xeroEmployeeId &&
                 `${e.firstName.toLowerCase().trim()} ${e.lastName.toLowerCase().trim()}` === nameKey
@@ -7112,7 +7113,11 @@ export async function registerRoutes(
               timifiEmp.xeroEmployeeId = ps.xeroEmployeeId;
             }
           }
-        } catch {}
+          console.log("[prepare] xeroPayslipMap keys:", [...xeroPayslipMap.keys()]);
+          console.log("[prepare] activePayroll xeroIds:", activePayroll.map(e => e.firstName+' '+e.lastName+':'+e.xeroEmployeeId));
+        } catch(e: any) {
+          console.error("[prepare] getXeroPayslipHours ERROR:", e.message, e.stack);
+        }
       }
 
       // ── Timifi fallback data ───────────────────────────────────────────────
