@@ -21,10 +21,19 @@ function toXeroDate(dateStr: string): string {
 function parseXeroDate(dateStr: string): string | null {
   const match = dateStr.match(/\/Date\((\d+)([+-]\d+)?\)\//);
   if (match) {
-    return new Date(parseInt(match[1])).toISOString().split("T")[0];
+    const d = new Date(parseInt(match[1]));
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
   }
   try {
-    return new Date(dateStr).toISOString().split("T")[0];
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
   } catch {
     return null;
   }
@@ -124,6 +133,216 @@ async function fetchPayRunDetail(
   if (!res.ok) return null;
   const data = (await res.json()) as { PayRuns?: any[] };
   return data.PayRuns?.[0] || null;
+}
+
+export interface PayPeriodOption {
+  calendarId: string;
+  calendarName: string;
+  calendarType: string;
+  periodStart: string;
+  periodEnd: string;
+  paymentDate: string;
+  label: string;
+  hasDraft: boolean;
+  draftPayRunId: string | null;
+}
+
+function addPeriod(date: Date, calendarType: string): Date {
+  const result = new Date(date);
+  switch (calendarType) {
+    case "WEEKLY":
+      result.setDate(result.getDate() + 7);
+      break;
+    case "FORTNIGHTLY":
+      result.setDate(result.getDate() + 14);
+      break;
+    case "FOURWEEKLY":
+      result.setDate(result.getDate() + 28);
+      break;
+    case "MONTHLY":
+      result.setMonth(result.getMonth() + 1);
+      break;
+    case "TWICEMONTHLY":
+      if (result.getDate() <= 15) {
+        result.setDate(16);
+      } else {
+        result.setMonth(result.getMonth() + 1);
+        result.setDate(1);
+      }
+      break;
+    case "QUARTERLY":
+      result.setMonth(result.getMonth() + 3);
+      break;
+    default:
+      result.setMonth(result.getMonth() + 1);
+  }
+  return result;
+}
+
+function getPeriodEnd(periodStart: Date, calendarType: string): Date {
+  const end = addPeriod(periodStart, calendarType);
+  end.setDate(end.getDate() - 1);
+  return end;
+}
+
+function formatDateStr(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatPeriodLabel(calendarName: string, periodStart: Date, periodEnd: Date): string {
+  const startMonth = periodStart.toLocaleString("en-AU", { month: "long", year: "numeric" });
+  const endMonth = periodEnd.toLocaleString("en-AU", { month: "long", year: "numeric" });
+  if (startMonth === endMonth) {
+    return `${calendarName}: ${startMonth}`;
+  }
+  return `${calendarName}: ${periodStart.toLocaleString("en-AU", { day: "numeric", month: "short" })} - ${periodEnd.toLocaleString("en-AU", { day: "numeric", month: "short", year: "numeric" })}`;
+}
+
+export async function getAvailablePayPeriods(): Promise<PayPeriodOption[]> {
+  const { accessToken, tenantId } = await refreshTokenIfNeeded();
+
+  const calRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayrollCalendars", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      Accept: "application/json",
+    },
+  });
+  if (!calRes.ok) throw new Error(`Xero calendars fetch failed (${calRes.status})`);
+  const calData = (await calRes.json()) as { PayrollCalendars?: any[] };
+  const calendars = calData.PayrollCalendars || [];
+
+  let allPayRuns: any[] = [];
+  let page = 1;
+  let hasMore = true;
+  while (hasMore) {
+    const res = await xeroFetch(`https://api.xero.com/payroll.xro/1.0/PayRuns?page=${page}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Xero-Tenant-Id": tenantId,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) break;
+    const data = (await res.json()) as { PayRuns?: any[] };
+    const batch = data.PayRuns || [];
+    allPayRuns = allPayRuns.concat(batch);
+    hasMore = batch.length === 100;
+    page++;
+  }
+
+  const payRunsByCalendar = new Map<string, any[]>();
+  for (const pr of allPayRuns) {
+    const calId = pr.PayrollCalendarID;
+    if (!payRunsByCalendar.has(calId)) payRunsByCalendar.set(calId, []);
+    payRunsByCalendar.get(calId)!.push(pr);
+  }
+
+  const periods: PayPeriodOption[] = [];
+  const now = new Date();
+
+  for (const cal of calendars) {
+    const calId = cal.PayrollCalendarID;
+    const calName = cal.Name || "Unknown Calendar";
+    const calType = cal.CalendarType || "MONTHLY";
+    const calRuns = payRunsByCalendar.get(calId) || [];
+
+    const draftRuns = calRuns.filter(
+      (pr: any) => (pr.PayRunStatus || "").toUpperCase() === "DRAFT"
+    );
+    for (const draft of draftRuns) {
+      const pStart = draft.PayRunPeriodStartDate ? parseXeroDate(draft.PayRunPeriodStartDate) : null;
+      const pEnd = draft.PayRunPeriodEndDate ? parseXeroDate(draft.PayRunPeriodEndDate) : null;
+      const pPayment = draft.PaymentDate ? parseXeroDate(draft.PaymentDate) : null;
+      if (pStart && pEnd) {
+        periods.push({
+          calendarId: calId,
+          calendarName: calName,
+          calendarType: calType,
+          periodStart: pStart,
+          periodEnd: pEnd,
+          paymentDate: pPayment || pEnd,
+          label: formatPeriodLabel(calName, new Date(pStart), new Date(pEnd)),
+          hasDraft: true,
+          draftPayRunId: draft.PayRunID,
+        });
+      }
+    }
+
+    let latestEnd: Date | null = null;
+    for (const pr of calRuns) {
+      const pEnd = pr.PayRunPeriodEndDate ? parseXeroDate(pr.PayRunPeriodEndDate) : null;
+      if (pEnd) {
+        const d = new Date(pEnd);
+        if (!latestEnd || d > latestEnd) latestEnd = d;
+      }
+    }
+
+    let nextStart: Date;
+    if (latestEnd) {
+      nextStart = new Date(latestEnd);
+      nextStart.setDate(nextStart.getDate() + 1);
+    } else if (cal.StartDate) {
+      const parsed = parseXeroDate(cal.StartDate);
+      nextStart = parsed ? new Date(parsed) : new Date(now.getFullYear(), now.getMonth(), 1);
+    } else {
+      nextStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    const periodsToGenerate = 3;
+    for (let i = 0; i < periodsToGenerate; i++) {
+      const pEnd = getPeriodEnd(nextStart, calType);
+      const paymentDate = cal.PaymentDate ? parseXeroDate(cal.PaymentDate) : null;
+      let payDate = pEnd;
+      if (paymentDate) {
+        const origPayDay = new Date(paymentDate).getDate();
+        payDate = new Date(pEnd.getFullYear(), pEnd.getMonth(), origPayDay);
+        if (payDate < pEnd) {
+          payDate.setMonth(payDate.getMonth() + 1);
+        }
+      }
+
+      const startStr = formatDateStr(nextStart);
+      const endStr = formatDateStr(pEnd);
+
+      const alreadyListed = periods.some(
+        p => p.calendarId === calId && p.periodStart === startStr && p.periodEnd === endStr
+      );
+
+      if (!alreadyListed) {
+        const existingDraft = draftRuns.find((dr: any) => {
+          const drStart = dr.PayRunPeriodStartDate ? parseXeroDate(dr.PayRunPeriodStartDate) : null;
+          const drEnd = dr.PayRunPeriodEndDate ? parseXeroDate(dr.PayRunPeriodEndDate) : null;
+          return drStart === startStr && drEnd === endStr;
+        });
+
+        periods.push({
+          calendarId: calId,
+          calendarName: calName,
+          calendarType: calType,
+          periodStart: startStr,
+          periodEnd: endStr,
+          paymentDate: formatDateStr(payDate),
+          label: formatPeriodLabel(calName, nextStart, pEnd),
+          hasDraft: !!existingDraft,
+          draftPayRunId: existingDraft ? existingDraft.PayRunID : null,
+        });
+      }
+
+      nextStart = new Date(pEnd);
+      nextStart.setDate(nextStart.getDate() + 1);
+    }
+  }
+
+  periods.sort((a, b) => {
+    if (a.calendarName !== b.calendarName) return a.calendarName.localeCompare(b.calendarName);
+    return a.periodStart.localeCompare(b.periodStart);
+  });
+
+  return periods;
 }
 
 export async function pushPayRunToXero(opts: {

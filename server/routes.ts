@@ -6432,6 +6432,16 @@ export async function registerRoutes(
   });
 
   // ── Xero Payrun Push ─────────────────────────────────────────────────────
+  app.get("/api/payroll/pay-periods", requireAuth, async (_req, res) => {
+    try {
+      const { getAvailablePayPeriods } = await import("./xero-payrun");
+      const periods = await getAvailablePayPeriods();
+      res.json({ periods });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch pay periods" });
+    }
+  });
+
   app.get("/api/payroll/prepare", requireAuth, async (req, res) => {
     try {
       const month = parseInt(req.query.month as string);

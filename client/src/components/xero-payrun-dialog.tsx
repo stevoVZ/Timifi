@@ -17,7 +17,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -31,7 +33,7 @@ import {
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { AlertTriangle, CheckCircle2, Send, Loader2, Building2, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Send, Loader2, Building2, Info, FileEdit } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June",
@@ -46,6 +48,18 @@ function getLastDayOfMonth(year: number, month: number): string {
 }
 function getFirstDayOfMonth(year: number, month: number): string {
   return new Date(year, month - 1, 1).toISOString().split("T")[0];
+}
+
+interface PayPeriodOption {
+  calendarId: string;
+  calendarName: string;
+  calendarType: string;
+  periodStart: string;
+  periodEnd: string;
+  paymentDate: string;
+  label: string;
+  hasDraft: boolean;
+  draftPayRunId: string | null;
 }
 
 interface PreparedEmployee {
@@ -84,14 +98,61 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [step, setStep] = useState<"select" | "confirm" | "done">("select");
   const [result, setResult] = useState<any>(null);
+  const [selectedPeriodKey, setSelectedPeriodKey] = useState("");
+  const [isUnscheduled, setIsUnscheduled] = useState(false);
+  const [selectedDraftInfo, setSelectedDraftInfo] = useState<{ hasDraft: boolean; draftPayRunId: string | null }>({ hasDraft: false, draftPayRunId: null });
 
-  // Auto-fill period dates when month/year changes
   useEffect(() => {
-    setPeriodStart(getFirstDayOfMonth(year, month));
-    setPeriodEnd(getLastDayOfMonth(year, month));
-    // Payment date: last business day ≈ last day of month
-    setPaymentDate(getLastDayOfMonth(year, month));
-  }, [month, year]);
+    if (isUnscheduled) {
+      setPeriodStart(getFirstDayOfMonth(year, month));
+      setPeriodEnd(getLastDayOfMonth(year, month));
+      setPaymentDate(getLastDayOfMonth(year, month));
+    }
+  }, [month, year, isUnscheduled]);
+
+  const { data: periodsData, isLoading: periodsLoading } = useQuery<{ periods: PayPeriodOption[] }>({
+    queryKey: ["/api/payroll/pay-periods"],
+    queryFn: async () => {
+      const r = await fetch("/api/payroll/pay-periods", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load pay periods");
+      return r.json();
+    },
+    enabled: open,
+  });
+
+  const payPeriods = periodsData?.periods || [];
+
+  const periodsByCalendar = payPeriods.reduce<Record<string, PayPeriodOption[]>>((acc, p) => {
+    if (!acc[p.calendarName]) acc[p.calendarName] = [];
+    acc[p.calendarName].push(p);
+    return acc;
+  }, {});
+
+  function handlePeriodSelect(key: string) {
+    setSelectedPeriodKey(key);
+    if (key === "unscheduled") {
+      setIsUnscheduled(true);
+      setCalendarId("");
+      setPeriodStart(getFirstDayOfMonth(year, month));
+      setPeriodEnd(getLastDayOfMonth(year, month));
+      setPaymentDate(getLastDayOfMonth(year, month));
+      setSelectedDraftInfo({ hasDraft: false, draftPayRunId: null });
+      return;
+    }
+    setIsUnscheduled(false);
+    const period = payPeriods.find(p => `${p.calendarId}|${p.periodStart}|${p.periodEnd}` === key);
+    if (period) {
+      setCalendarId(period.calendarId);
+      setPeriodStart(period.periodStart);
+      setPeriodEnd(period.periodEnd);
+      setPaymentDate(period.paymentDate);
+      setSelectedDraftInfo({ hasDraft: period.hasDraft, draftPayRunId: period.draftPayRunId });
+
+      const startDate = new Date(period.periodStart);
+      setMonth(startDate.getMonth() + 1);
+      setYear(startDate.getFullYear());
+    }
+  }
 
   const { data, isLoading, error } = useQuery<PrepareData>({
     queryKey: ["/api/payroll/prepare", month, year],
@@ -103,13 +164,9 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
     enabled: open,
   });
 
-  // Sync default selection when data loads
   useEffect(() => {
     if (data) {
       setSelected(new Set(data.employees.filter(e => e.included).map(e => e.id)));
-      if (data.calendars.length > 0 && !calendarId) {
-        setCalendarId(data.calendars[0].id);
-      }
     }
   }, [data]);
 
@@ -139,7 +196,8 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
     onSuccess: (res) => {
       setResult(res);
       setStep("done");
-      toast({ title: "Pay run created in Xero", description: `${res.payslipsUpdated} payslip(s) updated as draft.` });
+      const action = selectedDraftInfo.hasDraft ? "updated" : "created";
+      toast({ title: `Pay run ${action} in Xero`, description: `${res.payslipsUpdated} payslip(s) updated as draft.` });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to push to Xero", description: err.message, variant: "destructive" });
@@ -178,7 +236,20 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
   const monthOptions = Array.from({ length: 12 }, (_, i) => i + 1);
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { setStep("select"); setResult(null); } }}>
+    <Dialog open={open} onOpenChange={(v) => {
+      onOpenChange(v);
+      if (!v) {
+        setStep("select");
+        setResult(null);
+        setSelectedPeriodKey("");
+        setIsUnscheduled(false);
+        setCalendarId("");
+        setPeriodStart("");
+        setPeriodEnd("");
+        setPaymentDate("");
+        setSelectedDraftInfo({ hasDraft: false, draftPayRunId: null });
+      }
+    }}>
       <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <div className="flex items-center gap-2">
@@ -186,9 +257,9 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
               <Building2 className="w-4 h-4 text-blue-600" />
             </div>
             <div>
-              <DialogTitle>Create Draft Pay Run in Xero</DialogTitle>
+              <DialogTitle data-testid="text-dialog-title">Create Draft Pay Run in Xero</DialogTitle>
               <DialogDescription>
-                Review employee hours for the period and push to Xero as a draft pay run.
+                Select a pay period and review employee hours before pushing to Xero.
               </DialogDescription>
             </div>
           </div>
@@ -201,18 +272,18 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                 <CheckCircle2 className="w-7 h-7 text-green-600" />
               </div>
               <div>
-                <div className="text-lg font-semibold">Pay run created in Xero</div>
+                <div className="text-lg font-semibold" data-testid="text-payrun-result">Pay run {selectedDraftInfo.hasDraft ? "updated" : "created"} in Xero</div>
                 <div className="text-sm text-muted-foreground mt-1">
                   Status: <span className="font-medium">{result.payRunStatus}</span>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4 w-full max-w-sm mt-2">
                 <div className="p-3 rounded-lg bg-muted text-center">
-                  <div className="text-xl font-bold text-green-600">{result.payslipsUpdated}</div>
+                  <div className="text-xl font-bold text-green-600" data-testid="text-payslips-updated">{result.payslipsUpdated}</div>
                   <div className="text-xs text-muted-foreground">Payslips updated</div>
                 </div>
                 <div className="p-3 rounded-lg bg-muted text-center">
-                  <div className="text-xl font-bold text-amber-600">{result.payslipsSkipped}</div>
+                  <div className="text-xl font-bold text-amber-600" data-testid="text-payslips-skipped">{result.payslipsSkipped}</div>
                   <div className="text-xs text-muted-foreground">Skipped</div>
                 </div>
               </div>
@@ -234,75 +305,147 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
           </div>
         ) : (
           <>
-            {/* Period selector row */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3 border-b">
-              <div>
-                <Label className="text-xs">Month</Label>
-                <Select value={String(month)} onValueChange={v => setMonth(parseInt(v))}>
-                  <SelectTrigger className="h-8 text-sm">
-                    <SelectValue />
+            {/* Pay Period selector */}
+            <div className="pb-3 border-b">
+              <Label className="text-xs font-medium mb-1.5 block">Select a Pay Period</Label>
+              {periodsLoading ? (
+                <Skeleton className="h-9 w-full" />
+              ) : (
+                <Select value={selectedPeriodKey} onValueChange={handlePeriodSelect} data-testid="select-pay-period">
+                  <SelectTrigger className="h-9 text-sm" data-testid="select-pay-period-trigger">
+                    <SelectValue placeholder="Choose a pay period..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {monthOptions.map(m => (
-                      <SelectItem key={m} value={String(m)}>{MONTHS[m]}</SelectItem>
+                    {Object.entries(periodsByCalendar).map(([calName, periods]) => (
+                      <SelectGroup key={calName}>
+                        <SelectLabel className="text-xs font-semibold text-muted-foreground">{calName}</SelectLabel>
+                        {periods.map(p => {
+                          const key = `${p.calendarId}|${p.periodStart}|${p.periodEnd}`;
+                          return (
+                            <SelectItem key={key} value={key} data-testid={`select-period-${p.calendarId}-${p.periodStart}`}>
+                              <span className="flex items-center gap-2">
+                                <span>{p.label}</span>
+                                {p.hasDraft && (
+                                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-amber-100 text-amber-700 border-amber-200">
+                                    Draft
+                                  </Badge>
+                                )}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectGroup>
                     ))}
+                    <SelectGroup>
+                      <SelectLabel className="text-xs font-semibold text-muted-foreground">Other</SelectLabel>
+                      <SelectItem value="unscheduled" data-testid="select-period-unscheduled">
+                        Unscheduled pay run
+                      </SelectItem>
+                    </SelectGroup>
                   </SelectContent>
                 </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Year</Label>
-                <Select value={String(year)} onValueChange={v => setYear(parseInt(v))}>
-                  <SelectTrigger className="h-8 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {yearOptions.map(y => (
-                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Xero Calendar</Label>
-                {calendars.length === 0 ? (
-                  <div className="h-8 flex items-center">
-                    <span className="text-xs text-muted-foreground italic">No calendars found</span>
-                  </div>
-                ) : (
-                  <Select value={calendarId} onValueChange={setCalendarId}>
-                    <SelectTrigger className="h-8 text-sm">
-                      <SelectValue placeholder="Select calendar" />
+              )}
+            </div>
+
+            {/* Draft indicator */}
+            {selectedDraftInfo.hasDraft && (
+              <Alert className="border-amber-200 bg-amber-50">
+                <FileEdit className="h-4 w-4 text-amber-600" />
+                <AlertDescription className="text-amber-800" data-testid="text-draft-indicator">
+                  <span className="font-medium">Draft already exists</span> — payslips will be updated on the existing draft pay run instead of creating a new one.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Unscheduled mode: show manual date pickers */}
+            {isUnscheduled && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3 border-b">
+                <div>
+                  <Label className="text-xs">Month</Label>
+                  <Select value={String(month)} onValueChange={v => setMonth(parseInt(v))}>
+                    <SelectTrigger className="h-8 text-sm" data-testid="select-month">
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {calendars.map(c => (
-                        <SelectItem key={c.id} value={c.id}>{c.name} ({c.type})</SelectItem>
+                      {monthOptions.map(m => (
+                        <SelectItem key={m} value={String(m)}>{MONTHS[m]}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                )}
+                </div>
+                <div>
+                  <Label className="text-xs">Year</Label>
+                  <Select value={String(year)} onValueChange={v => setYear(parseInt(v))}>
+                    <SelectTrigger className="h-8 text-sm" data-testid="select-year">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {yearOptions.map(y => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Xero Calendar</Label>
+                  {calendars.length === 0 ? (
+                    <div className="h-8 flex items-center">
+                      <span className="text-xs text-muted-foreground italic">No calendars found</span>
+                    </div>
+                  ) : (
+                    <Select value={calendarId} onValueChange={setCalendarId}>
+                      <SelectTrigger className="h-8 text-sm" data-testid="select-calendar">
+                        <SelectValue placeholder="Select calendar" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {calendars.map(c => (
+                          <SelectItem key={c.id} value={c.id}>{c.name} ({c.type})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+                <div>
+                  <Label className="text-xs">Payment Date</Label>
+                  <Input
+                    type="date"
+                    value={paymentDate}
+                    onChange={e => setPaymentDate(e.target.value)}
+                    className="h-8 text-sm"
+                    data-testid="input-payment-date"
+                  />
+                </div>
               </div>
-              <div>
-                <Label className="text-xs">Payment Date</Label>
-                <Input
-                  type="date"
-                  value={paymentDate}
-                  onChange={e => setPaymentDate(e.target.value)}
-                  className="h-8 text-sm"
-                />
-              </div>
-            </div>
+            )}
 
-            {/* Period dates row */}
-            <div className="grid grid-cols-2 gap-3 pb-3 border-b">
-              <div>
-                <Label className="text-xs">Period Start</Label>
-                <Input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)} className="h-8 text-sm" />
+            {/* Period dates display (for scheduled) or editable (for unscheduled) */}
+            {isUnscheduled ? (
+              <div className="grid grid-cols-2 gap-3 pb-3 border-b">
+                <div>
+                  <Label className="text-xs">Period Start</Label>
+                  <Input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)} className="h-8 text-sm" data-testid="input-period-start" />
+                </div>
+                <div>
+                  <Label className="text-xs">Period End</Label>
+                  <Input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} className="h-8 text-sm" data-testid="input-period-end" />
+                </div>
               </div>
-              <div>
-                <Label className="text-xs">Period End</Label>
-                <Input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} className="h-8 text-sm" />
+            ) : selectedPeriodKey && !isUnscheduled ? (
+              <div className="grid grid-cols-3 gap-3 pb-3 border-b text-sm">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Period Start</Label>
+                  <div className="font-medium" data-testid="text-period-start">{periodStart}</div>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Period End</Label>
+                  <div className="font-medium" data-testid="text-period-end">{periodEnd}</div>
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground">Payment Date</Label>
+                  <div className="font-medium" data-testid="text-payment-date">{paymentDate}</div>
+                </div>
               </div>
-            </div>
+            ) : null}
 
             {/* Warnings */}
             {!isLoading && noXeroId.length > 0 && (
@@ -345,6 +488,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                           checked={selected.size === employees.length && employees.length > 0}
                           onCheckedChange={toggleAll}
                           aria-label="Select all"
+                          data-testid="checkbox-select-all"
                         />
                       </TableHead>
                       <TableHead>Employee</TableHead>
@@ -367,15 +511,17 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                           key={emp.id}
                           className={isSelected ? "bg-primary/5" : "opacity-60"}
                           onClick={() => toggleEmployee(emp.id)}
+                          data-testid={`row-employee-${emp.id}`}
                         >
                           <TableCell onClick={e => e.stopPropagation()}>
                             <Checkbox
                               checked={isSelected}
                               onCheckedChange={() => toggleEmployee(emp.id)}
+                              data-testid={`checkbox-employee-${emp.id}`}
                             />
                           </TableCell>
                           <TableCell>
-                            <div className="font-medium text-sm">{emp.firstName} {emp.lastName}</div>
+                            <div className="font-medium text-sm" data-testid={`text-employee-name-${emp.id}`}>{emp.firstName} {emp.lastName}</div>
                             {emp.hourlyRate > 0 && (
                               <div className="text-xs text-muted-foreground">${emp.hourlyRate}/hr</div>
                             )}
@@ -439,19 +585,19 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
               <div className="grid grid-cols-4 gap-3 pt-2 border-t">
                 <div className="text-center">
                   <div className="text-xs text-muted-foreground">Gross</div>
-                  <div className="font-bold font-mono text-sm">{fmt(totalGross)}</div>
+                  <div className="font-bold font-mono text-sm" data-testid="text-total-gross">{fmt(totalGross)}</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xs text-muted-foreground">PAYG</div>
-                  <div className="font-bold font-mono text-sm text-red-600">{fmt(totalPayg)}</div>
+                  <div className="font-bold font-mono text-sm text-red-600" data-testid="text-total-payg">{fmt(totalPayg)}</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xs text-muted-foreground">Super ({data?.superRate?.toFixed(1)}%)</div>
-                  <div className="font-bold font-mono text-sm text-purple-600">{fmt(totalSuper)}</div>
+                  <div className="font-bold font-mono text-sm text-purple-600" data-testid="text-total-super">{fmt(totalSuper)}</div>
                 </div>
                 <div className="text-center">
                   <div className="text-xs text-muted-foreground">Net Pay</div>
-                  <div className="font-bold font-mono text-sm text-green-600">{fmt(totalNet)}</div>
+                  <div className="font-bold font-mono text-sm text-green-600" data-testid="text-total-net">{fmt(totalNet)}</div>
                 </div>
               </div>
             )}
@@ -460,17 +606,20 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
 
         <DialogFooter>
           {step === "done" ? (
-            <Button onClick={() => onOpenChange(false)}>Close</Button>
+            <Button onClick={() => onOpenChange(false)} data-testid="button-close">Close</Button>
           ) : (
             <>
-              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel">Cancel</Button>
               <Button
                 onClick={() => pushMutation.mutate()}
                 disabled={!canPush || pushMutation.isPending}
                 className="gap-2"
+                data-testid="button-push-to-xero"
               >
                 {pushMutation.isPending ? (
                   <><Loader2 className="w-4 h-4 animate-spin" /> Pushing to Xero...</>
+                ) : selectedDraftInfo.hasDraft ? (
+                  <><FileEdit className="w-4 h-4" /> Update Draft — {selectedEmps.filter(e => e.xeroEmployeeId).length} Employee{selectedEmps.filter(e => e.xeroEmployeeId).length !== 1 ? "s" : ""}</>
                 ) : (
                   <><Send className="w-4 h-4" /> Push {selectedEmps.filter(e => e.xeroEmployeeId).length} Employee{selectedEmps.filter(e => e.xeroEmployeeId).length !== 1 ? "s" : ""} to Xero</>
                 )}
