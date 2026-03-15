@@ -3967,7 +3967,7 @@ export async function registerRoutes(
 
         let estimatedGrossEarnings = 0;
         let estimatedSuperAmount = 0;
-        if (!costAlreadyClaimed && totalEmployeeCost === 0 && costSource !== "CONTRACTOR_SPEND") {
+        if (totalEmployeeCost === 0 && costSource !== "CONTRACTOR_SPEND" && !claimedEmployeeCostIds.has(employee.id)) {
           const periodDate = new Date(year, month - 1, 15);
           const superRateDecimal = getSuperRate(periodDate) / 100;
           const placementPayRate = parseFloat(placement.payRate || "0") || payRate;
@@ -3981,7 +3981,7 @@ export async function registerRoutes(
           }
         }
 
-        if (!costAlreadyClaimed && (totalEmployeeCost > 0 || costSource === "CONTRACTOR_SPEND")) {
+        if (!costAlreadyClaimed && costSource !== "ESTIMATED" && (totalEmployeeCost > 0 || costSource === "CONTRACTOR_SPEND")) {
           claimedEmployeeCostIds.add(employee.id);
         }
 
@@ -4165,7 +4165,106 @@ export async function registerRoutes(
           profit: Math.round(profitIncPayrollTax * 100) / 100,
           marginPercent: Math.round(marginIncPT * 10) / 10,
         };
-      }).filter(Boolean);
+      }).filter(Boolean) as NonNullable<typeof rows[number]>[];
+
+      // --- Two-pass proration: redistribute cost across multiple placements for same employee ---
+      type ProfitRow = (typeof rows)[number];
+      const rowsByEmployee = new Map<string, ProfitRow[]>();
+      for (const row of rows) {
+        const empId = row.employee.id;
+        if (!rowsByEmployee.has(empId)) rowsByEmployee.set(empId, []);
+        rowsByEmployee.get(empId)!.push(row);
+      }
+
+      const allocateWithRemainder = (total: number, shareArr: number[]): number[] => {
+        const allocated = shareArr.map(s => Math.round(total * s * 100) / 100);
+        const remainder = Math.round((total - allocated.reduce((a, b) => a + b, 0)) * 100) / 100;
+        if (remainder !== 0) {
+          let maxIdx = 0;
+          for (let i = 1; i < shareArr.length; i++) {
+            if (shareArr[i] > shareArr[maxIdx]) maxIdx = i;
+          }
+          allocated[maxIdx] = Math.round((allocated[maxIdx] + remainder) * 100) / 100;
+        }
+        return allocated;
+      };
+
+      for (const [_empId, empRows] of rowsByEmployee) {
+        if (empRows.length <= 1) continue;
+
+        const costBearingRows = empRows.filter(r => r.cost.costSource !== "SHARED" && r.cost.totalCost > 0);
+        const sharedRows = empRows.filter(r => r.cost.costSource === "SHARED");
+
+        if (costBearingRows.length === 0) {
+          for (const row of sharedRows) {
+            row.cost.costSource = "ESTIMATED";
+          }
+          continue;
+        }
+
+        const totalCost = costBearingRows.reduce((s, r) => s + r.cost.totalCost, 0);
+        const totalGross = costBearingRows.reduce((s, r) => s + r.cost.grossEarnings, 0);
+        const totalSuper = costBearingRows.reduce((s, r) => s + r.cost.superAmount, 0);
+        const totalContractorSpend = costBearingRows.reduce((s, r) => s + r.cost.contractorSpend, 0);
+        const originalCostSource = costBearingRows[0].cost.costSource as "PAYROLL" | "CONTRACTOR_SPEND" | "ESTIMATED";
+        const ptRate = costBearingRows[0].cost.payrollTaxRate;
+        const ptApplicable = costBearingRows[0].cost.payrollTaxApplicable;
+
+        const rawHours = empRows.map(row => Number(row.revenue.bestAvailableHours) || 0);
+        const hasPositiveHours = rawHours.some(h => h > 0);
+
+        const effectiveHours = rawHours.map(h =>
+          h > 0 ? h : (hasPositiveHours ? 1 : 0)
+        );
+        const effectiveTotal = effectiveHours.reduce((a, b) => a + b, 0);
+
+        const shares: number[] = effectiveTotal > 0
+          ? effectiveHours.map(h => h / effectiveTotal)
+          : empRows.map(() => 1 / empRows.length);
+
+        const allocatedCost = allocateWithRemainder(totalCost, shares);
+        const allocatedGross = allocateWithRemainder(totalGross, shares);
+        const allocatedSuper = allocateWithRemainder(totalSuper, shares);
+        const allocatedContractor = allocateWithRemainder(totalContractorSpend, shares);
+
+        for (let i = 0; i < empRows.length; i++) {
+          const row = empRows[i];
+          const proratedCost = allocatedCost[i];
+          const proratedGross = allocatedGross[i];
+          const proratedSuper = allocatedSuper[i];
+          const proratedContractorSpend = allocatedContractor[i];
+
+          row.cost.totalCost = proratedCost;
+          row.cost.grossEarnings = proratedGross;
+          row.cost.superAmount = proratedSuper;
+          row.cost.contractorSpend = proratedContractorSpend;
+          row.cost.costSource = originalCostSource;
+
+          const feePercent = parseFloat(row.employee.payrollFeePercent || "0");
+          const payrollFeeRevenue = feePercent > 0 && proratedGross > 0
+            ? Math.round(proratedGross * (feePercent / 100) * 100) / 100
+            : 0;
+          row.payrollFeeRevenue = payrollFeeRevenue;
+
+          let payrollTaxAmount = 0;
+          if (ptApplicable && ptRate > 0) {
+            const taxableBase = originalCostSource === "CONTRACTOR_SPEND" ? proratedContractorSpend : proratedGross;
+            payrollTaxAmount = Math.round(taxableBase * (ptRate / 100) * 100) / 100;
+          }
+          row.cost.payrollTaxAmount = payrollTaxAmount;
+          row.cost.totalCostIncPT = Math.round((proratedCost + payrollTaxAmount) * 100) / 100;
+
+          const revenue = row.revenue.amountExGst;
+          const profitExPT = Math.round((revenue - proratedCost + payrollFeeRevenue) * 100) / 100;
+          const profitIncPT = Math.round((profitExPT - payrollTaxAmount) * 100) / 100;
+          row.profitExPayrollTax = profitExPT;
+          row.profitIncPayrollTax = profitIncPT;
+          row.profit = profitIncPT;
+          row.marginExPT = revenue > 0 ? Math.round((profitExPT / revenue) * 1000) / 10 : 0;
+          row.marginIncPT = revenue > 0 ? Math.round((profitIncPT / revenue) * 1000) / 10 : 0;
+          row.marginPercent = row.marginIncPT;
+        }
+      }
 
       const placementEmployeeIds = new Set(relevantPlacements.map(p => p.employeeId));
       const employeesWithPayroll = new Map<string, typeof allPayRunLines>();
