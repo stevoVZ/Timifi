@@ -631,12 +631,28 @@ export const rctis = pgTable("rctis", {
   receivedDate: date("received_date"),
   bankTransactionId: varchar("bank_transaction_id"),
   timesheetId: varchar("timesheet_id").references(() => timesheets.id),
+  periodStart: date("period_start"),
+  periodEnd: date("period_end"),
   status: rctiStatusEnum("status").notNull().default("DRAFT"),
   source: text("source").default("MANUAL"),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+export const rctiPayments = pgTable("rcti_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  rctiId: varchar("rcti_id").notNull().references(() => rctis.id, { onDelete: "cascade" }),
+  bankTransactionId: varchar("bank_transaction_id").notNull(),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  notes: text("notes"),
+  tenantId: varchar("tenant_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertRctiPaymentSchema = createInsertSchema(rctiPayments).omit({ id: true, createdAt: true });
+export type RctiPayment = typeof rctiPayments.$inferSelect;
+export type InsertRctiPayment = z.infer<typeof insertRctiPaymentSchema>;
 
 export const insertRctiSchema = createInsertSchema(rctis).omit({ id: true, createdAt: true, updatedAt: true });
 export type Rcti = typeof rctis.$inferSelect;
