@@ -5388,7 +5388,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid parameters" });
       }
 
-      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates, allRateHistory] = await Promise.all([
+      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates, allRateHistory, allReferralBonuses] = await Promise.all([
         storage.getEmployees(),
         storage.getAllPlacements(),
         storage.getInvoices(),
@@ -5400,6 +5400,7 @@ export async function registerRoutes(
         storage.getMonthlyExpectedHours({ month, year }),
         storage.getPayrollTaxRates(),
         storage.getAllRateHistory(),
+        storage.getReferralBonuses(),
       ]);
 
       const rateIndex = buildRateHistoryIndex(allRateHistory);
@@ -5699,10 +5700,45 @@ export async function registerRoutes(
         payrollTaxAmount = taxableBase * (payrollTaxRate / 100);
       }
 
+      let totalReferralBonuses = 0;
+      const activeReferralBonuses = allReferralBonuses.filter(rb => {
+        if (rb.referringEmployeeId !== employeeId) return false;
+        const startDate = new Date(rb.startDate);
+        if (startDate > periodEnd) return false;
+        if (rb.endDate) {
+          const endDate = new Date(rb.endDate);
+          if (endDate < periodStart) return false;
+        } else if (rb.status === "ENDED") {
+          return false;
+        }
+        return true;
+      });
+      for (const rb of activeReferralBonuses) {
+        const referredEmp = allEmployees.find(e => e.id === rb.referredEmployeeId);
+        if (!referredEmp) continue;
+        const empInvoices = periodInvoices.filter(inv => inv.employeeId === rb.referredEmployeeId);
+        const empRctis = periodRctis.filter(r => r.employeeId === rb.referredEmployeeId);
+        const invoiceHours = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.hours || "0"), 0);
+        const rctiHours = empRctis.reduce((sum, r) => sum + parseFloat(r.hours || "0"), 0);
+        let referredHours = invoiceHours + rctiHours;
+        if (referredHours === 0) {
+          const empTimesheets = allTimesheets.filter(t =>
+            t.employeeId === rb.referredEmployeeId && t.month === month && t.year === year
+          );
+          referredHours = empTimesheets.reduce((sum, t) => sum + parseFloat(t.totalHours || "0"), 0);
+        }
+        if (referredHours === 0) {
+          const empExpected = allExpectedHours.filter(e => e.employeeId === rb.referredEmployeeId);
+          referredHours = empExpected.reduce((sum, e) => sum + parseFloat(e.expectedHours || "0"), 0);
+        }
+        const bonusRate = parseFloat(rb.bonusRatePerHour);
+        totalReferralBonuses += Math.round(referredHours * bonusRate * 100) / 100;
+      }
+
       const costExPayrollTax = totalEmployeeCost;
       const costIncPayrollTax = totalEmployeeCost + payrollTaxAmount;
       const profitExPayrollTax = roundMoney(totalRevenue - costExPayrollTax);
-      const profitIncPayrollTax = roundMoney(totalRevenue - costIncPayrollTax);
+      const profitIncPayrollTax = roundMoney(totalRevenue - costIncPayrollTax - totalReferralBonuses);
       const marginExPT = totalRevenue > 0 ? roundPercent((profitExPayrollTax / totalRevenue) * 100) : 0;
       const marginIncPT = totalRevenue > 0 ? roundPercent((profitIncPayrollTax / totalRevenue) * 100) : 0;
 
@@ -5774,6 +5810,7 @@ export async function registerRoutes(
           payrollTaxAmount: Math.round(payrollTaxAmount * 100) / 100,
           totalCostExPT: Math.round(costExPayrollTax * 100) / 100,
           totalCostIncPT: Math.round(costIncPayrollTax * 100) / 100,
+          totalReferralBonuses: Math.round(totalReferralBonuses * 100) / 100,
           payRunDetails: payslipLinesByPayRun,
         },
         profit: {

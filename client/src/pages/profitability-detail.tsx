@@ -520,6 +520,12 @@ export default function ProfitabilityDetailPage() {
                 <span>= Profit (ex PT)</span>
                 <span className="tabular-nums">{fmtCurrency(profit.profitExPayrollTax)}</span>
               </div>
+              {cost.totalReferralBonuses > 0 && (
+                <div className="flex justify-between" data-testid="text-referral-bonuses-line">
+                  <span>− Referral Bonuses</span>
+                  <span className="tabular-nums">{fmtCurrency(cost.totalReferralBonuses)}</span>
+                </div>
+              )}
               {cost.payrollTaxAmount > 0 && (
                 <>
                   <div className="flex justify-between">
