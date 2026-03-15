@@ -7151,12 +7151,12 @@ export async function registerRoutes(
         let rate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
 
         const xeroData = xeroId ? xeroPayslipMap.get(xeroId) : undefined;
-        if (xeroData && xeroData.hours > 0) {
-          hours = xeroData.hours;
-          rate = xeroData.rate > 0 ? xeroData.rate : rate;
-          hoursSource = "XERO";
-          hoursDetail = `Xero payslip: ${hours}hrs @ $${rate}/hr`;
-        } else {
+        // Xero rate is used for display context only — hours come from Timifi (timesheet/invoice)
+        // to avoid stale or rounded values being read back from Xero drafts
+        if (xeroData?.rate > 0) {
+          rate = xeroData.rate;
+        }
+        {
           const timesheets = await storage.getTimesheetsByEmployee(emp.id);
           const ts = timesheets.find(t => t.year === year && t.month === month);
           const tsHours = ts ? parseFloat(ts.totalHours) : 0;
@@ -7187,9 +7187,7 @@ export async function registerRoutes(
             hoursSource = "INVOICE";
             hoursDetail = `Invoice: ${invoiceHours}hrs (${invoiceRef || "no ref"})`;
           } else {
-            hoursDetail = draftPayRunId
-              ? "Not in this Xero pay run — enter hours manually"
-              : "No Xero/timesheet/invoice data";
+            hoursDetail = "No timesheet or invoice data for this period";
           }
         }
 
