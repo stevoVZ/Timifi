@@ -101,7 +101,7 @@ async function findExistingDraftPayRun(
     const prStart = pr.PayRunPeriodStartDate ? parseXeroDate(pr.PayRunPeriodStartDate) : null;
     const prEnd = pr.PayRunPeriodEndDate ? parseXeroDate(pr.PayRunPeriodEndDate) : null;
 
-    if (prStart === periodStart || prEnd === periodEnd) {
+    if (prStart === periodStart && prEnd === periodEnd) {
       return pr;
     }
   }
@@ -175,18 +175,40 @@ export async function pushPayRunToXero(opts: {
       PaymentDate: toXeroDate(opts.paymentDate),
     };
 
-    const createRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayRuns", {
+    const createHeaders = {
+      Authorization: `Bearer ${accessToken}`,
+      "Xero-Tenant-Id": tenantId,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+
+    const wrappedBody = JSON.stringify({ PayRuns: [createBody] });
+    const bareBody = JSON.stringify([createBody]);
+
+    let createRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayRuns", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Xero-Tenant-Id": tenantId,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify([createBody]),
+      headers: createHeaders,
+      body: wrappedBody,
     });
 
-    if (!createRes.ok) {
+    if (!createRes.ok && createRes.status === 400) {
+      const errorBody = await createRes.text();
+      const isDeserializationError = errorBody.includes("deserialize") || errorBody.includes("JSON array");
+      if (isDeserializationError) {
+        console.log("Xero PayRun create: wrapped format failed, retrying with bare array format");
+        createRes = await xeroFetch("https://api.xero.com/payroll.xro/1.0/PayRuns", {
+          method: "POST",
+          headers: createHeaders,
+          body: bareBody,
+        });
+        if (!createRes.ok) {
+          const fallbackBody = await createRes.text();
+          throw new Error(`Xero create pay run failed (${createRes.status}): ${parseXeroErrorMessage(fallbackBody)}`);
+        }
+      } else {
+        throw new Error(`Xero create pay run failed (${createRes.status}): ${parseXeroErrorMessage(errorBody)}`);
+      }
+    } else if (!createRes.ok) {
       const body = await createRes.text();
       throw new Error(`Xero create pay run failed (${createRes.status}): ${parseXeroErrorMessage(body)}`);
     }
