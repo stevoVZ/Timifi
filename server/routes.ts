@@ -7082,6 +7082,7 @@ export async function registerRoutes(
     try {
       const month = parseInt(req.query.month as string);
       const year = parseInt(req.query.year as string);
+      const draftPayRunId = req.query.draftPayRunId as string | undefined;
       if (!month || !year) return res.status(400).json({ message: "month and year required" });
 
       const allEmployees = await storage.getEmployees();
@@ -7089,6 +7090,32 @@ export async function registerRoutes(
         e => e.status === "ACTIVE" && e.paymentMethod === "PAYROLL"
       );
 
+      // ── Xero payslip data (primary source when a draft exists) ────────────
+      let xeroPayslipMap = new Map<string, { hours: number; rate: number }>();
+      // Also build name→xeroId map so we can link unmatched employees
+      let xeroNameToId = new Map<string, string>();
+      if (draftPayRunId) {
+        try {
+          const { getXeroPayslipHours } = await import("./xero-payrun");
+          const xeroPayslips = await getXeroPayslipHours(draftPayRunId);
+          for (const ps of xeroPayslips) {
+            xeroPayslipMap.set(ps.xeroEmployeeId, { hours: ps.hours, rate: ps.ratePerUnit });
+            const nameKey = `${ps.firstName.toLowerCase().trim()} ${ps.lastName.toLowerCase().trim()}`;
+            xeroNameToId.set(nameKey, ps.xeroEmployeeId);
+            // Auto-link employee if matched by name and not yet linked
+            const timifiEmp = activePayroll.find(
+              e => !e.xeroEmployeeId &&
+                `${e.firstName.toLowerCase().trim()} ${e.lastName.toLowerCase().trim()}` === nameKey
+            );
+            if (timifiEmp) {
+              await storage.updateEmployee(timifiEmp.id, { xeroEmployeeId: ps.xeroEmployeeId });
+              timifiEmp.xeroEmployeeId = ps.xeroEmployeeId;
+            }
+          }
+        } catch {}
+      }
+
+      // ── Timifi fallback data ───────────────────────────────────────────────
       const allInvoices = await storage.getInvoices();
       const periodInvoiceIds = allInvoices
         .filter(inv => inv.year === year && inv.month === month && inv.status !== "VOIDED" && inv.status !== "DELETED")
@@ -7107,63 +7134,79 @@ export async function registerRoutes(
 
       const result = [];
       for (const emp of activePayroll) {
-        const timesheets = await storage.getTimesheetsByEmployee(emp.id);
-        const ts = timesheets.find(t => t.year === year && t.month === month);
-        const tsHours = ts ? parseFloat(ts.totalHours) : 0;
+        // Resolve xeroEmployeeId (may have just been auto-linked above)
+        const xeroId = emp.xeroEmployeeId ||
+          xeroNameToId.get(`${emp.firstName.toLowerCase().trim()} ${emp.lastName.toLowerCase().trim()}`) ||
+          null;
 
-        let invoiceHours = 0;
-        let invoiceRef = "";
-        const empInvoices = allInvoices.filter(inv =>
-          inv.employeeId === emp.id && inv.year === year && inv.month === month &&
-          inv.status !== "VOIDED" && inv.status !== "DELETED"
-        );
-        for (const inv of empInvoices) {
-          const lines = lineItemsByInvoice[inv.id] || [];
-          if (lines.length > 0) {
-            const liHours = lines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
-            invoiceHours += liHours;
-          } else if (inv.hours) {
-            invoiceHours += parseFloat(inv.hours);
-          }
-          if (!invoiceRef && inv.invoiceNumber) invoiceRef = inv.invoiceNumber;
-        }
-
+        // ── Hours resolution: Xero > Timesheet > Invoice ──────────────────
         let hours = 0;
-        let hoursSource: "TIMESHEET" | "INVOICE" | "NONE" = "NONE";
+        let hoursSource: "XERO" | "TIMESHEET" | "INVOICE" | "NONE" = "NONE";
         let hoursDetail = "";
-        if (tsHours > 0) {
-          hours = tsHours;
-          hoursSource = "TIMESHEET";
-          hoursDetail = `Timesheet: ${tsHours}hrs (${ts!.source || "unknown"}, ${ts!.status})`;
-        } else if (invoiceHours > 0) {
-          hours = invoiceHours;
-          hoursSource = "INVOICE";
-          hoursDetail = `Invoice: ${invoiceHours}hrs (${invoiceRef || "no ref"})`;
+        let rate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
+
+        const xeroData = xeroId ? xeroPayslipMap.get(xeroId) : undefined;
+        if (xeroData && xeroData.hours > 0) {
+          hours = xeroData.hours;
+          rate = xeroData.rate > 0 ? xeroData.rate : rate;
+          hoursSource = "XERO";
+          hoursDetail = `Xero payslip: ${hours}hrs @ $${rate}/hr`;
         } else {
-          hoursDetail = "No timesheet or invoice data for this period";
+          const timesheets = await storage.getTimesheetsByEmployee(emp.id);
+          const ts = timesheets.find(t => t.year === year && t.month === month);
+          const tsHours = ts ? parseFloat(ts.totalHours) : 0;
+
+          let invoiceHours = 0;
+          let invoiceRef = "";
+          const empInvoices = allInvoices.filter(inv =>
+            inv.employeeId === emp.id && inv.year === year && inv.month === month &&
+            inv.status !== "VOIDED" && inv.status !== "DELETED"
+          );
+          for (const inv of empInvoices) {
+            const lines = lineItemsByInvoice[inv.id] || [];
+            if (lines.length > 0) {
+              const liHours = lines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
+              invoiceHours += liHours;
+            } else if (inv.hours) {
+              invoiceHours += parseFloat(inv.hours);
+            }
+            if (!invoiceRef && inv.invoiceNumber) invoiceRef = inv.invoiceNumber;
+          }
+
+          if (tsHours > 0) {
+            hours = tsHours;
+            hoursSource = "TIMESHEET";
+            hoursDetail = `Timesheet: ${tsHours}hrs (${ts!.source || "unknown"}, ${ts!.status})`;
+          } else if (invoiceHours > 0) {
+            hours = invoiceHours;
+            hoursSource = "INVOICE";
+            hoursDetail = `Invoice: ${invoiceHours}hrs (${invoiceRef || "no ref"})`;
+          } else {
+            hoursDetail = draftPayRunId
+              ? "Not in this Xero pay run — enter hours manually"
+              : "No Xero/timesheet/invoice data";
+          }
         }
 
-        const rate = emp.hourlyRate ? parseFloat(emp.hourlyRate) : 0;
         const gross = Math.round(hours * rate * 100) / 100;
-        const payg = hours > 0 ? calculatePayg(gross, 'MONTHLY') : 0; // lib/payg.ts
+        const payg = hours > 0 ? calculatePayg(gross, "MONTHLY") : 0;
         const superAmt = Math.round(gross * superFraction * 100) / 100;
         const net = Math.round((gross - payg) * 100) / 100;
+
+        const timesheets2 = await storage.getTimesheetsByEmployee(emp.id);
+        const ts2 = timesheets2.find(t => t.year === year && t.month === month);
 
         result.push({
           id: emp.id,
           firstName: emp.firstName,
           lastName: emp.lastName,
-          xeroEmployeeId: emp.xeroEmployeeId || null,
+          xeroEmployeeId: xeroId,
           hourlyRate: rate,
-          timesheet: ts ? {
-            id: ts.id,
-            totalHours: parseFloat(ts.totalHours),
-            status: ts.status,
-          } : null,
+          timesheet: ts2 ? { id: ts2.id, totalHours: parseFloat(ts2.totalHours), status: ts2.status } : null,
           calculated: { hours, rate, gross, payg, super: superAmt, net },
           hoursSource,
           hoursDetail,
-          included: hours > 0 && !!emp.xeroEmployeeId,
+          included: hours > 0,
         });
       }
 
