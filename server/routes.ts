@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema, employees, timesheets, invoices, invoiceEmployees, payRunLines, documents, notifications, messages, leaveRequests, taxDeclarations, bankAccounts, superMemberships, placements, rateHistory, timesheetAuditLog, monthlyExpectedHours, rctis, type RateHistory, type InsertRcti } from "@shared/schema";
+import { insertEmployeeSchema, insertTimesheetSchema, insertInvoiceSchema, insertPayRunSchema, insertNotificationSchema, insertMessageSchema, insertLeaveRequestSchema, insertPayItemSchema, insertTaxDeclarationSchema, insertBankAccountSchema, insertSuperMembershipSchema, insertPayRunLineSchema, insertDocumentSchema, insertPlacementSchema, insertRctiSchema, insertMonthlyExpectedHoursSchema, insertPayrollTaxRateSchema, insertReferralBonusSchema, employees, timesheets, invoices, invoiceEmployees, payRunLines, documents, notifications, messages, leaveRequests, taxDeclarations, bankAccounts, superMemberships, placements, rateHistory, timesheetAuditLog, monthlyExpectedHours, rctis, type RateHistory, type InsertRcti } from "@shared/schema";
 import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import { generatePayslipHTML, generatePayslipPDF, buildPayslipData } from "./payslip";
@@ -4072,12 +4072,192 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/referral-bonuses", async (req, res) => {
+    try {
+      const bonuses = await storage.getReferralBonuses();
+      const allEmployees = await storage.getEmployees();
+      const empMap = new Map(allEmployees.map(e => [e.id, e]));
+      const enriched = bonuses.map(b => {
+        const referring = empMap.get(b.referringEmployeeId);
+        const referred = empMap.get(b.referredEmployeeId);
+        return {
+          ...b,
+          referringEmployee: referring ? { id: referring.id, firstName: referring.firstName, lastName: referring.lastName } : null,
+          referredEmployee: referred ? { id: referred.id, firstName: referred.firstName, lastName: referred.lastName } : null,
+        };
+      });
+      res.json(enriched);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch referral bonuses" });
+    }
+  });
+
+  app.get("/api/referral-bonuses/employee/:employeeId", async (req, res) => {
+    try {
+      const { employeeId } = req.params;
+      const bonuses = await storage.getReferralBonusesByEmployee(employeeId);
+      const allEmployees = await storage.getEmployees();
+      const empMap = new Map(allEmployees.map(e => [e.id, e]));
+      const enriched = bonuses.map(b => {
+        const referring = empMap.get(b.referringEmployeeId);
+        const referred = empMap.get(b.referredEmployeeId);
+        return {
+          ...b,
+          referringEmployee: referring ? { id: referring.id, firstName: referring.firstName, lastName: referring.lastName } : null,
+          referredEmployee: referred ? { id: referred.id, firstName: referred.firstName, lastName: referred.lastName } : null,
+        };
+      });
+      res.json(enriched);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch referral bonuses" });
+    }
+  });
+
+  app.post("/api/referral-bonuses", async (req, res) => {
+    try {
+      const parsed = insertReferralBonusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.issues });
+      }
+      if (parsed.data.referringEmployeeId === parsed.data.referredEmployeeId) {
+        return res.status(400).json({ message: "An employee cannot refer themselves" });
+      }
+      const rate = parseFloat(parsed.data.bonusRatePerHour);
+      if (isNaN(rate) || rate <= 0) {
+        return res.status(400).json({ message: "Bonus rate must be a positive number" });
+      }
+      if (parsed.data.endDate && parsed.data.startDate && parsed.data.endDate < parsed.data.startDate) {
+        return res.status(400).json({ message: "End date must be on or after start date" });
+      }
+      const referring = await storage.getEmployee(parsed.data.referringEmployeeId);
+      if (!referring) return res.status(400).json({ message: "Referring employee not found" });
+      const referred = await storage.getEmployee(parsed.data.referredEmployeeId);
+      if (!referred) return res.status(400).json({ message: "Referred employee not found" });
+      const bonus = await storage.createReferralBonus(parsed.data);
+      res.json(bonus);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to create referral bonus" });
+    }
+  });
+
+  app.patch("/api/referral-bonuses/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await storage.getReferralBonus(id);
+      if (!existing) return res.status(404).json({ message: "Referral bonus not found" });
+      const allowedFields = ["bonusRatePerHour", "startDate", "endDate", "notes", "status"];
+      const updateData: Record<string, any> = {};
+      for (const key of allowedFields) {
+        if (req.body[key] !== undefined) updateData[key] = req.body[key];
+      }
+      if (updateData.bonusRatePerHour) {
+        const rate = parseFloat(updateData.bonusRatePerHour);
+        if (isNaN(rate) || rate <= 0) return res.status(400).json({ message: "Bonus rate must be positive" });
+      }
+      const effectiveStart = updateData.startDate || existing.startDate;
+      const effectiveEnd = updateData.endDate || existing.endDate;
+      if (effectiveEnd && effectiveEnd < effectiveStart) {
+        return res.status(400).json({ message: "End date must be on or after start date" });
+      }
+      const updated = await storage.updateReferralBonus(id, updateData);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update referral bonus" });
+    }
+  });
+
+  app.post("/api/referral-bonuses/:id/deactivate", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existing = await storage.getReferralBonus(id);
+      if (!existing) return res.status(404).json({ message: "Referral bonus not found" });
+      const today = new Date().toISOString().split("T")[0];
+      const endDate = (existing.endDate && existing.endDate <= today) ? existing.endDate : today;
+      const updated = await storage.updateReferralBonus(id, { status: "ENDED", endDate });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to deactivate referral bonus" });
+    }
+  });
+
+  app.get("/api/referral-bonuses/payouts", async (req, res) => {
+    try {
+      const [allReferralBonuses, allInvoices, allRctis, allTimesheets, allExpectedHours] = await Promise.all([
+        storage.getReferralBonuses(),
+        storage.getInvoices(),
+        storage.getRctis(),
+        storage.getTimesheets(),
+        storage.getMonthlyExpectedHours(),
+      ]);
+
+      const payouts = allReferralBonuses.map(rb => {
+        const startDate = new Date(rb.startDate);
+        const endDate = rb.endDate ? new Date(rb.endDate) : new Date();
+        let totalPayout = 0;
+        const monthlyBreakdown: { month: number; year: number; hours: number; amount: number }[] = [];
+
+        const startMonth = startDate.getFullYear() * 12 + startDate.getMonth();
+        const endMonth = endDate.getFullYear() * 12 + endDate.getMonth();
+
+        for (let m = startMonth; m <= endMonth; m++) {
+          const mMonth = (m % 12) + 1;
+          const mYear = Math.floor(m / 12);
+
+          const empInvoices = allInvoices.filter(inv =>
+            inv.employeeId === rb.referredEmployeeId && inv.month === mMonth && inv.year === mYear
+          );
+          const empRctis = allRctis.filter(r =>
+            r.employeeId === rb.referredEmployeeId && r.month === mMonth && r.year === mYear
+          );
+          let hours = empInvoices.reduce((s, inv) => s + parseFloat(inv.hours || "0"), 0)
+            + empRctis.reduce((s, r) => s + parseFloat(r.hours || "0"), 0);
+
+          if (hours === 0) {
+            const empTs = allTimesheets.filter(t =>
+              t.employeeId === rb.referredEmployeeId && t.month === mMonth && t.year === mYear
+            );
+            hours = empTs.reduce((s, t) => s + parseFloat(t.totalHours || "0"), 0);
+          }
+          if (hours === 0) {
+            const empExp = allExpectedHours.filter(e =>
+              e.employeeId === rb.referredEmployeeId && e.month === mMonth && e.year === mYear
+            );
+            hours = empExp.reduce((s, e) => s + parseFloat(e.expectedHours || "0"), 0);
+          }
+
+          const rate = parseFloat(rb.bonusRatePerHour);
+          const amount = Math.round(hours * rate * 100) / 100;
+          totalPayout += amount;
+          if (amount > 0) {
+            monthlyBreakdown.push({ month: mMonth, year: mYear, hours: Math.round(hours * 10) / 10, amount });
+          }
+        }
+
+        return {
+          id: rb.id,
+          referringEmployeeId: rb.referringEmployeeId,
+          referredEmployeeId: rb.referredEmployeeId,
+          bonusRatePerHour: rb.bonusRatePerHour,
+          startDate: rb.startDate,
+          endDate: rb.endDate,
+          status: rb.status,
+          totalPayout: Math.round(totalPayout * 100) / 100,
+          monthlyBreakdown,
+        };
+      });
+
+      res.json(payouts);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch payout data" });
+    }
+  });
+
   app.get("/api/profitability", async (req, res) => {
     try {
       const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
 
-      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates, allRateHistory] = await Promise.all([
+      const [allEmployees, allPlacements, allInvoices, allPayRuns, allBankTxns, allClients, allRctis, allTimesheets, allExpectedHours, allPayrollTaxRates, allRateHistory, allReferralBonuses] = await Promise.all([
         storage.getEmployees(),
         storage.getAllPlacements(),
         storage.getInvoices(),
@@ -4089,6 +4269,7 @@ export async function registerRoutes(
         storage.getMonthlyExpectedHours({ month, year }),
         storage.getPayrollTaxRates(),
         storage.getAllRateHistory(),
+        storage.getReferralBonuses(),
       ]);
 
       const rateIndex = buildRateHistoryIndex(allRateHistory);
@@ -4413,6 +4594,16 @@ export async function registerRoutes(
           chargeOutRateSource,
           expectedHours: Math.round(estimatedHours * 10) / 10,
           utilisation,
+          rowType: "PLACEMENT" as string,
+          referralBonus: null as null | {
+            id: string;
+            bonusRatePerHour: number;
+            referredEmployee: { id: string; firstName: string; lastName: string };
+            referredHours: number;
+            bonusAmount: number;
+            startDate: string;
+            endDate: string | null;
+          },
           employee: {
             id: employee.id,
             firstName: employee.firstName,
@@ -5026,6 +5217,128 @@ export async function registerRoutes(
           profit: Math.round(profitIncPayrollTax * 100) / 100,
           marginPercent: Math.round(marginIncPT * 10) / 10,
         });
+      }
+
+      const activeReferralBonuses = allReferralBonuses.filter(rb => {
+        const startDate = new Date(rb.startDate);
+        if (startDate > periodEnd) return false;
+        if (rb.endDate) {
+          const endDate = new Date(rb.endDate);
+          if (endDate < periodStart) return false;
+        } else if (rb.status === "ENDED") {
+          return false;
+        }
+        return true;
+      });
+
+      for (const rb of activeReferralBonuses) {
+        const referringEmp = allEmployees.find(e => e.id === rb.referringEmployeeId);
+        const referredEmp = allEmployees.find(e => e.id === rb.referredEmployeeId);
+        if (!referringEmp || !referredEmp) continue;
+
+        const empInvoices = periodInvoices.filter(inv =>
+          inv.employeeId === rb.referredEmployeeId
+        );
+        const empRctis = periodRctis.filter(r => r.employeeId === rb.referredEmployeeId);
+        const invoiceHours = empInvoices.reduce((sum, inv) => sum + parseFloat(inv.hours || "0"), 0);
+        const rctiHours = empRctis.reduce((sum, r) => sum + parseFloat(r.hours || "0"), 0);
+        let referredHours = invoiceHours + rctiHours;
+
+        if (referredHours === 0) {
+          const empTimesheets = allTimesheets.filter(t =>
+            t.employeeId === rb.referredEmployeeId && t.month === month && t.year === year
+          );
+          referredHours = empTimesheets.reduce((sum, t) => sum + parseFloat(t.totalHours || "0"), 0);
+        }
+        if (referredHours === 0) {
+          const empExpected = allExpectedHours.filter(e => e.employeeId === rb.referredEmployeeId);
+          referredHours = empExpected.reduce((sum, e) => sum + parseFloat(e.expectedHours || "0"), 0);
+        }
+
+        const bonusRate = parseFloat(rb.bonusRatePerHour);
+        const bonusAmount = Math.round(referredHours * bonusRate * 100) / 100;
+
+        rows.push({
+          placementId: `referral-${rb.id}`,
+          placementStatus: "ACTIVE",
+          placementEndDate: rb.endDate || null,
+          chargeOutRate: 0,
+          payRate: 0,
+          rateSpread: 0,
+          payRateSource: "PLACEMENT",
+          chargeOutRateSource: "PLACEMENT",
+          expectedHours: 0,
+          utilisation: 0,
+          rowType: "REFERRAL_BONUS",
+          referralBonus: {
+            id: rb.id,
+            bonusRatePerHour: bonusRate,
+            referredEmployee: {
+              id: referredEmp.id,
+              firstName: referredEmp.firstName,
+              lastName: referredEmp.lastName,
+            },
+            referredHours: Math.round(referredHours * 10) / 10,
+            bonusAmount,
+            startDate: rb.startDate,
+            endDate: rb.endDate,
+          },
+          employee: {
+            id: referringEmp.id,
+            firstName: referringEmp.firstName,
+            lastName: referringEmp.lastName,
+            chargeOutRate: referringEmp.chargeOutRate,
+            hourlyRate: referringEmp.hourlyRate,
+            payrollFeePercent: referringEmp.payrollFeePercent,
+            paymentMethod: referringEmp.paymentMethod,
+            companyName: referringEmp.companyName,
+          },
+          client: {
+            id: null,
+            name: `Referral: ${referredEmp.firstName} ${referredEmp.lastName}`,
+          },
+          revenue: {
+            invoiceCount: 0,
+            rctiCount: 0,
+            hours: 0,
+            invoicedHours: 0,
+            timesheetHours: 0,
+            estimatedHours: 0,
+            bestAvailableHours: 0,
+            hoursSource: "ESTIMATED",
+            amountExGst: 0,
+            amountInclGst: 0,
+            rctiAmountExGst: 0,
+            invoices: [],
+            timesheets: [],
+            rctis: [],
+          },
+          cost: {
+            grossEarnings: 0,
+            superAmount: 0,
+            netPay: 0,
+            paygWithheld: 0,
+            totalCost: bonusAmount,
+            totalCostIncPT: bonusAmount,
+            payrollTaxRate: 0,
+            payrollTaxAmount: 0,
+            payrollTaxApplicable: false,
+            costSource: "ESTIMATED",
+            contractorSpend: 0,
+            contractorSpendTxnCount: 0,
+            payRunLines: [],
+            contractorTxns: [],
+          },
+          payrollFeeRevenue: 0,
+          profitExPayrollTax: -bonusAmount,
+          profitIncPayrollTax: -bonusAmount,
+          marginExPT: 0,
+          marginIncPT: 0,
+          cashReceived: 0,
+          cashReceivedTxns: [],
+          profit: -bonusAmount,
+          marginPercent: 0,
+        } as any);
       }
 
       const totals = {

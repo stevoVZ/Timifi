@@ -32,6 +32,7 @@ import ProfitabilityDetailPage from "@/pages/profitability-detail";
 import ClientLedgerPage from "@/pages/client-ledger";
 import RctisPage from "@/pages/rctis";
 import CashPositionPage from "@/pages/cash-position";
+import ReferralBonusesPage from "@/pages/referral-bonuses";
 import { GlobalSearch } from "@/components/global-search";
 
 function useAuth() {
@@ -60,6 +61,7 @@ function AdminRouter() {
       <Route path="/cash-position" component={CashPositionPage} />
       <Route path="/profitability/:employeeId/:year/:month" component={ProfitabilityDetailPage} />
       <Route path="/profitability" component={ProfitabilityPage} />
+      <Route path="/referral-bonuses" component={ReferralBonusesPage} />
       <Route path="/client-ledger" component={ClientLedgerPage} />
       <Route path="/pay-items" component={PayItemsPage} />
       <Route path="/notifications" component={NotificationsPage} />

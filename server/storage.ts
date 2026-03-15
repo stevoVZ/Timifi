@@ -35,6 +35,8 @@ import {
   monthlyExpectedHours,
   type PayrollTaxRate, type InsertPayrollTaxRate,
   payrollTaxRates,
+  type ReferralBonus, type InsertReferralBonus,
+  referralBonuses,
 } from "@shared/schema";
 
 let _cachedTenantId: string | null = null;
@@ -220,6 +222,12 @@ export interface IStorage {
   createPayrollTaxRate(data: InsertPayrollTaxRate): Promise<PayrollTaxRate>;
   updatePayrollTaxRate(id: string, data: Partial<InsertPayrollTaxRate>): Promise<PayrollTaxRate | undefined>;
   deletePayrollTaxRate(id: string): Promise<void>;
+
+  getReferralBonuses(): Promise<ReferralBonus[]>;
+  getReferralBonusesByEmployee(employeeId: string): Promise<ReferralBonus[]>;
+  getReferralBonus(id: string): Promise<ReferralBonus | undefined>;
+  createReferralBonus(data: InsertReferralBonus): Promise<ReferralBonus>;
+  updateReferralBonus(id: string, data: Partial<InsertReferralBonus>): Promise<ReferralBonus | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1211,6 +1219,41 @@ export class DatabaseStorage implements IStorage {
     const conditions = [eq(payrollTaxRates.id, id)];
     if (t) conditions.push(eq(payrollTaxRates.tenantId, t));
     await db.delete(payrollTaxRates).where(and(...conditions));
+  }
+
+  async getReferralBonuses(): Promise<ReferralBonus[]> {
+    const t = await this.tid();
+    if (t) return db.select().from(referralBonuses).where(eq(referralBonuses.tenantId, t)).orderBy(desc(referralBonuses.createdAt));
+    return db.select().from(referralBonuses).orderBy(desc(referralBonuses.createdAt));
+  }
+
+  async getReferralBonusesByEmployee(employeeId: string): Promise<ReferralBonus[]> {
+    const t = await this.tid();
+    const conds = [or(eq(referralBonuses.referringEmployeeId, employeeId), eq(referralBonuses.referredEmployeeId, employeeId))];
+    if (t) conds.push(eq(referralBonuses.tenantId, t));
+    return db.select().from(referralBonuses).where(and(...conds)).orderBy(desc(referralBonuses.createdAt));
+  }
+
+  async getReferralBonus(id: string): Promise<ReferralBonus | undefined> {
+    const t = await this.tid();
+    const conds = [eq(referralBonuses.id, id)];
+    if (t) conds.push(eq(referralBonuses.tenantId, t));
+    const [bonus] = await db.select().from(referralBonuses).where(and(...conds));
+    return bonus;
+  }
+
+  async createReferralBonus(data: InsertReferralBonus): Promise<ReferralBonus> {
+    const t = await this.tid();
+    const [bonus] = await db.insert(referralBonuses).values({ ...data, tenantId: t }).returning();
+    return bonus;
+  }
+
+  async updateReferralBonus(id: string, data: Partial<InsertReferralBonus>): Promise<ReferralBonus | undefined> {
+    const t = await this.tid();
+    const conds = [eq(referralBonuses.id, id)];
+    if (t) conds.push(eq(referralBonuses.tenantId, t));
+    const [bonus] = await db.update(referralBonuses).set({ ...data, updatedAt: new Date() }).where(and(...conds)).returning();
+    return bonus;
   }
 }
 

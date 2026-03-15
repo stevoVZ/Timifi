@@ -285,6 +285,30 @@ export const superMemberships = pgTable("super_memberships", {
 
 export const payslipLineTypeEnum = pgEnum("payslip_line_type", ["EARNINGS", "DEDUCTION", "SUPER", "REIMBURSEMENT", "TAX", "LEAVE"]);
 
+export const referralBonusStatusEnum = pgEnum("referral_bonus_status", ["ACTIVE", "ENDED"]);
+
+export const referralBonuses = pgTable("referral_bonuses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  referringEmployeeId: varchar("referring_employee_id").notNull().references(() => employees.id),
+  referredEmployeeId: varchar("referred_employee_id").notNull().references(() => employees.id),
+  bonusRatePerHour: numeric("bonus_rate_per_hour", { precision: 10, scale: 2 }).notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date"),
+  status: referralBonusStatusEnum("status").notNull().default("ACTIVE"),
+  notes: text("notes"),
+  tenantId: varchar("tenant_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertReferralBonusSchema = createInsertSchema(referralBonuses).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type ReferralBonus = typeof referralBonuses.$inferSelect;
+export type InsertReferralBonus = z.infer<typeof insertReferralBonusSchema>;
+
 export const placementStatusEnum = pgEnum("placement_status", ["ACTIVE", "ENDED"]);
 export const bankTxnTypeEnum = pgEnum("bank_txn_type", ["RECEIVE", "SPEND"]);
 

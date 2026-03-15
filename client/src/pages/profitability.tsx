@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { TopBar } from "@/components/top-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -88,6 +88,16 @@ interface BankTxnDetail {
   description: string | null;
 }
 
+interface ReferralBonusDetail {
+  id: string;
+  bonusRatePerHour: number;
+  referredEmployee: { id: string; firstName: string; lastName: string };
+  referredHours: number;
+  bonusAmount: number;
+  startDate: string;
+  endDate: string | null;
+}
+
 interface ProfitabilityRow {
   placementId: string;
   placementStatus: string;
@@ -99,6 +109,8 @@ interface ProfitabilityRow {
   chargeOutRateSource?: "PLACEMENT" | "RATE_HISTORY" | "INVOICE_DERIVED" | "EMPLOYEE_DEFAULT";
   expectedHours: number;
   utilisation: number;
+  rowType?: "REFERRAL_BONUS";
+  referralBonus?: ReferralBonusDetail;
   employee: {
     id: string;
     firstName: string;
@@ -217,6 +229,7 @@ interface DrillDownState {
 
 export default function ProfitabilityPage() {
   const now = new Date();
+  const [, navigate] = useLocation();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [initialPeriodSet, setInitialPeriodSet] = useState(false);
@@ -420,6 +433,7 @@ export default function ProfitabilityPage() {
                   </thead>
                   <tbody>
                     {rows.map((row) => {
+                      const isReferral = row.rowType === "REFERRAL_BONUS";
                       const profitExColor = row.profitExPayrollTax > 0
                         ? "text-green-600 dark:text-green-400"
                         : row.profitExPayrollTax < 0
@@ -444,6 +458,63 @@ export default function ProfitabilityPage() {
                         : "text-muted-foreground";
 
                       const rowKey = row.placementId || `${row.employee.id}-${row.client.name}`;
+
+                      if (isReferral && row.referralBonus) {
+                        const rb = row.referralBonus;
+                        return (
+                          <tr
+                            key={rowKey}
+                            className="border-b hover:bg-muted/30 transition-colors cursor-pointer bg-purple-50/50 dark:bg-purple-950/10"
+                            onClick={() => navigate(`/employees/${row.employee.id}`)}
+                            data-testid={`row-profitability-${rowKey}`}
+                          >
+                            <td className="px-4 py-3 font-medium" data-testid={`text-employee-${row.employee.id}`}>
+                              <div className="flex items-center gap-2">
+                                <Link href={`/employees/${row.employee.id}`} className="hover:underline text-foreground">
+                                  {row.employee.firstName} {row.employee.lastName}
+                                </Link>
+                                <Badge variant="outline" className="text-[10px] font-normal bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 border-purple-200 dark:border-purple-800" data-testid={`badge-referral-${rowKey}`}>
+                                  Referral Bonus
+                                </Badge>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-muted-foreground" data-testid={`text-client-${rowKey}`}>
+                              <Link href={`/employees/${rb.referredEmployee.id}`} className="hover:underline text-muted-foreground">
+                                {rb.referredEmployee.firstName} {rb.referredEmployee.lastName}
+                              </Link>
+                            </td>
+                            <td className="px-4 py-3 text-right tabular-nums text-muted-foreground" colSpan={2}>
+                              <span className="text-xs">${rb.bonusRatePerHour.toFixed(2)}/hr</span>
+                            </td>
+                            <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">—</td>
+                            <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
+                              <span className="text-xs">{rb.referredHours > 0 ? `${rb.referredHours.toFixed(1)}h` : "—"}</span>
+                            </td>
+                            <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">—</td>
+                            <td className="px-4 py-3 text-right tabular-nums font-medium text-red-600 dark:text-red-400" data-testid={`cell-cost-${rowKey}`}>
+                              {rb.bonusAmount > 0 ? fmtCurrencyFull(rb.bonusAmount) : "—"}
+                            </td>
+                            <td className={`px-4 py-3 text-right tabular-nums font-semibold ${profitExColor}`}>
+                              <span className="inline-flex items-center gap-1">
+                                <ArrowDownRight className="w-3.5 h-3.5" />
+                                {fmtCurrencyFull(row.profitExPayrollTax)}
+                              </span>
+                            </td>
+                            <td className={`px-4 py-3 text-right tabular-nums font-semibold ${profitIncColor}`}>
+                              <span className="inline-flex items-center gap-1">
+                                <ArrowDownRight className="w-3.5 h-3.5" />
+                                {fmtCurrencyFull(row.profitIncPayrollTax)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                                —
+                              </Badge>
+                            </td>
+                          </tr>
+                        );
+                      }
+
                       return (
                         <tr
                           key={rowKey}

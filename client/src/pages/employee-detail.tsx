@@ -20,6 +20,7 @@ import {
   Receipt, User, Upload, CloudUpload, Trash2, Eye, FileBadge,
   Landmark, CreditCard, IdCard, Search, ShieldCheck, GraduationCap, File, Lock, RefreshCw,
   TrendingUp, CheckCircle, AlertCircle, CircleDollarSign, Percent, History, Calculator,
+  Gift, Plus, UserPlus,
 } from "lucide-react";
 import type { Employee, Timesheet, Invoice, Document, Client, Placement } from "@shared/schema";
 
@@ -698,6 +699,8 @@ export default function EmployeeDetailPage() {
                 invoiceContacts={invoiceContacts || []}
               />
 
+              <ReferralBonusesCard employeeId={id!} />
+
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
@@ -1277,6 +1280,375 @@ function DocumentsTab({ employeeId, documents }: { employeeId: string; documents
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+interface ReferralBonusData {
+  id: string;
+  referringEmployeeId: string;
+  referredEmployeeId: string;
+  bonusRatePerHour: string;
+  startDate: string;
+  endDate: string | null;
+  status: string;
+  notes: string | null;
+  referringEmployee: { id: string; firstName: string; lastName: string } | null;
+  referredEmployee: { id: string; firstName: string; lastName: string } | null;
+}
+
+function ReferralBonusesCard({ employeeId }: { employeeId: string }) {
+  const { toast } = useToast();
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editData, setEditData] = useState({ bonusRatePerHour: "", startDate: "", endDate: "", notes: "" });
+  const [formData, setFormData] = useState({
+    referringEmployeeId: employeeId,
+    referredEmployeeId: "",
+    bonusRatePerHour: "",
+    startDate: new Date().toISOString().split("T")[0],
+    endDate: "",
+    notes: "",
+  });
+  const [referralRole, setReferralRole] = useState<"referrer" | "referred">("referrer");
+
+  const { data: bonuses } = useQuery<ReferralBonusData[]>({
+    queryKey: ["/api/referral-bonuses/employee", employeeId],
+    enabled: !!employeeId,
+  });
+
+  const { data: allEmployees } = useQuery<Employee[]>({
+    queryKey: ["/api/employees"],
+  });
+
+  const invalidateQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/referral-bonuses/employee", employeeId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/referral-bonuses"] });
+  };
+
+  const createMutation = useMutation({
+    mutationFn: async (data: Record<string, string | null>) => {
+      const res = await apiRequest("POST", "/api/referral-bonuses", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateQueries();
+      toast({ title: "Created", description: "Referral bonus arrangement created." });
+      setShowForm(false);
+      setFormData({ referringEmployeeId: employeeId, referredEmployeeId: "", bonusRatePerHour: "", startDate: new Date().toISOString().split("T")[0], endDate: "", notes: "" });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Record<string, string | null> }) => {
+      const res = await apiRequest("PATCH", `/api/referral-bonuses/${id}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateQueries();
+      toast({ title: "Updated", description: "Referral bonus arrangement updated." });
+      setEditingId(null);
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const deactivateMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/referral-bonuses/${id}/deactivate`);
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidateQueries();
+      toast({ title: "Ended", description: "Referral bonus arrangement ended." });
+    },
+    onError: (err: Error) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const startEditing = (b: ReferralBonusData) => {
+    setEditingId(b.id);
+    setEditData({
+      bonusRatePerHour: b.bonusRatePerHour,
+      startDate: b.startDate,
+      endDate: b.endDate || "",
+      notes: b.notes || "",
+    });
+  };
+
+  const saveEdit = (id: string) => {
+    const payload: Record<string, string | null> = {
+      bonusRatePerHour: editData.bonusRatePerHour,
+      startDate: editData.startDate,
+      notes: editData.notes || null,
+      endDate: editData.endDate || null,
+    };
+    updateMutation.mutate({ id, data: payload });
+  };
+
+  const activeBonuses = (bonuses || []).filter(b => b.status === "ACTIVE");
+  const endedBonuses = (bonuses || []).filter(b => b.status === "ENDED");
+  const otherEmployees = (allEmployees || []).filter(e => e.id !== employeeId);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Gift className="w-4 h-4" />
+            Referral Bonuses
+          </CardTitle>
+          {!showForm && (
+            <Button size="sm" variant="outline" onClick={() => setShowForm(true)} data-testid="button-add-referral">
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              Add Referral
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {showForm && (
+          <div className="border rounded-md p-4 mb-4 space-y-3 bg-muted/30" data-testid="form-referral-bonus">
+            <div className="flex gap-2 mb-2">
+              <Button
+                variant={referralRole === "referrer" ? "default" : "outline"}
+                size="sm"
+                onClick={() => {
+                  setReferralRole("referrer");
+                  setFormData(prev => ({ ...prev, referringEmployeeId: employeeId, referredEmployeeId: "" }));
+                }}
+                data-testid="button-role-referrer"
+              >
+                This employee refers someone
+              </Button>
+              <Button
+                variant={referralRole === "referred" ? "default" : "outline"}
+                size="sm"
+                onClick={() => {
+                  setReferralRole("referred");
+                  setFormData(prev => ({ ...prev, referredEmployeeId: employeeId, referringEmployeeId: "" }));
+                }}
+                data-testid="button-role-referred"
+              >
+                This employee was referred
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  {referralRole === "referrer" ? "Referred Employee" : "Referring Employee (Admin)"}
+                </label>
+                <Select
+                  value={referralRole === "referrer" ? formData.referredEmployeeId : formData.referringEmployeeId}
+                  onValueChange={(v) => {
+                    if (referralRole === "referrer") setFormData(prev => ({ ...prev, referredEmployeeId: v }));
+                    else setFormData(prev => ({ ...prev, referringEmployeeId: v }));
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-sm" data-testid="select-referral-employee">
+                    <SelectValue placeholder="Select employee" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {otherEmployees.map(e => (
+                      <SelectItem key={e.id} value={e.id}>{e.firstName} {e.lastName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Bonus Rate ($/hr)</label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="e.g. 5.00"
+                  value={formData.bonusRatePerHour}
+                  onChange={(e) => setFormData(prev => ({ ...prev, bonusRatePerHour: e.target.value }))}
+                  className="h-8"
+                  data-testid="input-bonus-rate"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
+                <Input
+                  type="date"
+                  value={formData.startDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, startDate: e.target.value }))}
+                  className="h-8"
+                  data-testid="input-referral-start-date"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">End Date (optional)</label>
+                <Input
+                  type="date"
+                  value={formData.endDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, endDate: e.target.value }))}
+                  className="h-8"
+                  data-testid="input-referral-end-date"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Notes (optional)</label>
+              <Input
+                placeholder="e.g. Referred for project X"
+                value={formData.notes}
+                onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
+                className="h-8"
+                data-testid="input-referral-notes"
+              />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button
+                size="sm"
+                onClick={() => {
+                  const payload: Record<string, string | null> = {
+                    referringEmployeeId: formData.referringEmployeeId,
+                    referredEmployeeId: formData.referredEmployeeId,
+                    bonusRatePerHour: formData.bonusRatePerHour,
+                    startDate: formData.startDate,
+                    endDate: formData.endDate || null,
+                    notes: formData.notes || null,
+                  };
+                  createMutation.mutate(payload);
+                }}
+                disabled={createMutation.isPending || !formData.referringEmployeeId || !formData.referredEmployeeId || !formData.bonusRatePerHour || !formData.startDate}
+                data-testid="button-save-referral"
+              >
+                {createMutation.isPending ? "Saving..." : "Save"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setShowForm(false)} data-testid="button-cancel-referral">Cancel</Button>
+            </div>
+          </div>
+        )}
+
+        {activeBonuses.length === 0 && endedBonuses.length === 0 && !showForm && (
+          <p className="text-sm text-muted-foreground" data-testid="text-no-referrals">No referral bonus arrangements yet.</p>
+        )}
+
+        {activeBonuses.map(b => {
+          const isReferrer = b.referringEmployeeId === employeeId;
+          const otherEmp = isReferrer ? b.referredEmployee : b.referringEmployee;
+          const isEditing = editingId === b.id;
+
+          if (isEditing) {
+            return (
+              <div key={b.id} className="border rounded-md p-3 mb-2 space-y-2 bg-muted/30" data-testid={`referral-edit-form-${b.id}`}>
+                <div className="text-sm font-medium mb-1">
+                  Editing: {isReferrer ? "Referred" : "Referred by"} {otherEmp?.firstName} {otherEmp?.lastName}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Bonus Rate ($/hr)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={editData.bonusRatePerHour}
+                      onChange={(e) => setEditData(prev => ({ ...prev, bonusRatePerHour: e.target.value }))}
+                      className="h-8"
+                      data-testid={`input-edit-bonus-rate-${b.id}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Start Date</label>
+                    <Input
+                      type="date"
+                      value={editData.startDate}
+                      onChange={(e) => setEditData(prev => ({ ...prev, startDate: e.target.value }))}
+                      className="h-8"
+                      data-testid={`input-edit-start-date-${b.id}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">End Date (optional)</label>
+                    <Input
+                      type="date"
+                      value={editData.endDate}
+                      onChange={(e) => setEditData(prev => ({ ...prev, endDate: e.target.value }))}
+                      className="h-8"
+                      data-testid={`input-edit-end-date-${b.id}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Notes</label>
+                    <Input
+                      value={editData.notes}
+                      onChange={(e) => setEditData(prev => ({ ...prev, notes: e.target.value }))}
+                      className="h-8"
+                      data-testid={`input-edit-notes-${b.id}`}
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <Button size="sm" onClick={() => saveEdit(b.id)} disabled={updateMutation.isPending} data-testid={`button-save-edit-${b.id}`}>
+                    {updateMutation.isPending ? "Saving..." : "Save"}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} data-testid={`button-cancel-edit-${b.id}`}>Cancel</Button>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={b.id} className="flex items-center justify-between py-2.5 border-b last:border-0" data-testid={`referral-bonus-${b.id}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <Badge variant="outline" className="text-[10px] bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800">
+                  Active
+                </Badge>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">
+                    {isReferrer ? "Referred" : "Referred by"}{" "}
+                    <Link href={`/employees/${otherEmp?.id}`} className="hover:underline">{otherEmp?.firstName} {otherEmp?.lastName}</Link>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    ${parseFloat(b.bonusRatePerHour).toFixed(2)}/hr
+                    {" · "}From {new Date(b.startDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
+                    {b.endDate ? ` to ${new Date(b.endDate).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}` : " (indefinite)"}
+                    {b.notes && ` · ${b.notes}`}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => startEditing(b)}
+                  data-testid={`button-edit-referral-${b.id}`}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => deactivateMutation.mutate(b.id)}
+                  disabled={deactivateMutation.isPending}
+                  data-testid={`button-end-referral-${b.id}`}
+                >
+                  End
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+
+        {endedBonuses.length > 0 && (
+          <div className="mt-3 pt-2">
+            <div className="text-xs font-medium text-muted-foreground mb-1.5">Ended</div>
+            {endedBonuses.map(b => {
+              const isReferrer = b.referringEmployeeId === employeeId;
+              const otherEmp = isReferrer ? b.referredEmployee : b.referringEmployee;
+              return (
+                <div key={b.id} className="flex items-center gap-3 py-1.5 opacity-60" data-testid={`referral-bonus-ended-${b.id}`}>
+                  <Badge variant="outline" className="text-[10px]">Ended</Badge>
+                  <span className="text-xs">
+                    {isReferrer ? "Referred" : "Referred by"} {otherEmp?.firstName} {otherEmp?.lastName} · ${parseFloat(b.bonusRatePerHour).toFixed(2)}/hr
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
