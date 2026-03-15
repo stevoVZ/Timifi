@@ -336,12 +336,48 @@ export async function getAvailablePayPeriods(): Promise<PayPeriodOption[]> {
 }
 
 
+export interface XeroEarningsLine {
+  earningsRateId: string;
+  earningsRateName: string;
+  ratePerUnit: number;
+  numberOfUnits: number;
+}
+
+export interface XeroDeductionLine {
+  deductionTypeId: string;
+  deductionTypeName: string;
+  calculationType: string; // FIXEDAMOUNT, PERCENTAGEOFGROSS etc
+  amount: number;
+  percentage?: number;
+}
+
+export interface XeroSuperLine {
+  superMembershipId: string;
+  fundName: string;
+  contributionType: string;
+  calculationType: string;
+  minimumMonthlyEarnings: number;
+  percentage: number;
+  amount: number;
+}
+
+export interface XeroTaxLine {
+  taxType: string;
+  amount: number;
+  manualTax: boolean;
+}
+
 export interface XeroPayslipData {
   xeroEmployeeId: string;
   firstName: string;
   lastName: string;
-  hours: number;       // NumberOfUnits from EarningsLines
-  ratePerUnit: number; // RatePerUnit from EarningsLines
+  hours: number;
+  ratePerUnit: number;
+  // Full template data from the live payslip
+  earningsLines: XeroEarningsLine[];
+  deductionLines: XeroDeductionLine[];
+  superLines: XeroSuperLine[];
+  taxLines: XeroTaxLine[];
 }
 
 export async function getXeroPayslipHours(
@@ -408,15 +444,46 @@ export async function getXeroPayslipHours(
     const ps = psData.Payslip;
     if (!ps) continue;
 
-    const earningsLines: any[] = ps.EarningsLines || [];
-    const totalHours = earningsLines.reduce(
+    const rawEarnings: any[] = ps.EarningsLines || [];
+    const totalHours = rawEarnings.reduce(
       (sum: number, el: any) => sum + (parseFloat(el.NumberOfUnits) || 0),
       0
     );
     const ratePerUnit =
-      earningsLines.length > 0
-        ? parseFloat(earningsLines[0].RatePerUnit) || 0
+      rawEarnings.length > 0
+        ? parseFloat(rawEarnings[0].RatePerUnit) || 0
         : 0;
+
+    const earningsLines: XeroEarningsLine[] = rawEarnings.map((el: any) => ({
+      earningsRateId: el.EarningsRateID || "",
+      earningsRateName: el.EarningsRateName || el.EarningsRateID || "Ordinary Hours",
+      ratePerUnit: parseFloat(el.RatePerUnit) || 0,
+      numberOfUnits: parseFloat(el.NumberOfUnits) || 0,
+    }));
+
+    const deductionLines: XeroDeductionLine[] = (ps.DeductionLines || []).map((dl: any) => ({
+      deductionTypeId: dl.DeductionTypeID || "",
+      deductionTypeName: dl.DeductionTypeName || dl.DeductionTypeID || "Deduction",
+      calculationType: dl.CalculationType || "FIXEDAMOUNT",
+      amount: parseFloat(dl.Amount) || 0,
+      percentage: dl.Percentage ? parseFloat(dl.Percentage) : undefined,
+    }));
+
+    const superLines: XeroSuperLine[] = (ps.SuperLines || []).map((sl: any) => ({
+      superMembershipId: sl.SuperMembershipID || "",
+      fundName: sl.FundName || sl.SuperMembershipID || "Superannuation",
+      contributionType: sl.ContributionType || "",
+      calculationType: sl.CalculationType || "PERCENTAGEOFEARNINGS",
+      minimumMonthlyEarnings: parseFloat(sl.MinimumMonthlyEarnings) || 0,
+      percentage: parseFloat(sl.Percentage) || 0,
+      amount: parseFloat(sl.Amount) || 0,
+    }));
+
+    const taxLines: XeroTaxLine[] = (ps.TaxLines || []).map((tl: any) => ({
+      taxType: tl.TaxType || "PAYG",
+      amount: parseFloat(tl.Amount) || 0,
+      manualTax: !!tl.ManualTax,
+    }));
 
     const emp = xeroEmpMap.get(stub.EmployeeID);
     results.push({
@@ -425,6 +492,10 @@ export async function getXeroPayslipHours(
       lastName: emp?.lastName || "",
       hours: totalHours,
       ratePerUnit,
+      earningsLines,
+      deductionLines,
+      superLines,
+      taxLines,
     });
 
     await new Promise(r => setTimeout(r, 200)); // rate-limit courtesy
