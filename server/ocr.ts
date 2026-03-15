@@ -125,14 +125,14 @@ Return your response as a JSON object with this exact structure:
 
 Be precise with numbers. If you cannot read a value clearly, set confidence lower and add a warning. Always return valid JSON.`;
 
-interface PdfTextHints {
+export interface PdfTextHints {
   totalHours: number | null;
   employeeName: string | null;
   clientName: string | null;
   weeklyTotals: number[];
 }
 
-async function extractPdfTextHints(pdfBuffer: Buffer): Promise<PdfTextHints> {
+export async function extractPdfTextHints(pdfBuffer: Buffer): Promise<PdfTextHints> {
   const hints: PdfTextHints = { totalHours: null, employeeName: null, clientName: null, weeklyTotals: [] };
   const tempDir = await mkdtemp(join(tmpdir(), "pdftext-"));
   const pdfPath = join(tempDir, "input.pdf");
