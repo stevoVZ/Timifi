@@ -214,6 +214,9 @@ export interface IStorage {
   createRcti(data: InsertRcti): Promise<Rcti>;
   updateRcti(id: string, data: Partial<InsertRcti>): Promise<Rcti | undefined>;
   deleteRcti(id: string): Promise<void>;
+  createRctiPayment(data: InsertRctiPayment): Promise<RctiPayment>;
+  getRctiPaymentsByRcti(rctiId: string): Promise<RctiPayment[]>;
+  getRctiPaymentsByBankTransaction(bankTransactionId: string): Promise<RctiPayment[]>;
 
   getMonthlyExpectedHours(filters?: { employeeId?: string; month?: number; year?: number }): Promise<MonthlyExpectedHours[]>;
   upsertMonthlyExpectedHours(data: InsertMonthlyExpectedHours): Promise<MonthlyExpectedHours>;
