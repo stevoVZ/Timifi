@@ -443,11 +443,12 @@ export default function ProfitabilityPage() {
                         ? "text-red-600 dark:text-red-400"
                         : "text-muted-foreground";
 
+                      const rowKey = row.placementId || `${row.employee.id}-${row.client.name}`;
                       return (
                         <tr
-                          key={row.placementId}
+                          key={rowKey}
                           className={`border-b hover:bg-muted/30 transition-colors cursor-default ${row.placementStatus === "ENDED" ? "opacity-70" : ""}`}
-                          data-testid={`row-profitability-${row.placementId}`}
+                          data-testid={`row-profitability-${rowKey}`}
                         >
                           <td className="px-4 py-3 font-medium" data-testid={`text-employee-${row.employee.id}`}>
                             <div className="flex items-center gap-2">

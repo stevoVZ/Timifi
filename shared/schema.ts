@@ -5,7 +5,7 @@ import { z } from "zod";
 
 export const employeeStatusEnum = pgEnum("employee_status", ["ACTIVE", "PENDING_SETUP", "OFFBOARDED"]);
 export const clearanceLevelEnum = pgEnum("clearance_level", ["NONE", "BASELINE", "NV1", "NV2", "PV"]);
-export const employmentTypeEnum = pgEnum("employment_type", ["FULLTIME", "PARTTIME", "CASUAL", "LABOURHIRE"]);
+export const employmentTypeEnum = pgEnum("employment_type", ["FULLTIME", "PARTTIME", "CASUAL", "LABOURHIRE", "CONTRACTOR"]);
 export const paymentMethodEnum = pgEnum("payment_method", ["PAYROLL", "INVOICE"]);
 export const payCalendarEnum = pgEnum("pay_calendar", ["WEEKLY", "FORTNIGHTLY", "MONTHLY"]);
 export const timesheetStatusEnum = pgEnum("timesheet_status", ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED"]);

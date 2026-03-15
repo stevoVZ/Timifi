@@ -229,6 +229,7 @@ export default function EmployeeNewPage() {
                   <SelectItem value="PARTTIME">Part Time</SelectItem>
                   <SelectItem value="CASUAL">Casual</SelectItem>
                   <SelectItem value="LABOURHIRE">Labour Hire</SelectItem>
+                  <SelectItem value="CONTRACTOR">Contractor</SelectItem>
                 </SelectContent>
               </Select>
             </div>

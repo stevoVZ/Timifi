@@ -426,6 +426,29 @@ export default function EmployeeDetailPage() {
                       isPending={updateMutation.isPending}
                       testId="text-role-title"
                     />
+                    <div className="flex items-center gap-3 py-2" data-testid="field-employment-type">
+                      <Briefcase className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] text-muted-foreground mb-0.5">Employment Type</div>
+                        <Select
+                          value={employee.employmentType || "LABOURHIRE"}
+                          onValueChange={(v) => {
+                            updateMutation.mutate({ employmentType: v });
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-sm" data-testid="select-employment-type">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="FULLTIME">Full Time</SelectItem>
+                            <SelectItem value="PARTTIME">Part Time</SelectItem>
+                            <SelectItem value="CASUAL">Casual</SelectItem>
+                            <SelectItem value="LABOURHIRE">Labour Hire</SelectItem>
+                            <SelectItem value="CONTRACTOR">Contractor</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
                     <InfoRow icon={CreditCard} label="Payment Method" value={employee.paymentMethod === "INVOICE" ? "Invoice (Pty Ltd)" : "Payroll"} testId="text-payment-method" />
                     {employee.paymentMethod === "INVOICE" && (
                       <>
