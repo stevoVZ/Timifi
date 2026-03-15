@@ -48,6 +48,113 @@ function computeExGstFromSpend(
   return inclGstAmount / 1.1;
 }
 
+function isInvoiceTaxInclusive(
+  invoice: { amountExclGst: string; amountInclGst: string },
+  lineItems: { lineAmount: string | null }[]
+): boolean {
+  if (lineItems.length === 0) return false;
+  const sumLineAmounts = lineItems.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
+  const amountInclGst = parseFloat(invoice.amountInclGst || "0");
+  const amountExclGst = parseFloat(invoice.amountExclGst || "0");
+  const tolerance = Math.max(0.05, lineItems.length * 0.02);
+  const diffIncl = Math.abs(sumLineAmounts - amountInclGst);
+  const diffExcl = Math.abs(sumLineAmounts - amountExclGst);
+  if (diffIncl < tolerance && diffExcl >= tolerance) return true;
+  if (diffExcl < tolerance && diffIncl >= tolerance) return false;
+  if (diffIncl < tolerance && diffExcl < tolerance) {
+    return diffIncl < diffExcl;
+  }
+  return false;
+}
+
+function lineExGst(lineAmount: number, taxAmount: number, taxInclusive: boolean): number {
+  return taxInclusive ? lineAmount - taxAmount : lineAmount;
+}
+
+function lineInclGst(lineAmount: number, taxAmount: number, taxInclusive: boolean): number {
+  return taxInclusive ? lineAmount : lineAmount + taxAmount;
+}
+
+function getContractorCostForPeriod(
+  allInvoices: any[],
+  allBankTxns: any[],
+  employee: { id: string; supplierContactId: string | null; companyName: string | null; paymentMethod: string | null },
+  month: number,
+  year: number,
+  claimedBankTxnIds: Set<string>,
+  invoiceHours: number,
+  payRate: number
+): { contractorSpend: number; contractorSpendTxnCount: number; matchedSpendTxns: any[]; accpayInvs: any[]; costSource: "CONTRACTOR_SPEND" | null } {
+  const accpayInvs = getContractorAccpayInvoices(allInvoices, employee, month, year);
+
+  if (accpayInvs.length > 0) {
+    const accpayCostExGst = accpayInvs.reduce((sum: number, inv: any) => sum + parseFloat(inv.amountExclGst || "0"), 0);
+    if (accpayCostExGst > 0) {
+      return {
+        contractorSpend: accpayCostExGst,
+        contractorSpendTxnCount: 0,
+        matchedSpendTxns: [],
+        accpayInvs,
+        costSource: "CONTRACTOR_SPEND",
+      };
+    }
+  }
+
+  const periodBankTxns = allBankTxns.filter((t: any) => t.month === month && t.year === year);
+  let matchedSpendTxns: any[];
+  if (employee.supplierContactId) {
+    matchedSpendTxns = periodBankTxns.filter((t: any) =>
+      !claimedBankTxnIds.has(t.id) &&
+      t.type === "SPEND" &&
+      t.xeroContactId && t.xeroContactId === employee.supplierContactId
+    );
+  } else {
+    matchedSpendTxns = periodBankTxns.filter((t: any) =>
+      !claimedBankTxnIds.has(t.id) &&
+      t.type === "SPEND" &&
+      t.contactName &&
+      normalizeCompanyName(t.contactName) === normalizeCompanyName(employee.companyName!)
+    );
+  }
+
+  if (matchedSpendTxns.length > 0) {
+    if (invoiceHours > 0 && payRate > 0) {
+      const expectedCost = invoiceHours * payRate;
+      matchedSpendTxns.forEach((t: any) => claimedBankTxnIds.add(t.id));
+      return {
+        contractorSpend: expectedCost,
+        contractorSpendTxnCount: matchedSpendTxns.length,
+        matchedSpendTxns,
+        accpayInvs,
+        costSource: "CONTRACTOR_SPEND",
+      };
+    }
+
+    matchedSpendTxns.forEach((t: any) => claimedBankTxnIds.add(t.id));
+    const contractorSpend = matchedSpendTxns.reduce((sum: number, t: any) => sum + computeExGstFromSpend(Math.abs(parseFloat(t.amount)), accpayInvs), 0);
+    return {
+      contractorSpend,
+      contractorSpendTxnCount: matchedSpendTxns.length,
+      matchedSpendTxns,
+      accpayInvs,
+      costSource: contractorSpend > 0 ? "CONTRACTOR_SPEND" : null,
+    };
+  }
+
+  if (invoiceHours > 0 && payRate > 0) {
+    const expectedCost = invoiceHours * payRate;
+    return {
+      contractorSpend: expectedCost,
+      contractorSpendTxnCount: 0,
+      matchedSpendTxns: [],
+      accpayInvs,
+      costSource: "CONTRACTOR_SPEND",
+    };
+  }
+
+  return { contractorSpend: 0, contractorSpendTxnCount: 0, matchedSpendTxns: [], accpayInvs, costSource: null };
+}
+
 function getContractorAccpayInvoices(
   allInvoices: { invoiceType: string | null; xeroContactId: string | null; contactName: string | null; status: string; amountExclGst: string; amountInclGst: string; gstAmount: string; year: number; month: number }[],
   employee: { supplierContactId: string | null; companyName: string | null },
@@ -1173,21 +1280,6 @@ export async function registerRoutes(
         const payLine = best?.line;
         const payRun = best?.payRun;
 
-        let contractorCost: { total: number; transactionCount: number; companyName: string | null } | null = null;
-        if (emp.paymentMethod === "INVOICE" && (emp.supplierContactId || emp.companyName)) {
-          const matchingSpend = emp.supplierContactId
-            ? spendTxns.filter(t => t.xeroContactId && t.xeroContactId === emp.supplierContactId)
-            : spendTxns.filter(t => {
-                const companyNorm = normalizeCompanyName(emp.companyName!);
-                return t.contactName && normalizeCompanyName(t.contactName) === companyNorm;
-              });
-          contractorCost = {
-            total: matchingSpend.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0),
-            transactionCount: matchingSpend.length,
-            companyName: emp.companyName,
-          };
-        }
-
         const totalHours = empTimesheets.reduce((sum, t) => sum + parseFloat(t.totalHours || "0"), 0);
         const bestTsStatus = empTimesheets.length > 0
           ? empTimesheets.reduce((best, t) => (tsPriority[t.status] || 0) > (tsPriority[best] || 0) ? t.status : best, empTimesheets[0].status)
@@ -1199,13 +1291,27 @@ export async function registerRoutes(
 
         const invoiceTotalExGst = empInvoices.reduce((sum, i) => sum + parseFloat(i.amountExclGst || "0"), 0);
         const invoiceTotalInclGst = empInvoices.reduce((sum, i) => sum + parseFloat(i.amountInclGst || "0"), 0);
+        const empInvoiceHours = empInvoices.reduce((sum, i) => sum + parseFloat(i.hours || "0"), 0);
 
         const expectedRevenue = empInvoices.length > 0 ? invoiceTotalExGst : totalHours * chargeOutRate;
 
+        let contractorCost: { total: number; transactionCount: number; companyName: string | null } | null = null;
+        if (emp.paymentMethod === "INVOICE" && (emp.supplierContactId || emp.companyName)) {
+          const dashClaimedIds = new Set<string>();
+          const dashContractorResult = getContractorCostForPeriod(
+            allInvoices as any, allBankTxns, emp, month, year,
+            dashClaimedIds, empInvoiceHours, payRate
+          );
+          contractorCost = {
+            total: dashContractorResult.contractorSpend > 0 ? dashContractorResult.contractorSpend : 0,
+            transactionCount: dashContractorResult.contractorSpendTxnCount,
+            companyName: emp.companyName,
+          };
+        }
+
         let employeeCost: number;
         if (emp.paymentMethod === "INVOICE" && contractorCost && contractorCost.total > 0) {
-          const accpayInvs = getContractorAccpayInvoices(allInvoices as any, emp, month, year);
-          employeeCost = computeExGstFromSpend(contractorCost.total, accpayInvs);
+          employeeCost = contractorCost.total;
         } else if (payLine) {
           const plSuper = parseFloat(payLine.superAmount || "0");
           const { gross: resolvedGross } = resolveGrossEarnings(payLine.grossEarnings, payLine.netPay, payLine.paygWithheld);
@@ -3859,6 +3965,7 @@ export async function registerRoutes(
           if (!matchesEmployee && !matchesClientOnly) continue;
 
           const lineItems = lineItemsByInvoice[inv.id] || [];
+          const taxInclusive = isInvoiceTaxInclusive(inv, lineItems);
           const unclaimedLines = lineItems.filter(li => !claimedLineItemIds.has(li.id));
           const rateMatchedLines = unclaimedLines.filter(li => {
             const liRate = parseFloat(li.unitAmount || "0");
@@ -3867,11 +3974,11 @@ export async function registerRoutes(
 
           if (rateMatchedLines.length > 0) {
             rateMatchedLines.forEach(li => claimedLineItemIds.add(li.id));
-            const liRevenue = rateMatchedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
-            const liTax = rateMatchedLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0);
+            const liRevenue = rateMatchedLines.reduce((s, li) => s + lineExGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), taxInclusive), 0);
+            const liRevenueInclGst = rateMatchedLines.reduce((s, li) => s + lineInclGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), taxInclusive), 0);
             const liHours = rateMatchedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
             invoiceRevenue += liRevenue;
-            invoiceRevenueInclGst += liRevenue + liTax;
+            invoiceRevenueInclGst += liRevenueInclGst;
             invoiceHours += liHours;
             if (!empInvoices.includes(inv)) empInvoices.push(inv);
             const allLinesClaimed = lineItems.every(li => claimedLineItemIds.has(li.id));
@@ -3879,11 +3986,11 @@ export async function registerRoutes(
           } else if (unclaimedLines.length > 0 && !claimedInvoiceIds.has(inv.id)) {
             if (matchesEmployee) {
               unclaimedLines.forEach(li => claimedLineItemIds.add(li.id));
-              const liRevenue = unclaimedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
-              const liTax = unclaimedLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0);
+              const liRevenue = unclaimedLines.reduce((s, li) => s + lineExGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), taxInclusive), 0);
+              const liRevenueInclGst = unclaimedLines.reduce((s, li) => s + lineInclGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), taxInclusive), 0);
               const liHours = unclaimedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
               invoiceRevenue += liRevenue;
-              invoiceRevenueInclGst += liRevenue + liTax;
+              invoiceRevenueInclGst += liRevenueInclGst;
               invoiceHours += liHours;
               if (!empInvoices.includes(inv)) empInvoices.push(inv);
               const allLinesClaimed = lineItems.every(li => claimedLineItemIds.has(li.id));
@@ -3963,23 +4070,15 @@ export async function registerRoutes(
         let accpayInvs: ReturnType<typeof getContractorAccpayInvoices> = [];
 
         if (!costAlreadyClaimed && employee.paymentMethod === "INVOICE" && (employee.supplierContactId || employee.companyName)) {
-          matchedSpendTxns = employee.supplierContactId
-            ? periodBankTxns.filter(t =>
-                !claimedBankTxnIds.has(t.id) &&
-                t.type === "SPEND" &&
-                t.xeroContactId && t.xeroContactId === employee.supplierContactId
-              )
-            : periodBankTxns.filter(t =>
-                !claimedBankTxnIds.has(t.id) &&
-                t.type === "SPEND" &&
-                t.contactName &&
-                normalizeCompanyName(t.contactName) === normalizeCompanyName(employee.companyName!)
-              );
-          matchedSpendTxns.forEach(t => claimedBankTxnIds.add(t.id));
-          accpayInvs = getContractorAccpayInvoices(allInvoices as any, employee, month, year);
-          contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + computeExGstFromSpend(Math.abs(parseFloat(t.amount)), accpayInvs), 0);
-          contractorSpendTxnCount = matchedSpendTxns.length;
-          if (contractorSpend > 0) {
+          const contractorResult = getContractorCostForPeriod(
+            allInvoices as any, allBankTxns, employee, month, year,
+            claimedBankTxnIds, invoiceHours, payRate
+          );
+          contractorSpend = contractorResult.contractorSpend;
+          contractorSpendTxnCount = contractorResult.contractorSpendTxnCount;
+          matchedSpendTxns = contractorResult.matchedSpendTxns;
+          accpayInvs = contractorResult.accpayInvs;
+          if (contractorResult.costSource === "CONTRACTOR_SPEND" && contractorSpend > 0) {
             totalEmployeeCost = contractorSpend;
             costSource = "CONTRACTOR_SPEND";
           }
@@ -4081,15 +4180,17 @@ export async function registerRoutes(
             amountInclGst: Math.round(revenueInclGst * 100) / 100,
             rctiAmountExGst: Math.round(rctiRevenue * 100) / 100,
             invoices: empInvoices.map(inv => {
-              const invLines = (lineItemsByInvoice[inv.id] || []).filter(li => claimedLineItemIds.has(li.id));
+              const allInvLines = lineItemsByInvoice[inv.id] || [];
+              const invTaxInclusive = isInvoiceTaxInclusive(inv, allInvLines);
+              const invLines = allInvLines.filter(li => claimedLineItemIds.has(li.id));
               const matchedLines = invLines.filter(li => Math.abs(parseFloat(li.unitAmount || "0") - chargeOutRate) < 0.02);
               const hasLineItemMatch = matchedLines.length > 0;
               const attrRevenue = hasLineItemMatch
-                ? matchedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0)
+                ? matchedLines.reduce((s, li) => s + lineExGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), invTaxInclusive), 0)
                 : parseFloat(inv.amountExclGst || "0");
-              const attrTax = hasLineItemMatch
-                ? matchedLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0)
-                : parseFloat(inv.gstAmount || "0");
+              const attrRevenueInclGst = hasLineItemMatch
+                ? matchedLines.reduce((s, li) => s + lineInclGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), invTaxInclusive), 0)
+                : parseFloat(inv.amountInclGst || "0");
               const attrHours = hasLineItemMatch
                 ? matchedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0)
                 : (inv.hours ? parseFloat(inv.hours) : 0);
@@ -4100,7 +4201,7 @@ export async function registerRoutes(
                 contactName: inv.contactName,
                 hours: attrHours,
                 amountExclGst: Math.round(attrRevenue * 100) / 100,
-                amountInclGst: Math.round((attrRevenue + attrTax) * 100) / 100,
+                amountInclGst: Math.round(attrRevenueInclGst * 100) / 100,
                 issueDate: inv.issueDate,
                 status: inv.status,
                 invoiceType: (inv as any).invoiceType || null,
@@ -4387,14 +4488,15 @@ export async function registerRoutes(
           const unclaimedLines = lineItems.filter(li => !claimedLineItemIds.has(li.id));
 
           if (unclaimedLines.length > 0) {
+            const npTaxInclusive = isInvoiceTaxInclusive(inv, lineItems);
             for (const li of unclaimedLines) {
               const liRate = parseFloat(li.unitAmount || "0");
               const liHours = parseFloat(li.quantity || "0");
               const liAmount = parseFloat(li.lineAmount || "0");
               const liTax = parseFloat(li.taxAmount || "0");
               if (liRate > 0 && invoiceChargeOutRate === 0) invoiceChargeOutRate = liRate;
-              invoiceRevenue += liAmount;
-              invoiceRevenueInclGst += liAmount + liTax;
+              invoiceRevenue += lineExGst(liAmount, liTax, npTaxInclusive);
+              invoiceRevenueInclGst += lineInclGst(liAmount, liTax, npTaxInclusive);
               invoiceHours += liHours;
               claimedLineItemIds.add(li.id);
             }
@@ -4840,9 +4942,11 @@ export async function registerRoutes(
             return Math.abs(liRate - chargeOutRate) < 0.02;
           });
 
+          const detailTaxInclusive = isInvoiceTaxInclusive(inv, lineItems);
+
           if (rateMatchedLines.length > 0) {
             rateMatchedLines.forEach(li => detailClaimedLineItemIds.add(li.id));
-            const liRevenue = rateMatchedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
+            const liRevenue = rateMatchedLines.reduce((s, li) => s + lineExGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), detailTaxInclusive), 0);
             const liHours = rateMatchedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
             invoiceRevenue += liRevenue;
             invoiceHours += liHours;
@@ -4851,7 +4955,7 @@ export async function registerRoutes(
             if (allLinesClaimed) claimedInvoiceIds.add(inv.id);
           } else if (unclaimedLines.length > 0 && !claimedInvoiceIds.has(inv.id) && matchesEmployee) {
             unclaimedLines.forEach(li => detailClaimedLineItemIds.add(li.id));
-            const liRevenue = unclaimedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0);
+            const liRevenue = unclaimedLines.reduce((s, li) => s + lineExGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), detailTaxInclusive), 0);
             const liHours = unclaimedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0);
             invoiceRevenue += liRevenue;
             invoiceHours += liHours;
@@ -4888,15 +4992,17 @@ export async function registerRoutes(
             endDate: placement.endDate,
           },
           invoices: empInvoices.map(inv => {
-            const invLines = (detailLineItemsByInvoice[inv.id] || []).filter(li => detailClaimedLineItemIds.has(li.id));
+            const allDetailInvLines = detailLineItemsByInvoice[inv.id] || [];
+            const detailInvTaxInclusive = isInvoiceTaxInclusive(inv, allDetailInvLines);
+            const invLines = allDetailInvLines.filter(li => detailClaimedLineItemIds.has(li.id));
             const matchedLines = invLines.filter(li => Math.abs(parseFloat(li.unitAmount || "0") - chargeOutRate) < 0.02);
             const hasLineItemMatch = matchedLines.length > 0;
             const attrRevenue = hasLineItemMatch
-              ? matchedLines.reduce((s, li) => s + parseFloat(li.lineAmount || "0"), 0)
+              ? matchedLines.reduce((s, li) => s + lineExGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), detailInvTaxInclusive), 0)
               : parseFloat(inv.amountExclGst || "0");
-            const attrTax = hasLineItemMatch
-              ? matchedLines.reduce((s, li) => s + parseFloat(li.taxAmount || "0"), 0)
-              : parseFloat(inv.gstAmount || "0");
+            const attrRevenueInclGst = hasLineItemMatch
+              ? matchedLines.reduce((s, li) => s + lineInclGst(parseFloat(li.lineAmount || "0"), parseFloat(li.taxAmount || "0"), detailInvTaxInclusive), 0)
+              : parseFloat(inv.amountInclGst || "0");
             const attrHours = hasLineItemMatch
               ? matchedLines.reduce((s, li) => s + parseFloat(li.quantity || "0"), 0)
               : (inv.hours ? parseFloat(inv.hours) : 0);
@@ -4906,7 +5012,7 @@ export async function registerRoutes(
               contactName: inv.contactName,
               hours: attrHours,
               amountExclGst: Math.round(attrRevenue * 100) / 100,
-              amountInclGst: Math.round((attrRevenue + attrTax) * 100) / 100,
+              amountInclGst: Math.round(attrRevenueInclGst * 100) / 100,
               issueDate: inv.issueDate,
               status: inv.status,
             };
@@ -4962,12 +5068,16 @@ export async function registerRoutes(
       let accpayInvs: ReturnType<typeof getContractorAccpayInvoices> = [];
 
       if (employee.paymentMethod === "INVOICE" && (employee.supplierContactId || employee.companyName)) {
-        matchedSpendTxns = employee.supplierContactId
-          ? periodBankTxns.filter(t => t.type === "SPEND" && t.xeroContactId && t.xeroContactId === employee.supplierContactId)
-          : periodBankTxns.filter(t => t.type === "SPEND" && t.contactName && normalizeCompanyName(t.contactName) === normalizeCompanyName(employee.companyName!));
-        accpayInvs = getContractorAccpayInvoices(allInvoices as any, employee, month, year);
-        contractorSpend = matchedSpendTxns.reduce((sum, t) => sum + computeExGstFromSpend(Math.abs(parseFloat(t.amount)), accpayInvs), 0);
-        if (contractorSpend > 0) {
+        const detailPayRate = effectiveRates.payRate;
+        const dummyClaimedIds = new Set<string>();
+        const contractorResult = getContractorCostForPeriod(
+          allInvoices as any, allBankTxns, employee, month, year,
+          dummyClaimedIds, totalInvoicedHours, detailPayRate
+        );
+        contractorSpend = contractorResult.contractorSpend;
+        matchedSpendTxns = contractorResult.matchedSpendTxns;
+        accpayInvs = contractorResult.accpayInvs;
+        if (contractorResult.costSource === "CONTRACTOR_SPEND" && contractorSpend > 0) {
           totalEmployeeCost = contractorSpend;
           costSource = "CONTRACTOR_SPEND";
         }
