@@ -6964,6 +6964,181 @@ export async function registerRoutes(
     }
   });
 
+  // ── RCTI: get RCTIs with smart matching candidates for a bank transaction ──
+  app.get("/api/bank-transactions/:id/rcti-candidates", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const allBankTxns = await storage.getBankTransactions();
+      const txn = allBankTxns.find(t => t.id === id);
+      if (!txn) return res.status(404).json({ message: "Bank transaction not found" });
+
+      const allRctis = await storage.getRctis();
+      const tenantId = (req as any).tenantId;
+      const tenantRctis = allRctis.filter((r: any) => !tenantId || r.tenantId === tenantId);
+
+      const txnAmount = Math.abs(parseFloat(txn.amount));
+      const txnDate = new Date(txn.date);
+      const txnRef = (txn.reference || "").toLowerCase();
+      const txnContact = (txn.contactName || "").toLowerCase();
+
+      // Score each RCTI as a candidate
+      const candidates = tenantRctis.map((r: any) => {
+        let score = 0;
+        const rctiAmount = parseFloat(r.amountInclGst || "0");
+
+        // Amount match (within $5) — strongest signal
+        if (Math.abs(rctiAmount - txnAmount) < 5) score += 50;
+        else if (Math.abs(rctiAmount - txnAmount) < 50) score += 20;
+        else if (Math.abs(rctiAmount - txnAmount) < 200) score += 5;
+
+        // Reference match — strip numbers and look for timesheet ref
+        const rctiRef = (r.reference || "").toLowerCase();
+        if (rctiRef && txnRef && (txnRef.includes(rctiRef) || rctiRef.includes(txnRef))) score += 30;
+        // Look for timesheet number pattern in bank reference
+        const tsMatch = txnRef.match(/timesheet[:\s#]*(\d+)/i) || txnRef.match(/ts[:\s#]*(\d+)/i);
+        if (tsMatch && rctiRef.includes(tsMatch[1])) score += 40;
+
+        // Date proximity — payment likely arrives within 30 days of period end
+        if (r.periodEnd) {
+          const periodEnd = new Date(r.periodEnd);
+          const daysDiff = Math.abs((txnDate.getTime() - periodEnd.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff <= 7) score += 20;
+          else if (daysDiff <= 21) score += 10;
+          else if (daysDiff <= 45) score += 5;
+        }
+
+        // Month/year match
+        if (r.month === txn.month && r.year === txn.year) score += 10;
+
+        // Already partially paid — still a candidate but lower priority
+        const alreadyLinked = r.bankTransactionId === id;
+        if (alreadyLinked) score += 100; // already linked = top
+
+        return {
+          id: r.id,
+          employeeId: r.employeeId,
+          clientId: r.clientId,
+          month: r.month,
+          year: r.year,
+          periodStart: r.periodStart,
+          periodEnd: r.periodEnd,
+          hours: r.hours,
+          hourlyRate: r.hourlyRate,
+          amountInclGst: r.amountInclGst,
+          amountExclGst: r.amountExclGst,
+          reference: r.reference,
+          description: r.description,
+          status: r.status,
+          source: r.source,
+          score,
+          alreadyLinked,
+        };
+      });
+
+      // Return top 10 by score, only those with score > 0
+      const ranked = candidates
+        .filter((c: any) => c.score > 0)
+        .sort((a: any, b: any) => b.score - a.score)
+        .slice(0, 10);
+
+      res.json({ candidates: ranked, txnAmount, txnDate: txn.date, txnReference: txn.reference });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to get RCTI candidates" });
+    }
+  });
+
+  // ── RCTI: create stub RCTI from a bank transaction ──────────────────────────
+  app.post("/api/bank-transactions/:id/create-rcti-stub", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const allBankTxns = await storage.getBankTransactions();
+      const txn = allBankTxns.find(t => t.id === id);
+      if (!txn) return res.status(404).json({ message: "Bank transaction not found" });
+
+      const txnAmount = Math.abs(parseFloat(txn.amount));
+      const gstAmount = Math.round((txnAmount / 11) * 100) / 100;
+      const exGst = Math.round((txnAmount - gstAmount) * 100) / 100;
+
+      const stub = await storage.createRcti({
+        clientId: req.body.clientId || null,
+        employeeId: req.body.employeeId || null,
+        month: txn.month,
+        year: txn.year,
+        periodStart: req.body.periodStart || null,
+        periodEnd: req.body.periodEnd || null,
+        amountInclGst: String(txnAmount),
+        amountExclGst: String(exGst),
+        gstAmount: String(gstAmount),
+        reference: txn.reference || null,
+        description: txn.contactName ? `Payment from ${txn.contactName}` : "RCTI stub from bank statement",
+        receivedDate: txn.date,
+        bankTransactionId: id,
+        status: "RECEIVED" as any,
+        source: "BANK_STUB",
+        tenantId: (req as any).tenantId || null,
+      });
+
+      // Mark the bank transaction as linked to RCTI
+      await storage.updateBankTransactionLink(id, {
+        linkedCategory: "rcti",
+        linkedNotes: `RCTI stub created: ${stub.id}`,
+        linkStatus: "manual",
+      });
+
+      res.json(stub);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to create RCTI stub" });
+    }
+  });
+
+  // ── RCTI: link bank transaction to existing RCTI ─────────────────────────────
+  app.post("/api/bank-transactions/:id/link-rcti", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { rctiId, amount, notes } = req.body;
+      if (!rctiId) return res.status(400).json({ message: "rctiId required" });
+
+      const allBankTxns = await storage.getBankTransactions();
+      const txn = allBankTxns.find(t => t.id === id);
+      if (!txn) return res.status(404).json({ message: "Bank transaction not found" });
+
+      const allRctis = await storage.getRctis();
+      const rcti = allRctis.find((r: any) => r.id === rctiId);
+      if (!rcti) return res.status(404).json({ message: "RCTI not found" });
+
+      const paymentAmount = amount ? parseFloat(amount) : Math.abs(parseFloat(txn.amount));
+
+      // Record in rcti_payments join table
+      await storage.createRctiPayment({
+        rctiId,
+        bankTransactionId: id,
+        amount: String(paymentAmount),
+        notes: notes || null,
+        tenantId: (req as any).tenantId || null,
+      });
+
+      // Update RCTI bankTransactionId (last linked) and status
+      await storage.updateRcti(rctiId, {
+        bankTransactionId: id,
+        status: "RECEIVED",
+        receivedDate: txn.date,
+      });
+
+      // Mark bank transaction as linked
+      await storage.updateBankTransactionLink(id, {
+        linkedCategory: "rcti",
+        linkedNotes: notes || `Linked to RCTI ${rctiId}`,
+        linkStatus: "manual",
+      });
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to link RCTI" });
+    }
+  });
+
+
+
   // ─── Employee Merge ───────────────────────────────────────────────
   const mergeTables = [
     { table: timesheets, name: "timesheets" },
