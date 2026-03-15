@@ -1137,6 +1137,7 @@ export async function registerRoutes(
         paymentStatus: string | null;
         paidAmount: number;
         paidDate: string | null;
+        invoiceId: string | null;
         invoiceNumber: string | null;
         invoiceStatus: string | null;
       }> = {};
@@ -1150,7 +1151,7 @@ export async function registerRoutes(
             invoicedHours: 0, invoicedAmount: 0, invoicedAmountExGst: 0,
             rctiAmount: 0, rctiAmountExGst: 0,
             paymentStatus: null, paidAmount: 0, paidDate: null,
-            invoiceNumber: null, invoiceStatus: null,
+            invoiceId: null, invoiceNumber: null, invoiceStatus: null,
           };
         }
         periodMap[key].timesheetHours += parseFloat(ts.totalHours || "0");
@@ -1167,12 +1168,13 @@ export async function registerRoutes(
             invoicedHours: 0, invoicedAmount: 0, invoicedAmountExGst: 0,
             rctiAmount: 0, rctiAmountExGst: 0,
             paymentStatus: null, paidAmount: 0, paidDate: null,
-            invoiceNumber: null, invoiceStatus: null,
+            invoiceId: null, invoiceNumber: null, invoiceStatus: null,
           };
         }
         periodMap[key].invoicedHours += parseFloat(inv.hours || "0");
         periodMap[key].invoicedAmount += parseFloat(inv.amountInclGst || "0");
         periodMap[key].invoicedAmountExGst += parseFloat(inv.amountExclGst || "0");
+        periodMap[key].invoiceId = inv.id;
         periodMap[key].invoiceNumber = inv.invoiceNumber;
         periodMap[key].invoiceStatus = inv.status;
         if (inv.status === "PAID") {
@@ -1193,7 +1195,7 @@ export async function registerRoutes(
             invoicedHours: 0, invoicedAmount: 0, invoicedAmountExGst: 0,
             rctiAmount: 0, rctiAmountExGst: 0,
             paymentStatus: null, paidAmount: 0, paidDate: null,
-            invoiceNumber: null, invoiceStatus: null,
+            invoiceId: null, invoiceNumber: null, invoiceStatus: null,
           };
         }
         periodMap[key].rctiAmount += parseFloat(rcti.amountInclGst || "0");

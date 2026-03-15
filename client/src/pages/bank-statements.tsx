@@ -18,6 +18,7 @@ import {
   Wand2, Check, X, Edit3, User, RotateCcw, Tag, AlertCircle,
   RefreshCw, Database, Clock,
 } from "lucide-react";
+import { Link } from "wouter";
 import type { BankTransaction } from "@shared/schema";
 
 interface LinkageInfo {
@@ -1108,7 +1109,14 @@ function LinkageBadge({ info }: { info?: LinkageInfo }) {
       );
     }
     if (info.invoiceNumber) {
-      return (
+      return info.invoiceId ? (
+        <Link href={`/invoices?invoiceId=${info.invoiceId}`}>
+          <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 gap-0.5 cursor-pointer hover:bg-emerald-200 dark:hover:bg-emerald-800" data-testid="badge-confirmed">
+            <FileText className="w-2.5 h-2.5" />
+            {info.invoiceNumber}
+          </Badge>
+        </Link>
+      ) : (
         <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 gap-0.5" data-testid="badge-confirmed">
           <FileText className="w-2.5 h-2.5" />
           {info.invoiceNumber}
@@ -1150,12 +1158,13 @@ function LinkageBadge({ info }: { info?: LinkageInfo }) {
   }
 
   if (info.status === "linked_invoice") {
-    return (
-      <Badge className="text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 gap-0.5" data-testid="badge-linked-invoice">
+    const badge = (
+      <Badge className={`text-[10px] px-1.5 py-0 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 gap-0.5 ${info.invoiceId ? "cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800" : ""}`} data-testid="badge-linked-invoice">
         <FileText className="w-2.5 h-2.5" />
         {info.invoiceNumber || "INV"}
       </Badge>
     );
+    return info.invoiceId ? <Link href={`/invoices?invoiceId=${info.invoiceId}`}>{badge}</Link> : badge;
   }
 
   if (info.status === "linked_rcti") {

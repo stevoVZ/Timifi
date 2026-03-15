@@ -262,7 +262,12 @@ export default function ProfitabilityDetailPage() {
                     <TableBody>
                       {data.allInvoices.map((inv: any) => (
                         <TableRow key={inv.id} className="text-sm" data-testid={`row-invoice-${inv.id}`}>
-                          <TableCell className="font-mono text-xs">{inv.invoiceNumber || "—"}</TableCell>
+                          <TableCell className="font-mono text-xs">
+                            <Link href={`/invoices?invoiceId=${inv.id}`} className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-invoice-${inv.id}`}>
+                              {inv.invoiceNumber || "—"}
+                              <ExternalLink className="w-3 h-3" />
+                            </Link>
+                          </TableCell>
                           <TableCell>{inv.contactName}</TableCell>
                           <TableCell className="text-right tabular-nums">{inv.hours > 0 ? inv.hours.toFixed(1) : "—"}</TableCell>
                           <TableCell className="text-right tabular-nums font-medium">{fmtCurrency(inv.amountExclGst)}</TableCell>

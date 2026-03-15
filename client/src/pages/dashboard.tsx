@@ -274,7 +274,9 @@ export default function DashboardPage() {
                         recentInvoices.map((inv) => (
                           <tr key={inv.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors" data-testid={`row-invoice-${inv.id}`}>
                             <td className="px-4 py-3">
-                              <span className="text-[13px] font-mono font-semibold text-foreground">{inv.invoiceNumber || "\u2014"}</span>
+                              <Link href={`/invoices?invoiceId=${inv.id}`} className="text-[13px] font-mono font-semibold text-primary hover:underline" data-testid={`link-invoice-${inv.id}`}>
+                                {inv.invoiceNumber || "\u2014"}
+                              </Link>
                             </td>
                             <td className="px-4 py-3 text-[13px] text-muted-foreground">{inv.contactName || "\u2014"}</td>
                             <td className="px-4 py-3 text-[13px] font-mono font-medium text-foreground text-right">{formatCurrency(inv.amountInclGst)}</td>

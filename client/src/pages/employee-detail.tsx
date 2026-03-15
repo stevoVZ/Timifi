@@ -51,6 +51,7 @@ interface ReconciliationPeriod {
   paymentStatus: string | null;
   paidAmount: number;
   paidDate: string | null;
+  invoiceId: string | null;
   invoiceNumber: string | null;
   invoiceStatus: string | null;
 }
@@ -865,7 +866,15 @@ function FinancialsTab({ reconciliation, employeeId }: { reconciliation: Reconci
                       >
                         <td className="py-2.5 px-2">
                           <div className="font-medium text-foreground">{FULL_MONTHS[p.month]?.slice(0, 3)} {p.year}</div>
-                          {p.invoiceNumber && <div className="text-[10px] text-muted-foreground">{p.invoiceNumber}</div>}
+                          {p.invoiceNumber && (
+                            p.invoiceId ? (
+                              <Link href={`/invoices?invoiceId=${p.invoiceId}`} className="text-[10px] text-primary hover:underline" data-testid={`link-invoice-${p.invoiceId}`}>
+                                {p.invoiceNumber}
+                              </Link>
+                            ) : (
+                              <div className="text-[10px] text-muted-foreground">{p.invoiceNumber}</div>
+                            )
+                          )}
                         </td>
                         <td className="py-2.5 px-2 text-right">
                           <span className="font-mono text-foreground">{p.timesheetHours > 0 ? `${p.timesheetHours}` : "—"}</span>

@@ -844,7 +844,7 @@ function HoursDrillDown({ row, period }: { row: ProfitabilityRow; period: { mont
                 {row.revenue.invoices.map((inv) => (
                   <TableRow key={inv.id} className="text-sm">
                     <TableCell className="font-mono">
-                      <Link href="/invoices" className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-invoice-${inv.id}`}>
+                      <Link href={`/invoices?invoiceId=${inv.id}`} className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-invoice-${inv.id}`}>
                         {inv.invoiceNumber || "—"}
                         <ExternalLink className="w-3 h-3" />
                       </Link>
@@ -1149,7 +1149,7 @@ function DrillDownDialog({
                       {row.revenue.invoices.map((inv) => (
                         <TableRow key={inv.id} className="text-sm" data-testid={`drilldown-invoice-${inv.id}`}>
                           <TableCell className="font-mono">
-                            <Link href="/invoices" className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-revenue-invoice-${inv.id}`}>
+                            <Link href={`/invoices?invoiceId=${inv.id}`} className="text-primary hover:underline inline-flex items-center gap-1" data-testid={`link-revenue-invoice-${inv.id}`}>
                               {inv.invoiceNumber || "—"}
                               <ExternalLink className="w-3 h-3" />
                             </Link>

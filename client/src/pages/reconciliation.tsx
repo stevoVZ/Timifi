@@ -1064,7 +1064,9 @@ function InvoiceDetailDialog({
                   data-testid={`inv-entry-${idx}`}
                 >
                   <div>
-                    <span className="font-medium">{inv.invoiceNumber || "—"}</span>
+                    <Link href={`/invoices?invoiceId=${inv.id}`} className="font-medium text-primary hover:underline" data-testid={`link-invoice-${inv.id}`} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                      {inv.invoiceNumber || "—"}
+                    </Link>
                     <Badge variant="secondary" className="text-[9px] ml-1.5">{inv.status}</Badge>
                   </div>
                   <span className="font-mono">{fmtCurrencyFull(inv.amountExGst)}</span>
@@ -1176,7 +1178,7 @@ function InvoiceDetailDialog({
           )}
 
           <div className="flex gap-2 justify-end border-t pt-3">
-            <Button size="sm" variant="outline" onClick={() => navigate("/invoices")} data-testid="button-go-invoices">
+            <Button size="sm" variant="outline" onClick={() => navigate(selectedInv ? `/invoices?invoiceId=${selectedInv.id}` : "/invoices")} data-testid="button-go-invoices">
               <ExternalLink className="w-3 h-3 mr-1" /> View in Invoices
             </Button>
             {periodChanged && selectedInv && (
