@@ -70,7 +70,7 @@ interface PreparedEmployee {
   hourlyRate: number;
   timesheet: { id: string; totalHours: number; status: string } | null;
   calculated: { hours: number; rate: number; gross: number; payg: number; super: number; net: number };
-  hoursSource: "TIMESHEET" | "INVOICE" | "NONE";
+  hoursSource: "XERO" | "TIMESHEET" | "INVOICE" | "NONE";
   hoursDetail: string;
   included: boolean;
 }
@@ -157,9 +157,11 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
   }
 
   const { data, isLoading, error } = useQuery<PrepareData>({
-    queryKey: ["/api/payroll/prepare", month, year],
+    queryKey: ["/api/payroll/prepare", month, year, selectedDraftInfo.draftPayRunId],
     queryFn: async () => {
-      const r = await fetch(`/api/payroll/prepare?month=${month}&year=${year}`, { credentials: "include" });
+      const params = new URLSearchParams({ month: String(month), year: String(year) });
+      if (selectedDraftInfo.draftPayRunId) params.set("draftPayRunId", selectedDraftInfo.draftPayRunId);
+      const r = await fetch(`/api/payroll/prepare?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load employee data");
       return r.json();
     },
@@ -561,7 +563,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                                       placeholder={emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : "0"}
                                       value={hoursOverride[emp.id] !== undefined ? hoursOverride[emp.id] : (emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : "")}
                                       onChange={ev => setHoursOverride(prev => ({ ...prev, [emp.id]: ev.target.value }))}
-                                      className="w-20 text-right text-sm font-mono border rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary"
+                                      className={`w-20 text-right text-sm font-mono border rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary ${emp.hoursSource === "XERO" && hoursOverride[emp.id] === undefined ? "border-green-400 bg-green-50" : ""}`}
                                       data-testid={`input-hours-${emp.id}`}
                                     />
                                     {emp.hoursSource !== "NONE" && emp.hoursSource !== "TIMESHEET" && (
@@ -572,7 +574,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                                 <TooltipContent side="left" className="max-w-xs">
                                   <div className="text-xs space-y-1">
                                     <div className="font-medium">
-                                      Source: {emp.hoursSource === "TIMESHEET" ? "Timesheet" : emp.hoursSource === "INVOICE" ? "Invoice (fallback)" : "No timesheet/invoice — enter manually"}
+                                      Source: {emp.hoursSource === "XERO" ? "✓ Xero payslip" : emp.hoursSource === "TIMESHEET" ? "Timesheet" : emp.hoursSource === "INVOICE" ? "Invoice (fallback)" : "No data — enter manually"}
                                     </div>
                                     <div className="text-muted-foreground">{emp.hoursDetail}</div>
                                   </div>
