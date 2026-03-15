@@ -31,7 +31,6 @@ export async function xeroFetch(url: string, options: RequestInit, maxRetries = 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const response = await fetch(url, options);
     if (response.status === 429) {
-      lastRateLimitAt = Date.now();
       const retryAfter = response.headers.get("Retry-After");
       let waitSec = retryAfter ? parseRetryAfter(retryAfter) : Math.min(2 ** attempt * 5, 60);
       if (waitSec > 120) {
@@ -42,6 +41,7 @@ export async function xeroFetch(url: string, options: RequestInit, maxRetries = 
       const urlPath = new URL(url).pathname;
       console.log(`Xero 429 on ${urlPath}, Retry-After=${retryAfter}, waiting ${waitSec}s (retry ${attempt + 1}/${maxRetries})`);
       await new Promise(resolve => setTimeout(resolve, waitSec * 1000));
+      lastRateLimitAt = Date.now();
       continue;
     }
     return response;
@@ -521,7 +521,8 @@ async function fetchPayRunDetail(payRunId: string, accessToken: string, tenantId
     if (!response.ok) return null;
     const data = await response.json() as { PayRuns?: any[] };
     return data.PayRuns?.[0] || null;
-  } catch {
+  } catch (err: any) {
+    if (err.message?.includes("rate limit") || err.message?.includes("429")) throw err;
     return null;
   }
 }
@@ -538,7 +539,8 @@ async function fetchPayslipDetail(payslipId: string, accessToken: string, tenant
     if (!response.ok) return null;
     const data = await response.json() as { Payslip?: any; Payslips?: any[] };
     return data.Payslip || data.Payslips?.[0] || null;
-  } catch {
+  } catch (err: any) {
+    if (err.message?.includes("rate limit") || err.message?.includes("429")) throw err;
     return null;
   }
 }
@@ -827,10 +829,14 @@ export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
   let created = 0;
   let updated = 0;
   const errors: string[] = [];
-  let detailFetchSkipped = 0;
 
   const existingPayRuns = await storage.getPayRuns();
   const existingByRef = new Map(existingPayRuns.map(epr => [epr.payRunRef, epr]));
+
+  const pendingKey = await tenantSyncKey("xero.payRunDetailPending");
+  const pendingRaw = await getSettingValue(pendingKey);
+  let pendingDetailQueue: { xeroPayRunId: string; localPayRunId: string; periodStart?: string | null }[] = [];
+  try { if (pendingRaw) pendingDetailQueue = JSON.parse(pendingRaw); } catch {}
 
   for (let i = 0; i < payRuns.length; i++) {
     const pr = payRuns[i];
@@ -882,15 +888,8 @@ export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
         });
 
         if (pr.PayRunID && (totalsChanged || statusChanged)) {
-          const recentRateLimit = (Date.now() - lastRateLimitAt) < 10000;
-          if (recentRateLimit && detailFetchSkipped < 3) {
-            console.log(`Skipping detail fetch for pay run ${payRunRef} (rate-limited, will retry next sync)`);
-            detailFetchSkipped++;
-          } else {
-            onProgress?.(`Fetching pay run detail ${i + 1}/${payRuns.length} (${payRunRef})...`);
-            console.log(`Fetching detail for ${totalsChanged ? 'changed' : 'status-changed'} pay run ${payRunRef}`);
-            await syncPayRunLines(pr.PayRunID, existing.id, accessToken, tenantId, errors, periodStart);
-            await new Promise(resolve => setTimeout(resolve, 1500));
+          if (!pendingDetailQueue.some(p => p.xeroPayRunId === pr.PayRunID)) {
+            pendingDetailQueue.push({ xeroPayRunId: pr.PayRunID, localPayRunId: existing.id, periodStart });
           }
         }
 
@@ -915,15 +914,8 @@ export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
         });
 
         if (pr.PayRunID) {
-          const recentRateLimit = (Date.now() - lastRateLimitAt) < 10000;
-          if (recentRateLimit && detailFetchSkipped < 3) {
-            console.log(`Skipping detail fetch for new pay run ${payRunRef} (rate-limited, will retry next sync)`);
-            detailFetchSkipped++;
-          } else {
-            onProgress?.(`Fetching pay run detail ${i + 1}/${payRuns.length} (${payRunRef})...`);
-            console.log(`Fetching detail for new pay run ${payRunRef}`);
-            await syncPayRunLines(pr.PayRunID, newPayRun.id, accessToken, tenantId, errors, periodStart);
-            await new Promise(resolve => setTimeout(resolve, 1500));
+          if (!pendingDetailQueue.some(p => p.xeroPayRunId === pr.PayRunID)) {
+            pendingDetailQueue.push({ xeroPayRunId: pr.PayRunID, localPayRunId: newPayRun.id, periodStart });
           }
         }
 
@@ -937,9 +929,45 @@ export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
     }
   }
 
-  if (detailFetchSkipped > 0) {
-    console.log(`Pay run sync: skipped ${detailFetchSkipped} detail fetches due to rate limiting (will retry next sync)`);
+  let detailFetched = 0;
+  let detailFailed = 0;
+  const remaining: typeof pendingDetailQueue = [];
+
+  for (let i = 0; i < pendingDetailQueue.length; i++) {
+    const item = pendingDetailQueue[i];
+    onProgress?.(`Fetching pay run detail ${i + 1}/${pendingDetailQueue.length}...`);
+    console.log(`Fetching detail for queued pay run ${item.xeroPayRunId.substring(0, 8)} (${i + 1}/${pendingDetailQueue.length})`);
+    try {
+      const lineCount = await syncPayRunLines(item.xeroPayRunId, item.localPayRunId, accessToken, tenantId, errors, item.periodStart);
+      if (lineCount === 0) {
+        console.log(`Warning: pay run ${item.xeroPayRunId.substring(0, 8)} returned 0 lines from detail fetch`);
+      }
+      detailFetched++;
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    } catch (err: any) {
+      const isRateLimit = err.message?.includes("rate limit") || err.message?.includes("429");
+      if (isRateLimit) {
+        console.log(`Rate limit hit fetching detail for ${item.xeroPayRunId.substring(0, 8)}, deferring remaining ${pendingDetailQueue.length - i} items to next sync`);
+        remaining.push(...pendingDetailQueue.slice(i));
+        detailFailed += pendingDetailQueue.length - i;
+        break;
+      }
+      console.log(`Error fetching detail for pay run ${item.xeroPayRunId.substring(0, 8)}: ${err.message}`);
+      remaining.push(item);
+      detailFailed++;
+      errors.push(`Detail fetch failed for pay run ${item.xeroPayRunId.substring(0, 8)}: ${err.message}`);
+    }
   }
+
+  await saveSetting(pendingKey, remaining.length > 0 ? JSON.stringify(remaining) : "");
+
+  if (remaining.length > 0) {
+    console.log(`Pay run sync: ${detailFetched} details fetched, ${remaining.length} deferred to next sync`);
+    errors.push(`${remaining.length} pay run detail fetch(es) deferred to next sync due to rate limiting`);
+  } else if (detailFetched > 0) {
+    console.log(`Pay run sync: all ${detailFetched} detail fetches completed successfully`);
+  }
+
   await saveSetting(await tenantSyncKey("xero.lastPayRunSyncAt"), new Date().toISOString());
 
   return { total: payRuns.length, created, updated, errors };
