@@ -19,10 +19,19 @@ function parseRetryAfter(header: string): number {
   return 60;
 }
 
+let lastRateLimitAt = 0;
+const RATE_LIMIT_COOLDOWN_MS = 5000;
+
 export async function xeroFetch(url: string, options: RequestInit, maxRetries = 5): Promise<Response> {
+  const sinceLastRateLimit = Date.now() - lastRateLimitAt;
+  if (lastRateLimitAt > 0 && sinceLastRateLimit < RATE_LIMIT_COOLDOWN_MS) {
+    await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_COOLDOWN_MS - sinceLastRateLimit));
+  }
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const response = await fetch(url, options);
     if (response.status === 429) {
+      lastRateLimitAt = Date.now();
       const retryAfter = response.headers.get("Retry-After");
       let waitSec = retryAfter ? parseRetryAfter(retryAfter) : Math.min(2 ** attempt * 5, 60);
       if (waitSec > 120) {
@@ -818,10 +827,13 @@ export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
   let created = 0;
   let updated = 0;
   const errors: string[] = [];
+  let detailFetchSkipped = 0;
 
   const existingPayRuns = await storage.getPayRuns();
+  const existingByRef = new Map(existingPayRuns.map(epr => [epr.payRunRef, epr]));
 
-  for (const pr of payRuns) {
+  for (let i = 0; i < payRuns.length; i++) {
+    const pr = payRuns[i];
     try {
       const payDate = parseXeroDate(pr.PaymentDate) || parseXeroDate(pr.PayRunPeriodEndDate);
       const periodStart = parseXeroDate(pr.PayRunPeriodStartDate);
@@ -841,9 +853,7 @@ export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
       const employeeCount = pr.Payslips?.length || 0;
       const calendarName = pr.PayrollCalendarID ? calendarNamesMap[pr.PayrollCalendarID] || null : null;
 
-      const existing = existingPayRuns.find(
-        epr => epr.payRunRef === payRunRef
-      );
+      const existing = existingByRef.get(payRunRef);
 
       if (existing) {
         const newGross = String(pr.Wages || 0);
@@ -871,12 +881,16 @@ export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
           month,
         });
 
-        if (pr.PayRunID) {
-          const existingLines = await storage.getPayRunLines(existing.id);
-          if (existingLines.length === 0 || totalsChanged || statusChanged) {
-            console.log(`Fetching detail for ${totalsChanged ? 'changed' : statusChanged ? 'status-changed' : 'empty'} pay run ${payRunRef}`);
+        if (pr.PayRunID && (totalsChanged || statusChanged)) {
+          const recentRateLimit = (Date.now() - lastRateLimitAt) < 10000;
+          if (recentRateLimit && detailFetchSkipped < 3) {
+            console.log(`Skipping detail fetch for pay run ${payRunRef} (rate-limited, will retry next sync)`);
+            detailFetchSkipped++;
+          } else {
+            onProgress?.(`Fetching pay run detail ${i + 1}/${payRuns.length} (${payRunRef})...`);
+            console.log(`Fetching detail for ${totalsChanged ? 'changed' : 'status-changed'} pay run ${payRunRef}`);
             await syncPayRunLines(pr.PayRunID, existing.id, accessToken, tenantId, errors, periodStart);
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 1500));
           }
         }
 
@@ -901,20 +915,31 @@ export async function syncPayRuns(onProgress?: (msg: string) => void): Promise<{
         });
 
         if (pr.PayRunID) {
-          console.log(`Fetching detail for new pay run ${payRunRef}`);
-          await syncPayRunLines(pr.PayRunID, newPayRun.id, accessToken, tenantId, errors, periodStart);
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          const recentRateLimit = (Date.now() - lastRateLimitAt) < 10000;
+          if (recentRateLimit && detailFetchSkipped < 3) {
+            console.log(`Skipping detail fetch for new pay run ${payRunRef} (rate-limited, will retry next sync)`);
+            detailFetchSkipped++;
+          } else {
+            onProgress?.(`Fetching pay run detail ${i + 1}/${payRuns.length} (${payRunRef})...`);
+            console.log(`Fetching detail for new pay run ${payRunRef}`);
+            await syncPayRunLines(pr.PayRunID, newPayRun.id, accessToken, tenantId, errors, periodStart);
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
         }
 
         created++;
       }
 
+      onProgress?.(`Synced pay run ${i + 1}/${payRuns.length}...`);
       await new Promise(resolve => setTimeout(resolve, 300));
     } catch (err: any) {
       errors.push(`Error syncing pay run ${pr.PayRunID}: ${err.message}`);
     }
   }
 
+  if (detailFetchSkipped > 0) {
+    console.log(`Pay run sync: skipped ${detailFetchSkipped} detail fetches due to rate limiting (will retry next sync)`);
+  }
   await saveSetting(await tenantSyncKey("xero.lastPayRunSyncAt"), new Date().toISOString());
 
   return { total: payRuns.length, created, updated, errors };
