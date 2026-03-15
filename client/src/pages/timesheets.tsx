@@ -419,7 +419,15 @@ function UploadView() {
   const allDone = activeQueue.length > 0 && activeQueue.every((i) => i.status === "done" || i.status === "error");
   const anyScanning = queue.some((i) => i.status === "scanning");
   const allAssigned = doneActive.every((i) => !!i.assignedEmployeeId);
-  const canSubmit = allDone && doneActive.length > 0 && !anyScanning && allAssigned;
+  const allPlacementsResolved = doneActive.every((i) => {
+    if (!i.assignedEmployeeId || !allPlacements) return true;
+    const m = i.assignedMonth || new Date().getMonth() + 1;
+    const y = i.assignedYear || new Date().getFullYear();
+    const empPlacements = getPlacementsForEmployee(allPlacements as any as PlacementOption[], i.assignedEmployeeId, m, y);
+    if (empPlacements.length <= 1) return true;
+    return !!i.assignedPlacementId;
+  });
+  const canSubmit = allDone && doneActive.length > 0 && !anyScanning && allAssigned && allPlacementsResolved;
 
   const grouped = doneActive.reduce<Record<string, QueueItem[]>>((acc, item) => {
     const key = `${item.assignedEmployeeId}__${item.assignedMonth}__${item.assignedYear}__${item.assignedPlacementId || "none"}`;
@@ -1515,6 +1523,12 @@ function SubmissionsView() {
     return getPlacementsForEmployee(placements as any as PlacementOption[], manualEmployeeId, m, y);
   }, [manualEmployeeId, placements, manualMonth, manualYear]);
 
+  useEffect(() => {
+    if (manualPlacements.length === 1 && !manualPlacementId) {
+      setManualPlacementId(manualPlacements[0].id);
+    }
+  }, [manualPlacements, manualPlacementId]);
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -1655,11 +1669,6 @@ function SubmissionsView() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {manualPlacements.length === 1 && !manualPlacementId && (
-                    <p className="text-[10px] text-muted-foreground">
-                      Only one placement found — consider selecting it.
-                    </p>
-                  )}
                 </div>
               )}
               <div className="grid grid-cols-3 gap-3">
@@ -2287,29 +2296,37 @@ function MonthlyHoursView() {
     return rows;
   }, [activeEmployees, placements, month, year]);
 
-  const getTimesheet = (empId: string, placementId: string | null, hasOtherPlacementRows: boolean) => {
-    if (!timesheets) return null;
-    if (placementId) {
-      const byPlacement = timesheets.find(t =>
-        t.employeeId === empId && (t as any).placementId === placementId && t.month === month && t.year === year
-      );
-      if (byPlacement) return byPlacement;
-      if (!hasOtherPlacementRows) {
-        const byEmployee = timesheets.find(t =>
-          t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year
-        );
-        if (byEmployee) return byEmployee;
+  const timesheetByRow = useMemo(() => {
+    const map = new Map<string, Timesheet | null>();
+    if (!timesheets) return map;
+    const claimed = new Set<string>();
+    const periodTs = timesheets.filter(t => t.month === month && t.year === year);
+
+    for (const row of placementRows) {
+      const empId = row.employee.id;
+      const placementId = row.placement?.id || null;
+      const hasMultiple = placementRows.filter(r => r.employee.id === empId && r.placement).length > 1;
+
+      if (placementId) {
+        const byPlacement = periodTs.find(t => t.employeeId === empId && (t as any).placementId === placementId);
+        if (byPlacement) { map.set(row.rowKey, byPlacement); claimed.add(byPlacement.id); continue; }
+        if (!hasMultiple) {
+          const byEmp = periodTs.find(t => t.employeeId === empId && !(t as any).placementId);
+          if (byEmp) { map.set(row.rowKey, byEmp); claimed.add(byEmp.id); continue; }
+        }
+        const unlinked = periodTs.find(t => t.employeeId === empId && !(t as any).placementId && !claimed.has(t.id));
+        if (unlinked) { map.set(row.rowKey, unlinked); claimed.add(unlinked.id); continue; }
+        map.set(row.rowKey, null);
+      } else {
+        const byEmp = periodTs.find(t => t.employeeId === empId && !(t as any).placementId);
+        map.set(row.rowKey, byEmp || null);
       }
-      const unlinked = timesheets.find(t =>
-        t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year
-      );
-      if (unlinked) return unlinked;
-      return null;
     }
-    const byEmployee = timesheets.find(t =>
-      t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year
-    );
-    return byEmployee || null;
+    return map;
+  }, [timesheets, placementRows, month, year]);
+
+  const getTimesheet = (empId: string, placementId: string | null, hasOtherPlacementRows: boolean, rowKey: string) => {
+    return timesheetByRow.get(rowKey) || null;
   };
 
   const isTimesheetUnlinked = (ts: Timesheet | null) => !!(ts && !(ts as any).placementId);
@@ -2487,7 +2504,7 @@ function MonthlyHoursView() {
                   {placementRows.map(({ employee, placement, clientName, rowKey }) => {
                     const empPlacementCount = placementRows.filter(r => r.employee.id === employee.id && r.placement !== null).length;
                     const hasOtherPlacementRows = empPlacementCount > 1;
-                    const timesheet = getTimesheet(employee.id, placement?.id || null, hasOtherPlacementRows);
+                    const timesheet = getTimesheet(employee.id, placement?.id || null, hasOtherPlacementRows, rowKey);
                     const ts = timesheet;
                     const isLocked = !!(ts && (ts as any).lockedByPayRunId);
                     const canUnlock = !!(ts && isLocked);
@@ -3427,18 +3444,38 @@ function ReconciliationView() {
   const empHasMultiplePlacements = (empId: string) =>
     rows.filter(r => r.employee.id === empId && r.placement).length > 1;
 
-  const getTimesheet = useCallback((empId: string, placementId: string | null, hasMultiple: boolean): Timesheet | null => {
-    if (!timesheets) return null;
-    if (placementId) {
-      const byP = timesheets.find(t => t.employeeId === empId && (t as any).placementId === placementId && t.month === month && t.year === year);
-      if (byP) return byP;
-      if (!hasMultiple) return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
-      const unlinked = timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year);
-      if (unlinked) return unlinked;
-      return null;
+  const timesheetByRow = useMemo(() => {
+    const map = new Map<string, Timesheet | null>();
+    if (!timesheets) return map;
+    const claimed = new Set<string>();
+    const periodTs = timesheets.filter(t => t.month === month && t.year === year);
+
+    for (const row of rows) {
+      const empId = row.employee.id;
+      const placementId = row.placement?.id || null;
+      const hasMultiple = rows.filter(r => r.employee.id === empId && r.placement).length > 1;
+
+      if (placementId) {
+        const byP = periodTs.find(t => t.employeeId === empId && (t as any).placementId === placementId);
+        if (byP) { map.set(row.rowKey, byP); claimed.add(byP.id); continue; }
+        if (!hasMultiple) {
+          const byEmp = periodTs.find(t => t.employeeId === empId && !(t as any).placementId);
+          if (byEmp) { map.set(row.rowKey, byEmp); claimed.add(byEmp.id); continue; }
+        }
+        const unlinked = periodTs.find(t => t.employeeId === empId && !(t as any).placementId && !claimed.has(t.id));
+        if (unlinked) { map.set(row.rowKey, unlinked); claimed.add(unlinked.id); continue; }
+        map.set(row.rowKey, null);
+      } else {
+        const byEmp = periodTs.find(t => t.employeeId === empId && !(t as any).placementId);
+        map.set(row.rowKey, byEmp || null);
+      }
     }
-    return timesheets.find(t => t.employeeId === empId && !(t as any).placementId && t.month === month && t.year === year) || null;
-  }, [timesheets, month, year]);
+    return map;
+  }, [timesheets, rows, month, year]);
+
+  const getTimesheet = (empId: string, placementId: string | null, hasMultiple: boolean, rowKey: string): Timesheet | null => {
+    return timesheetByRow.get(rowKey) || null;
+  };
 
   const isTimesheetUnlinked = (ts: Timesheet | null) => !!(ts && !(ts as any).placementId);
 
@@ -3489,7 +3526,7 @@ function ReconciliationView() {
   const counts = useMemo(() => {
     const c = { missing: 0, "needs-action": 0, done: 0 };
     for (const row of rows) {
-      const ts = getTimesheet(row.employee.id, row.placement?.id || null, empHasMultiplePlacements(row.employee.id));
+      const ts = getTimesheet(row.employee.id, row.placement?.id || null, empHasMultiplePlacements(row.employee.id), row.rowKey);
       const rcti = getRcti(row.employee.id, row.clientId);
       const state = classify(ts, rcti, row.isRctiClient);
       if (state === "missing") c.missing++;
@@ -3497,11 +3534,11 @@ function ReconciliationView() {
       else if (state === "done") c.done++;
     }
     return c;
-  }, [rows, timesheets, rctis, month, year]);
+  }, [rows, timesheetByRow, rctis, month, year]);
 
   const filteredRows = rows.filter(row => {
     if (filter === "all") return true;
-    const ts = getTimesheet(row.employee.id, row.placement?.id || null, empHasMultiplePlacements(row.employee.id));
+    const ts = getTimesheet(row.employee.id, row.placement?.id || null, empHasMultiplePlacements(row.employee.id), row.rowKey);
     const rcti = getRcti(row.employee.id, row.clientId);
     const state = classify(ts, rcti, row.isRctiClient);
     return state === filter;
@@ -3577,7 +3614,7 @@ function ReconciliationView() {
               ) : (
                 filteredRows.map(row => {
                   const hasMultiple = empHasMultiplePlacements(row.employee.id);
-                  const ts = getTimesheet(row.employee.id, row.placement?.id || null, hasMultiple);
+                  const ts = getTimesheet(row.employee.id, row.placement?.id || null, hasMultiple, row.rowKey);
                   const rcti = getRcti(row.employee.id, row.clientId);
                   const inv = ts ? getInvoice(ts.id) : null;
                   const state = classify(ts, rcti, row.isRctiClient);
