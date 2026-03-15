@@ -343,6 +343,8 @@ export const placements = pgTable("placements", {
   payRate: numeric("pay_rate", { precision: 10, scale: 2 }),
   payrollFeePercent: numeric("payroll_fee_percent", { precision: 5, scale: 2 }).default("0"),
   status: placementStatusEnum("status").notNull().default("ACTIVE"),
+  contractCode: text("contract_code"),
+  roleTitle: text("role_title"),
   notes: text("notes"),
   tenantId: varchar("tenant_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
