@@ -7101,7 +7101,16 @@ export async function registerRoutes(
           const xeroPayslips = await getXeroPayslipHours(draftPayRunId);
           console.log("[prepare] Xero payslips fetched:", xeroPayslips.length, JSON.stringify(xeroPayslips.map(p => ({name: p.firstName+' '+p.lastName, hours: p.hours, xeroId: p.xeroEmployeeId}))));
           for (const ps of xeroPayslips) {
-            xeroPayslipMap.set(ps.xeroEmployeeId, { hours: ps.hours, rate: ps.ratePerUnit });
+            xeroPayslipMap.set(ps.xeroEmployeeId, {
+              hours: ps.hours,
+              rate: ps.ratePerUnit,
+              template: {
+                earningsLines: ps.earningsLines,
+                deductionLines: ps.deductionLines,
+                superLines: ps.superLines,
+                taxLines: ps.taxLines,
+              },
+            });
             const nameKey = `${ps.firstName.toLowerCase().trim()} ${ps.lastName.toLowerCase().trim()}`;
             xeroNameToId.set(nameKey, ps.xeroEmployeeId);
             const timifiEmp = activePayroll.find(
@@ -7210,6 +7219,7 @@ export async function registerRoutes(
           hoursSource,
           hoursDetail,
           included: hours > 0,
+          xeroTemplate: xeroData?.template || null,
         });
       }
 
