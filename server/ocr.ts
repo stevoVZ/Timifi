@@ -56,7 +56,9 @@ Extract the following information:
 10. The format/template type of the timesheet
 
 CRITICAL RULES FOR HOURS EXTRACTION:
-- ALWAYS use the explicit "Total Hours" or "Total" cell/row if one is visible on the timesheet. This is the most reliable source.
+- ALWAYS use the explicit "Total Hours" or "Total" or "Total in Decimal per Month" cell/row if one is visible on the timesheet. This is the most reliable source.
+- MULTI-PROJECT TIMESHEETS: Many Australian government timesheets split hours across multiple project columns (e.g. OPEX and CAPEX). Each project column shows a PARTIAL total. You MUST look for the COMBINED "Total" column that sums ALL projects for each day/week. For example, if OPEX shows 79.95 and CAPEX shows 80.05, the actual total is 160.00 (the "Total" column value), NOT 79.95 or 80.05 individually.
+- Look for a dedicated "Total" column (often to the right of the project columns) that contains each day's combined hours. The weekly subtotals in this column are the true weekly hours.
 - If no explicit total row exists, sum the individual daily or weekly hours yourself.
 - Do NOT confuse daily hours with weekly totals. A day is typically 7-8 hours; a week is typically 35-40 hours.
 - For fortnightly (2-week) timesheets common in Australian government, the total should typically be 2x a normal week (e.g. 70-80 hours for full-time, up to 160+ for a full month).
@@ -65,6 +67,7 @@ CRITICAL RULES FOR HOURS EXTRACTION:
 - If you see both "ordinary hours" and "overtime hours" columns, report them separately. The total should be ordinary + overtime.
 - Pay careful attention to decimal values — "7.6" hours/day is standard in Australian government timesheets (38-hour week / 5 days).
 - Cross-check: if the weekly breakdown adds up to a different total than the "Total" cell, prefer the "Total" cell and note the discrepancy in warnings.
+- SANITY CHECK: For a standard full-time month with ~20 working days at 8 hours/day, expect roughly 152-176 hours. If your extracted total is around 80 for a full month, you are likely reading only one project column instead of the combined total — re-examine the timesheet.
 
 IMPORTANT RULES FOR MONTH BOUNDARIES:
 - If a weekly timesheet spans two months (e.g., a week from Dec 28 to Jan 3), note this explicitly
