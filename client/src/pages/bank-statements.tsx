@@ -111,7 +111,7 @@ export default function BankStatementsPage() {
   const [linkNotes, setLinkNotes] = useState("");
   const [invoiceSearch, setInvoiceSearch] = useState("");
   const [employeeSearch, setEmployeeSearch] = useState("");
-  const [linkTab, setLinkTab] = useState<"invoice" | "employee" | "category">("invoice");
+  const [linkTab, setLinkTab] = useState<"invoice" | "rcti" | "employee" | "category">("invoice");
   const [expandedLinked, setExpandedLinked] = useState(true);
   const [expandedUnlinked, setExpandedUnlinked] = useState(true);
   const [showCoverage, setShowCoverage] = useState(false);
@@ -150,6 +150,18 @@ export default function BankStatementsPage() {
       if (!res.ok) return {};
       return res.json();
     },
+  });
+
+  const [rctiCandidatesQuery, setRctiCandidatesQuery] = useState<string | null>(null);
+  const { data: rctiCandidatesData, isLoading: rctiCandidatesLoading } = useQuery({
+    queryKey: ["/api/bank-transactions", rctiCandidatesQuery, "rcti-candidates"],
+    queryFn: async () => {
+      if (!rctiCandidatesQuery) return { candidates: [] };
+      const r = await fetch(`/api/bank-transactions/${rctiCandidatesQuery}/rcti-candidates`, { credentials: "include" });
+      if (!r.ok) return { candidates: [] };
+      return r.json();
+    },
+    enabled: !!rctiCandidatesQuery,
   });
 
   const { data: invoicesData } = useQuery<InvoiceOption[]>({
@@ -218,6 +230,42 @@ export default function BankStatementsPage() {
     onError: (err: Error) => {
       toast({ title: "Unlink Failed", description: err.message, variant: "destructive" });
     },
+  });
+
+  const linkRctiMutation = useMutation({
+    mutationFn: async ({ txnId, rctiId, notes }: { txnId: string; rctiId: string; notes?: string }) => {
+      const r = await fetch(`/api/bank-transactions/${txnId}/link-rcti`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rctiId, notes }),
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      return r.json();
+    },
+    onSuccess: () => {
+      invalidateLinkage();
+      setLinkDialogTxn(null);
+      toast({ title: "RCTI linked to payment" });
+    },
+    onError: (err: Error) => toast({ title: "Link failed", description: err.message, variant: "destructive" }),
+  });
+
+  const createRctiStubMutation = useMutation({
+    mutationFn: async ({ txnId, employeeId, periodStart, periodEnd }: { txnId: string; employeeId?: string; periodStart?: string; periodEnd?: string }) => {
+      const r = await fetch(`/api/bank-transactions/${txnId}/create-rcti-stub`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employeeId, periodStart, periodEnd }),
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      return r.json();
+    },
+    onSuccess: () => {
+      invalidateLinkage();
+      setLinkDialogTxn(null);
+      toast({ title: "RCTI stub created", description: "Open the RCTIs page to complete the details." });
+    },
+    onError: (err: Error) => toast({ title: "Create failed", description: err.message, variant: "destructive" }),
   });
 
   interface CoverageAccount {
@@ -806,6 +854,7 @@ export default function BankStatementsPage() {
           <div className="flex rounded-md border overflow-hidden mb-3" data-testid="link-type-tabs">
             {([
               { key: "invoice" as const, label: "Invoice", icon: FileText },
+              { key: "rcti" as const, label: "RCTI", icon: Receipt },
               { key: "employee" as const, label: "Employee", icon: User },
               { key: "category" as const, label: "Category", icon: Tag },
             ]).map(({ key, label, icon: Icon }) => (
@@ -816,6 +865,7 @@ export default function BankStatementsPage() {
                   if (key !== "invoice") setLinkInvoiceId("");
                   if (key !== "employee") setLinkEmployeeId("");
                   if (key !== "category") setLinkCategory("");
+                  if (key === "rcti" && linkDialogTxn) setRctiCandidatesQuery(linkDialogTxn.id);
                 }}
                 className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
                   linkTab === key
@@ -900,6 +950,84 @@ export default function BankStatementsPage() {
                       </button>
                     ))}
                 </div>
+              </div>
+            )}
+
+            {linkTab === "rcti" && (
+              <div className="space-y-3">
+                {rctiCandidatesLoading && (
+                  <div className="text-xs text-muted-foreground text-center py-4">Searching for matching RCTIs...</div>
+                )}
+                {!rctiCandidatesLoading && (rctiCandidatesData?.candidates || []).length === 0 && (
+                  <div className="text-center py-4 space-y-3">
+                    <p className="text-xs text-muted-foreground">No matching RCTIs found for this payment.</p>
+                    <p className="text-xs text-muted-foreground">Create a stub RCTI to track this payment until the PDF arrives.</p>
+                    <button
+                      onClick={() => linkDialogTxn && createRctiStubMutation.mutate({ txnId: linkDialogTxn.id })}
+                      disabled={createRctiStubMutation.isPending}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      <Receipt className="w-3.5 h-3.5" />
+                      {createRctiStubMutation.isPending ? "Creating..." : "Create RCTI Stub"}
+                    </button>
+                  </div>
+                )}
+                {(rctiCandidatesData?.candidates || []).length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Matched RCTIs — select one to link this payment:</p>
+                    <div className="max-h-[280px] overflow-y-auto border rounded-md divide-y">
+                      {(rctiCandidatesData?.candidates || []).map((c: any) => (
+                        <div key={c.id} className="px-3 py-2.5 hover:bg-muted/40 transition-colors">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                {c.score >= 80 && <span className="text-[10px] px-1.5 py-0 rounded-full bg-green-100 text-green-700 font-medium">Strong match</span>}
+                                {c.score >= 40 && c.score < 80 && <span className="text-[10px] px-1.5 py-0 rounded-full bg-amber-100 text-amber-700 font-medium">Possible match</span>}
+                                {c.score < 40 && <span className="text-[10px] px-1.5 py-0 rounded-full bg-slate-100 text-slate-600 font-medium">Low confidence</span>}
+                                <span className="text-xs font-medium">${parseFloat(c.amountInclGst || "0").toLocaleString("en-AU", { minimumFractionDigits: 2 })}</span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {c.description || c.reference || "No description"}
+                              </div>
+                              {(c.periodStart || c.periodEnd) && (
+                                <div className="text-xs text-muted-foreground">
+                                  Period: {c.periodStart || "?"} → {c.periodEnd || "?"}
+                                </div>
+                              )}
+                              {c.hours && (
+                                <div className="text-xs text-muted-foreground">
+                                  {c.hours} hrs {c.hourlyRate ? `@ $${c.hourlyRate}/hr` : ""}
+                                </div>
+                              )}
+                              <div className="text-xs mt-0.5">
+                                <span className={`inline-flex items-center gap-1 px-1.5 py-0 rounded text-[10px] font-medium ${
+                                  c.status === "PAID" ? "bg-green-100 text-green-700" :
+                                  c.status === "RECEIVED" ? "bg-blue-100 text-blue-700" :
+                                  "bg-slate-100 text-slate-600"
+                                }`}>{c.status}</span>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => linkDialogTxn && linkRctiMutation.mutate({ txnId: linkDialogTxn.id, rctiId: c.id })}
+                              disabled={linkRctiMutation.isPending || c.alreadyLinked}
+                              className="shrink-0 px-2.5 py-1 text-xs rounded-md border border-primary text-primary hover:bg-primary/5 disabled:opacity-40"
+                            >
+                              {c.alreadyLinked ? "Linked" : "Link"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => linkDialogTxn && createRctiStubMutation.mutate({ txnId: linkDialogTxn.id })}
+                      disabled={createRctiStubMutation.isPending}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-dashed border-muted-foreground/40 text-muted-foreground hover:bg-muted/40"
+                    >
+                      <Receipt className="w-3.5 h-3.5" />
+                      {createRctiStubMutation.isPending ? "Creating..." : "None match — create new RCTI stub instead"}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
