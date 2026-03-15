@@ -56,18 +56,40 @@ Extract the following information:
 10. The format/template type of the timesheet
 
 CRITICAL RULES FOR HOURS EXTRACTION:
-- ALWAYS use the explicit "Total Hours" or "Total" or "Total in Decimal per Month" cell/row if one is visible on the timesheet. This is the most reliable source.
-- MULTI-PROJECT TIMESHEETS: Many Australian government timesheets split hours across multiple project columns (e.g. OPEX and CAPEX). Each project column shows a PARTIAL total. You MUST look for the COMBINED "Total" column that sums ALL projects for each day/week. For example, if OPEX shows 79.95 and CAPEX shows 80.05, the actual total is 160.00 (the "Total" column value), NOT 79.95 or 80.05 individually.
-- Look for a dedicated "Total" column (often to the right of the project columns) that contains each day's combined hours. The weekly subtotals in this column are the true weekly hours.
-- If no explicit total row exists, sum the individual daily or weekly hours yourself.
+
+STEP 1 — FIND THE AUTHORITATIVE TOTAL:
+- Look for a "Total in Decimal per Month" row or a "Total Hours" row in a Summary Report section. Read the NUMBER in this row very carefully — every digit and decimal point matters. This value IS the totalHours — use it directly. Do NOT attempt to re-sum daily or weekly values if this row exists.
+- If a Summary Report section exists at the bottom with a "Total Hours" line, that value must match the "Total in Decimal per Month" row. If both exist, they should agree. Use either one as the authoritative total.
+- CRITICAL: Read the total value from the RIGHTMOST numeric column in the "Total in Decimal per Month" row — this is the combined total across all projects. Do NOT use partial project column values.
+
+STEP 2 — UNDERSTAND THE ROW LAYOUT:
+- DAILY ROWS have a day name (Monday, Tuesday, etc.) AND a date (e.g. 02-Feb-26). These are the only rows that represent actual worked hours.
+- WEEKLY SUBTOTAL ROWS have NO day name and NO date — they contain only accumulated numbers. These appear after each Saturday/Sunday block and show the weekly sum. Do NOT count these as additional worked days.
+- The "Total in Decimal per Month" row appears after the last weekly subtotal. It shows the grand total for the entire month.
+- NEVER add weekly subtotal row values to daily row values — that would double-count hours.
+
+STEP 3 — MULTI-PROJECT TIMESHEETS:
+- Many Australian government timesheets split hours across multiple project columns (e.g. OPEX and CAPEX). Each project column shows a PARTIAL total per day.
+- There is a "Total" column (positioned BEFORE the Start/Less Breaks/Finish time columns) that shows the COMBINED hours across all projects for each row.
+- For weekly breakdowns, read the "Total" column values from the WEEKLY SUBTOTAL ROWS (the rows with no day name). These already contain the correct combined project totals per week.
+- Do NOT sum individual project columns — use the "Total" column instead.
+
+STEP 4 — WEEKLY BREAKDOWN:
+- Each week's hours come from the weekly subtotal row's "Total" column value.
+- The sum of all weekly subtotal values MUST equal the "Total in Decimal per Month" value. If they don't match, prefer the "Total in Decimal per Month" value for totalHours and note the discrepancy in warnings.
+
+STEP 5 — SANITY CHECKS:
+- For a standard full-time month with ~20 working days at 7.6-8 hours/day, expect roughly 140-176 hours.
+- If your extracted total is around 80 for a full month, you are likely reading only one project column instead of the combined total — re-examine the "Total" column.
+- If your extracted total exceeds 176 for a standard month, you may be double-counting weekly subtotal rows as daily entries — re-examine the row layout.
 - Do NOT confuse daily hours with weekly totals. A day is typically 7-8 hours; a week is typically 35-40 hours.
-- For fortnightly (2-week) timesheets common in Australian government, the total should typically be 2x a normal week (e.g. 70-80 hours for full-time, up to 160+ for a full month).
-- For monthly timesheets, full-time hours are typically 152-176 hours (depending on working days in that month).
+
+ADDITIONAL RULES:
+- EMPLOYEE NAME: Look for a "Contractor Name" or "Employee Name" field near the TOP of the timesheet — this is the person who worked the hours. Do NOT confuse this with the "Client Signature" or approver name at the BOTTOM of the timesheet. The person who digitally signed/approved is the client, not the employee.
+- For fortnightly (2-week) timesheets common in Australian government, the total should typically be 2x a normal week (e.g. 70-80 hours for full-time).
 - Ignore signature/approval rows, leave rows, and non-working rows when summing hours.
 - If you see both "ordinary hours" and "overtime hours" columns, report them separately. The total should be ordinary + overtime.
 - Pay careful attention to decimal values — "7.6" hours/day is standard in Australian government timesheets (38-hour week / 5 days).
-- Cross-check: if the weekly breakdown adds up to a different total than the "Total" cell, prefer the "Total" cell and note the discrepancy in warnings.
-- SANITY CHECK: For a standard full-time month with ~20 working days at 8 hours/day, expect roughly 152-176 hours. If your extracted total is around 80 for a full month, you are likely reading only one project column instead of the combined total — re-examine the timesheet.
 
 IMPORTANT RULES FOR MONTH BOUNDARIES:
 - If a weekly timesheet spans two months (e.g., a week from Dec 28 to Jan 3), note this explicitly
@@ -102,6 +124,70 @@ Return your response as a JSON object with this exact structure:
 }
 
 Be precise with numbers. If you cannot read a value clearly, set confidence lower and add a warning. Always return valid JSON.`;
+
+interface PdfTextHints {
+  totalHours: number | null;
+  employeeName: string | null;
+  clientName: string | null;
+  weeklyTotals: number[];
+}
+
+async function extractPdfTextHints(pdfBuffer: Buffer): Promise<PdfTextHints> {
+  const hints: PdfTextHints = { totalHours: null, employeeName: null, clientName: null, weeklyTotals: [] };
+  const tempDir = await mkdtemp(join(tmpdir(), "pdftext-"));
+  const pdfPath = join(tempDir, "input.pdf");
+
+  try {
+    await writeFile(pdfPath, pdfBuffer);
+    const { stdout } = await execFileAsync("pdftotext", ["-layout", pdfPath, "-"]);
+    const text = stdout;
+
+    const totalMatch = text.match(/Total\s+in\s+Decimal\s+per\s+Month[:\s]*[\d.\s]*?([\d]+\.[\d]+)\s*$/m);
+    if (totalMatch) {
+      hints.totalHours = parseFloat(totalMatch[1]);
+    }
+
+    if (!hints.totalHours) {
+      const summaryMatch = text.match(/Total\s+Hours\s+([\d]+\.[\d]+)/i);
+      if (summaryMatch) {
+        hints.totalHours = parseFloat(summaryMatch[1]);
+      }
+    }
+
+    const contractorMatch = text.match(/Contractor\s+Name[:\s]+([A-Za-z][A-Za-z\s'-]+?)(?:\n|\s{3,})/);
+    if (contractorMatch) {
+      hints.employeeName = contractorMatch[1].trim();
+    }
+
+    const clientMatch = text.match(/Client[:\s]+([A-Za-z][\w\s,&'()-]+?)(?:\n|Management)/);
+    if (clientMatch) {
+      hints.clientName = clientMatch[1].trim();
+    }
+
+    const lines = text.split("\n");
+    for (const line of lines) {
+      if (/^\s+[\d.]+\s+[\d.]+/.test(line) && !/Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Total|Select|Enable/i.test(line)) {
+        const nums = line.match(/[\d]+\.[\d]+/g);
+        if (nums && nums.length >= 3) {
+          const lastNum = parseFloat(nums[nums.length - 1]);
+          if (lastNum > 20 && lastNum < 50) {
+            hints.weeklyTotals.push(lastNum);
+          }
+        }
+      }
+    }
+  } catch {
+  } finally {
+    try {
+      const files = await readdir(tempDir);
+      for (const f of files) await unlink(join(tempDir, f)).catch(() => {});
+      const { rmdir } = await import("fs/promises");
+      await rmdir(tempDir).catch(() => {});
+    } catch {}
+  }
+
+  return hints;
+}
 
 async function pdfToImages(pdfBuffer: Buffer): Promise<Buffer[]> {
   const tempDir = await mkdtemp(join(tmpdir(), "ocr-"));
@@ -145,7 +231,10 @@ export async function scanTimesheetPdf(
   const fileHash = createHash("sha256").update(fileBuffer).digest("hex");
 
   try {
-    const pageImages = await pdfToImages(fileBuffer);
+    const [pageImages, textHints] = await Promise.all([
+      pdfToImages(fileBuffer),
+      extractPdfTextHints(fileBuffer),
+    ]);
 
     if (pageImages.length === 0) {
       throw new Error("Failed to convert PDF to images — no pages extracted");
@@ -183,18 +272,44 @@ export async function scanTimesheetPdf(
     const content = response.choices[0]?.message?.content || "{}";
     const parsed = JSON.parse(content);
 
-    const totalHours = Number(parsed.totalHours) || 0;
-    const regularHours = Number(parsed.regularHours) || 0;
+    let totalHours = Number(parsed.totalHours) || 0;
+    let regularHours = Number(parsed.regularHours) || 0;
     const overtimeHours = Number(parsed.overtimeHours) || 0;
     const confidence = Math.min(100, Math.max(0, Number(parsed.confidence) || 70));
     const warnings: string[] = Array.isArray(parsed.warnings) ? parsed.warnings : [];
 
-    const weeks = Array.isArray(parsed.weeks)
+    let weeks = Array.isArray(parsed.weeks)
       ? parsed.weeks.map((w: any) => ({
           wk: w.weekLabel || "Unknown Week",
           h: Number(w.hours) || 0,
         }))
       : [];
+
+    if (textHints.totalHours !== null && textHints.totalHours > 0) {
+      if (Math.abs(totalHours - textHints.totalHours) > 0.5) {
+        warnings.push(`OCR total (${totalHours}h) corrected to text-extracted value (${textHints.totalHours}h)`);
+        totalHours = textHints.totalHours;
+        regularHours = totalHours - overtimeHours;
+      }
+    }
+
+    if (textHints.weeklyTotals.length > 0) {
+      const textWeekSum = textHints.weeklyTotals.reduce((a, b) => a + b, 0);
+      const ocrWeekSum = weeks.reduce((a, w) => a + w.h, 0);
+      if (Math.abs(textWeekSum - ocrWeekSum) > 0.5 && weeks.length === textHints.weeklyTotals.length) {
+        weeks = weeks.map((w, i) => ({ ...w, h: textHints.weeklyTotals[i] }));
+      }
+    }
+
+    let employeeName = parsed.employeeName || null;
+    if (textHints.employeeName && textHints.employeeName !== employeeName) {
+      employeeName = textHints.employeeName;
+    }
+
+    let clientName = parsed.clientName || null;
+    if (textHints.clientName) {
+      clientName = textHints.clientName;
+    }
 
     let period = `${getMonthName(targetMonth)} ${targetYear}`;
     if (parsed.periodStart && parsed.periodEnd) {
@@ -227,8 +342,8 @@ export async function scanTimesheetPdf(
       warnings,
       weeks,
       notes: buildNotes(parsed),
-      employeeName: parsed.employeeName || null,
-      clientName: parsed.clientName || null,
+      employeeName,
+      clientName,
       signatureDetected: Boolean(parsed.signatureDetected),
       monthBoundaryWarning: parsed.monthBoundaryWarning || null,
     };
