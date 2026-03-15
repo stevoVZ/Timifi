@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, desc, sql, and, inArray, or, isNull } from "drizzle-orm";
+import { eq, desc, sql, and, inArray, or, isNull, isNotNull } from "drizzle-orm";
 import {
   employees, timesheets, invoices, payRuns, payRunLines, documents,
   notifications, messages, settings, users,
@@ -93,6 +93,7 @@ export interface IStorage {
 
   getDocuments(employeeId: string): Promise<Document[]>;
   getDocumentsByTimesheetId(timesheetId: string): Promise<Document[]>;
+  getAllDocuments(): Promise<Document[]>;
   createDocument(data: InsertDocument): Promise<Document>;
   deleteDocument(id: string): Promise<void>;
 
@@ -485,6 +486,13 @@ export class DatabaseStorage implements IStorage {
   async getDocumentsByTimesheetId(timesheetId: string): Promise<Document[]> {
     const t = await this.tid();
     const conds = [eq(documents.timesheetId, timesheetId)];
+    if (t) conds.push(eq(documents.tenantId, t));
+    return db.select().from(documents).where(and(...conds)).orderBy(desc(documents.createdAt));
+  }
+
+  async getAllDocuments(): Promise<Document[]> {
+    const t = await this.tid();
+    const conds: any[] = [isNotNull(documents.timesheetId)];
     if (t) conds.push(eq(documents.tenantId, t));
     return db.select().from(documents).where(and(...conds)).orderBy(desc(documents.createdAt));
   }

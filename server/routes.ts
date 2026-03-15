@@ -412,6 +412,15 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/documents/all", async (req, res) => {
+    try {
+      const docs = await storage.getAllDocuments();
+      res.json(docs);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch documents" });
+    }
+  });
+
   const coerceDates = (data: Record<string, any>) => {
     const copy = { ...data };
     for (const key of ["submittedAt", "reviewedAt", "createdAt", "updatedAt"]) {

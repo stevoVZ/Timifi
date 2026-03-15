@@ -2594,26 +2594,31 @@ function MonthlyHoursView() {
 
   const timesheetIds = useMemo(() => monthTimesheets.map(t => t.id), [monthTimesheets]);
 
-  const { data: allDocsForMonth } = useQuery<Record<string, DocType[]>>({
-    queryKey: ["/api/timesheets/documents-batch", month, year],
+  const { data: allDocsGlobal } = useQuery<Record<string, DocType[]>>({
+    queryKey: ["/api/documents/all"],
     queryFn: async () => {
-      if (timesheetIds.length === 0) return {};
-      const results: Record<string, DocType[]> = {};
-      await Promise.all(
-        timesheetIds.map(async (tsId) => {
-          try {
-            const res = await fetch(`/api/timesheets/${tsId}/documents`, { credentials: "include" });
-            if (res.ok) {
-              const docs = await res.json();
-              if (docs.length > 0) results[tsId] = docs;
-            }
-          } catch {}
-        })
-      );
-      return results;
+      const res = await fetch("/api/documents/all", { credentials: "include" });
+      if (!res.ok) return {};
+      const docs: DocType[] = await res.json();
+      const grouped: Record<string, DocType[]> = {};
+      for (const doc of docs) {
+        const tsId = (doc as any).timesheetId;
+        if (!tsId) continue;
+        if (!grouped[tsId]) grouped[tsId] = [];
+        grouped[tsId].push(doc);
+      }
+      return grouped;
     },
-    enabled: timesheetIds.length > 0,
+    staleTime: 60_000,
   });
+  const allDocsForMonth = useMemo(() => {
+    if (!allDocsGlobal) return undefined;
+    const filtered: Record<string, DocType[]> = {};
+    for (const tsId of timesheetIds) {
+      if (allDocsGlobal[tsId]) filtered[tsId] = allDocsGlobal[tsId];
+    }
+    return filtered;
+  }, [allDocsGlobal, timesheetIds]);
 
   const statusChangeMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
@@ -4430,22 +4435,21 @@ function DocumentsView() {
   const { data: timesheets } = useQuery<Timesheet[]>({ queryKey: ["/api/timesheets"] });
   const { data: employees }  = useQuery<Employee[]>({ queryKey: ["/api/employees"] });
 
-  const tsIds = useMemo(() => (timesheets || []).map(t => t.id), [timesheets]);
-
   const { data: allDocs, isLoading } = useQuery<Record<string, DocType[]>>({
-    queryKey: ["/api/docs-all-batch", tsIds.length],
+    queryKey: ["/api/documents/all"],
     queryFn: async () => {
-      if (tsIds.length === 0) return {};
-      const results: Record<string, DocType[]> = {};
-      await Promise.all(tsIds.map(async id => {
-        try {
-          const res = await fetch(`/api/timesheets/${id}/documents`, { credentials: "include" });
-          if (res.ok) { const docs = await res.json(); if (docs.length > 0) results[id] = docs; }
-        } catch {}
-      }));
-      return results;
+      const res = await fetch("/api/documents/all", { credentials: "include" });
+      if (!res.ok) return {};
+      const docs: DocType[] = await res.json();
+      const grouped: Record<string, DocType[]> = {};
+      for (const doc of docs) {
+        const tsId = (doc as any).timesheetId;
+        if (!tsId) continue;
+        if (!grouped[tsId]) grouped[tsId] = [];
+        grouped[tsId].push(doc);
+      }
+      return grouped;
     },
-    enabled: tsIds.length > 0,
     staleTime: 60_000,
   });
 
