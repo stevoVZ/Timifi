@@ -259,27 +259,30 @@ export async function getAvailablePayPeriods(): Promise<PayPeriodOption[]> {
       }
     }
 
-    let latestEnd: Date | null = null;
+    // Only look at recent/current pay runs to find the next period
+    // We only want the LATEST completed run, not historical ones
+    let latestPostedEnd: Date | null = null;
     for (const pr of calRuns) {
+      const prStatus = (pr.PayRunStatus || "").toUpperCase();
+      if (prStatus === "DRAFT") continue; // skip drafts when finding latest posted
       const pEnd = pr.PayRunPeriodEndDate ? parseXeroDate(pr.PayRunPeriodEndDate) : null;
       if (pEnd) {
         const d = new Date(pEnd);
-        if (!latestEnd || d > latestEnd) latestEnd = d;
+        if (!latestPostedEnd || d > latestPostedEnd) latestPostedEnd = d;
       }
     }
 
     let nextStart: Date;
-    if (latestEnd) {
-      nextStart = new Date(latestEnd);
+    if (latestPostedEnd) {
+      nextStart = new Date(latestPostedEnd);
       nextStart.setDate(nextStart.getDate() + 1);
-    } else if (cal.StartDate) {
-      const parsed = parseXeroDate(cal.StartDate);
-      nextStart = parsed ? new Date(parsed) : new Date(now.getFullYear(), now.getMonth(), 1);
     } else {
+      // No posted runs — start from current month
       nextStart = new Date(now.getFullYear(), now.getMonth(), 1);
     }
 
-    const periodsToGenerate = 3;
+    // Only generate 2 upcoming periods (current + next month)
+    const periodsToGenerate = 2;
     for (let i = 0; i < periodsToGenerate; i++) {
       const pEnd = getPeriodEnd(nextStart, calType);
       const paymentDate = cal.PaymentDate ? parseXeroDate(cal.PaymentDate) : null;
