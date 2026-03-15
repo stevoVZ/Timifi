@@ -551,6 +551,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                       const isSelected = selected.has(emp.id);
                       const tsStatus = emp.timesheet?.status;
                       return (
+                        <>
                         <TableRow
                           key={emp.id}
                           className={isSelected ? "bg-primary/5" : "opacity-60"}
@@ -638,7 +639,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                             )}
                           </TableCell>
                         </TableRow>
-                        {emp.xeroTemplate && expandedRows.has(emp.id) && (
+                        {emp.xeroTemplate && expandedRows.has(emp.id) ? (
                           <TableRow key={`${emp.id}-template`} className="bg-slate-50">
                             <TableCell colSpan={11} className="py-2 px-6">
                               <div className="grid grid-cols-3 gap-6 text-xs">
@@ -693,7 +694,8 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                               )}
                             </TableCell>
                           </TableRow>
-                        )}
+                        ) : null}
+                        </>
                       );
                     })}
                   </TableBody>
