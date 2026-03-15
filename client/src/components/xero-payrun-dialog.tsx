@@ -175,13 +175,16 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
   const pushMutation = useMutation({
     mutationFn: async () => {
       const selectedEmps = (data?.employees || [])
-        .filter(e => selected.has(e.id) && e.xeroEmployeeId)
+        .filter(e => selected.has(e.id))
         .map(e => {
           const overriddenHours = hoursOverride[e.id] !== undefined
             ? parseFloat(hoursOverride[e.id]) || 0
             : e.calculated.hours;
           return {
-            xeroEmployeeId: e.xeroEmployeeId!,
+            appEmployeeId: e.id,
+            firstName: e.firstName,
+            lastName: e.lastName,
+            xeroEmployeeId: e.xeroEmployeeId || null,
             hours: overriddenHours,
             rate: e.calculated.rate,
             gross: Math.round(overriddenHours * e.calculated.rate * 100) / 100,
@@ -226,7 +229,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
     const hrs = ov !== undefined ? (parseFloat(ov) || 0) : e.calculated.hours;
     return hrs === 0;
   });
-  const canPush = selectedEmps.length > 0 && calendarId && periodStart && periodEnd && paymentDate && noXeroId.length === 0 && noHours.length === 0;
+  const canPush = selectedEmps.length > 0 && calendarId && periodStart && periodEnd && paymentDate && noHours.length === 0;
 
   function toggleEmployee(id: string) {
     setSelected(prev => {
@@ -469,10 +472,10 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
 
             {/* Warnings */}
             {!isLoading && noXeroId.length > 0 && (
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertDescription>
-                  {noXeroId.map(e => `${e.firstName} ${e.lastName}`).join(", ")} {noXeroId.length === 1 ? "has" : "have"} no Xero Employee ID — they will be excluded from the push.
+              <Alert className="border-amber-200 bg-amber-50">
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <AlertDescription className="text-amber-800 text-xs">
+                  <span className="font-medium">{noXeroId.map(e => `${e.firstName} ${e.lastName}`).join(", ")}</span> {noXeroId.length === 1 ? "has" : "have"} no Xero ID — will attempt name-based matching. Run a Xero sync first if push fails.
                 </AlertDescription>
               </Alert>
             )}
