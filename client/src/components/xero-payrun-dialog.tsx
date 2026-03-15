@@ -559,7 +559,7 @@ export function XeroPayrunDialog({ open, onOpenChange }: XeroPayrunDialogProps) 
                                     <input
                                       type="number"
                                       min="0"
-                                      step="0.5"
+                                      step="0.01"
                                       placeholder={emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : "0"}
                                       value={hoursOverride[emp.id] !== undefined ? hoursOverride[emp.id] : (emp.calculated.hours > 0 ? emp.calculated.hours.toFixed(2) : "")}
                                       onChange={ev => setHoursOverride(prev => ({ ...prev, [emp.id]: ev.target.value }))}
